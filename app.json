@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "GROWTH",
+    "slug": "growth-strength-tracker",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "growth",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nikhildhillon.growth"
+    },
+    "android": {
+      "package": "com.nikhildhillon.growth"
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "@react-native-community/datetimepicker"
+    ]
+  }
+}

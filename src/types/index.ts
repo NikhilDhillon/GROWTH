@@ -1,0 +1,74 @@
+export type MuscleGroup = "Chest" | "Back" | "Shoulders" | "Biceps" | "Triceps" | "Legs" | "Core";
+
+export type TrendStatus = "Increasing" | "Stable" | "Decreasing";
+
+export type Exercise = {
+  id: number;
+  name: string;
+  primary_muscle: MuscleGroup;
+  secondary_muscle?: MuscleGroup | null;
+  is_strength_exercise: number;
+  created_at: string;
+};
+
+export type WorkoutSession = {
+  id: number;
+  workout_date: string;
+  notes?: string | null;
+  created_at: string;
+};
+
+export type WorkoutSet = {
+  id: number;
+  session_id: number;
+  exercise_id: number;
+  set_number: number;
+  reps: number;
+  weight: number;
+  rir?: number | null;
+  created_at: string;
+};
+
+export type User = {
+  id: number;
+  name: string;
+  email: string;
+  password_hash: string;
+  created_at: string;
+};
+
+export type MuscleStrengthConfig = {
+  id: number;
+  muscle_group: MuscleGroup;
+  exercise_id: number;
+  weight_factor: number;
+};
+
+export type LoggedSetDraft = {
+  reps: string;
+  weight: string;
+};
+
+export type ExerciseScorePoint = {
+  exerciseId: number;
+  sessionId: number;
+  exerciseName: string;
+  date: string;
+  score: number;
+  volume: number;
+  topSet: number;
+};
+
+export type MuscleScorePoint = {
+  muscle: MuscleGroup;
+  date: string;
+  score: number;
+};
+
+export type MuscleSummary = {
+  muscle: MuscleGroup;
+  score: number;
+  percentChange: number;
+  trend: TrendStatus;
+  contributors: string[];
+};
