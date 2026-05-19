@@ -13,6 +13,7 @@ export function ExerciseScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
   const addExercise = useFitnessStore((state) => state.addExercise);
   const removeExercise = useFitnessStore((state) => state.removeExercise);
+  const setExerciseMuscle = useFitnessStore((state) => state.setExerciseMuscle);
   const [name, setName] = useState("");
   const [muscle, setMuscle] = useState<MuscleGroup>("Chest");
   const [isStrengthExercise, setIsStrengthExercise] = useState(false);
@@ -34,6 +35,7 @@ export function ExerciseScreen() {
       <Panel>
         <SectionTitle>Create exercise</SectionTitle>
         <TextInput style={styles.input} value={name} onChangeText={setName} placeholder="Exercise name" />
+        <Label>Muscle group</Label>
         <View style={styles.chipRow}>
           {muscles.map((item) => (
             <Pressable key={item} onPress={() => setMuscle(item)} style={[styles.chip, muscle === item && styles.chipActive]}>
@@ -64,6 +66,17 @@ export function ExerciseScreen() {
               <View style={styles.exerciseInfo}>
                 <Body style={styles.exerciseName}>{exercise.name}</Body>
                 <Body>{exercise.primary_muscle}{exercise.is_strength_exercise ? " · Strength" : ""}</Body>
+                <View style={styles.miniChipRow}>
+                  {muscles.map((item) => (
+                    <Pressable
+                      key={`${exercise.id}-${item}`}
+                      onPress={() => void setExerciseMuscle(exercise.id, item)}
+                      style={[styles.miniChip, exercise.primary_muscle === item && styles.miniChipActive]}
+                    >
+                      <Body style={[styles.miniChipText, exercise.primary_muscle === item && styles.miniChipTextActive]}>{item}</Body>
+                    </Pressable>
+                  ))}
+                </View>
               </View>
               <Pressable accessibilityLabel={`Delete ${exercise.name}`} onPress={() => void removeExercise(exercise.id)} style={styles.deleteButton}>
                 <Trash2 size={16} color={palette.danger} />
@@ -166,7 +179,7 @@ const styles = StyleSheet.create({
   exerciseInfo: {
     flex: 1,
     minWidth: 0,
-    gap: 2
+    gap: spacing.sm
   },
   exerciseName: {
     color: palette.ink,
@@ -182,5 +195,30 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0
+  },
+  miniChipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs
+  },
+  miniChip: {
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 8,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    backgroundColor: palette.surface
+  },
+  miniChipActive: {
+    backgroundColor: palette.accentSoft,
+    borderColor: palette.accent
+  },
+  miniChipText: {
+    color: palette.ink,
+    fontWeight: "800",
+    fontSize: 12
+  },
+  miniChipTextActive: {
+    color: palette.accent
   }
 });

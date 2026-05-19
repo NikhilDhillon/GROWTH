@@ -6,9 +6,10 @@ import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { useFitnessStore } from "@/store/useFitnessStore";
+import { Exercise, MuscleGroup } from "@/types";
 import { formatShortDate } from "@/utils/date";
 import { buildPreviousLogs } from "@/utils/logs";
-import { palette, spacing } from "@/utils/theme";
+import { muscles, palette, spacing } from "@/utils/theme";
 
 export function LogsScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
@@ -18,8 +19,9 @@ export function LogsScreen() {
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const deleteWorkoutLog = useFitnessStore((state) => state.deleteWorkoutLog);
   const logs = buildPreviousLogs({ exercises, sessions, sets, points, unitSystem });
-  const groupedLogs = useMemo(() => groupLogsByExercise(logs), [logs]);
-  const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
+  const groupedLogs = useMemo(() => groupLogsByMuscle(logs, exercises), [exercises, logs]);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [collapsedMuscles, setCollapsedMuscles] = useState<Record<string, boolean>>({});
 
   return (
     <Screen>
@@ -31,39 +33,56 @@ export function LogsScreen() {
       <Panel>
         <SectionTitle>Previous logs</SectionTitle>
         {logs.length ? (
-          groupedLogs.map((group) => {
-            const isCollapsed = collapsed[group.exerciseId] ?? false;
-            const Icon = isCollapsed ? ChevronRight : ChevronDown;
-            return (
-              <View key={group.exerciseId} style={styles.exerciseSection}>
-                <Pressable
-                  accessibilityLabel={`${isCollapsed ? "Expand" : "Collapse"} ${group.exerciseName} logs`}
-                  onPress={() => setCollapsed((current) => ({ ...current, [group.exerciseId]: !isCollapsed }))}
-                  style={styles.exerciseHeader}
-                >
-                  <View style={styles.exerciseHeaderTitle}>
-                    <Icon size={20} color={palette.ink} />
-                    <SectionTitle>{group.exerciseName}</SectionTitle>
-                  </View>
-                  <Body style={styles.countText}>{group.logs.length} logs</Body>
-                </Pressable>
+          groupedLogs.map((muscleGroup) => (
+            <View key={muscleGroup.muscle} style={styles.muscleSection}>
+              <Pressable
+                accessibilityLabel={`${collapsedMuscles[muscleGroup.muscle] ? "Expand" : "Collapse"} ${muscleGroup.muscle} logs`}
+                onPress={() => setCollapsedMuscles((current) => ({ ...current, [muscleGroup.muscle]: !(current[muscleGroup.muscle] ?? false) }))}
+                style={styles.muscleHeader}
+              >
+                <View style={styles.exerciseHeaderTitle}>
+                  {collapsedMuscles[muscleGroup.muscle] ? <ChevronRight size={20} color={palette.ink} /> : <ChevronDown size={20} color={palette.ink} />}
+                  <SectionTitle style={styles.muscleTitle}>{muscleGroup.muscle}</SectionTitle>
+                </View>
+                <Body style={styles.countText}>{muscleGroup.logCount} logs</Body>
+              </Pressable>
 
-                {!isCollapsed ? group.logs.map((log) => (
-                  <View key={log.sessionId} style={styles.historyRow}>
-                    <View style={styles.historyHeader}>
-                      <View style={styles.historyText}>
-                        <Body style={styles.dateText}>{formatShortDate(log.date)} · {log.score ? `${log.score.toFixed(1)} pts` : "No score"}</Body>
-                        <Body>{log.sets.join("  |  ")}</Body>
+              {!collapsedMuscles[muscleGroup.muscle] ? muscleGroup.exercises.map((group) => {
+                const collapseKey = `${muscleGroup.muscle}:${group.exerciseId}`;
+                const isCollapsed = collapsed[collapseKey] ?? false;
+                const Icon = isCollapsed ? ChevronRight : ChevronDown;
+                return (
+                  <View key={group.exerciseId} style={styles.exerciseSection}>
+                    <Pressable
+                      accessibilityLabel={`${isCollapsed ? "Expand" : "Collapse"} ${group.exerciseName} logs`}
+                      onPress={() => setCollapsed((current) => ({ ...current, [collapseKey]: !isCollapsed }))}
+                      style={styles.exerciseHeader}
+                    >
+                      <View style={styles.exerciseHeaderTitle}>
+                        <Icon size={20} color={palette.ink} />
+                        <SectionTitle>{group.exerciseName}</SectionTitle>
                       </View>
-                      <Pressable accessibilityLabel={`Delete workout log from ${log.date}`} onPress={() => void deleteWorkoutLog(log.sessionId)} style={styles.deleteButton}>
-                        <Trash2 size={16} color={palette.danger} />
-                      </Pressable>
-                    </View>
+                      <Body style={styles.countText}>{group.logs.length} logs</Body>
+                    </Pressable>
+
+                    {!isCollapsed ? group.logs.map((log) => (
+                      <View key={log.sessionId} style={styles.historyRow}>
+                        <View style={styles.historyHeader}>
+                          <View style={styles.historyText}>
+                            <Body style={styles.dateText}>{formatShortDate(log.date)} · {log.score ? `${log.score.toFixed(1)} pts` : "No score"}</Body>
+                            <Body>{log.sets.join("  |  ")}</Body>
+                          </View>
+                          <Pressable accessibilityLabel={`Delete workout log from ${log.date}`} onPress={() => void deleteWorkoutLog(log.sessionId)} style={styles.deleteButton}>
+                            <Trash2 size={16} color={palette.danger} />
+                          </Pressable>
+                        </View>
+                      </View>
+                    )) : null}
                   </View>
-                )) : null}
-              </View>
-            );
-          })
+                );
+              }) : null}
+            </View>
+          ))
         ) : (
           <Body>No workout logs yet.</Body>
         )}
@@ -72,22 +91,58 @@ export function LogsScreen() {
   );
 }
 
-function groupLogsByExercise(logs: ReturnType<typeof buildPreviousLogs>) {
-  const groups = logs.reduce<Record<number, { exerciseId: number; exerciseName: string; logs: typeof logs }>>((output, log) => {
-    const existing = output[log.exerciseId] ?? { exerciseId: log.exerciseId, exerciseName: log.exerciseName, logs: [] };
+function groupLogsByMuscle(logs: ReturnType<typeof buildPreviousLogs>, exercises: Exercise[]) {
+  const exerciseById = new Map(exercises.map((exercise) => [exercise.id, exercise]));
+  const groups = logs.reduce<Record<string, { muscle: MuscleGroup; exercises: Record<number, { exerciseId: number; exerciseName: string; logs: typeof logs }> }>>((output, log) => {
+    const muscle = exerciseById.get(log.exerciseId)?.primary_muscle ?? "Chest";
+    const muscleGroup = output[muscle] ?? { muscle, exercises: {} };
+    const existingExercise = muscleGroup.exercises[log.exerciseId] ?? { exerciseId: log.exerciseId, exerciseName: log.exerciseName, logs: [] };
+
     return {
       ...output,
-      [log.exerciseId]: {
-        ...existing,
-        logs: [...existing.logs, log]
+      [muscle]: {
+        ...muscleGroup,
+        exercises: {
+          ...muscleGroup.exercises,
+          [log.exerciseId]: {
+            ...existingExercise,
+            logs: [...existingExercise.logs, log]
+          }
+        }
       }
     };
   }, {});
 
-  return Object.values(groups).sort((a, b) => a.exerciseName.localeCompare(b.exerciseName));
+  return Object.values(groups)
+    .map((group) => {
+      const exerciseGroups = Object.values(group.exercises).sort((a, b) => a.exerciseName.localeCompare(b.exerciseName));
+      return {
+        muscle: group.muscle,
+        exercises: exerciseGroups,
+        logCount: exerciseGroups.reduce((total, exercise) => total + exercise.logs.length, 0)
+      };
+    })
+    .sort((a, b) => muscles.indexOf(a.muscle) - muscles.indexOf(b.muscle));
 }
 
 const styles = StyleSheet.create({
+  muscleSection: {
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
+    paddingTop: spacing.lg,
+    gap: spacing.md
+  },
+  muscleHeader: {
+    minHeight: 52,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.md
+  },
+  muscleTitle: {
+    fontSize: 25,
+    lineHeight: 30
+  },
   exerciseSection: {
     borderTopWidth: 1,
     borderTopColor: palette.border,

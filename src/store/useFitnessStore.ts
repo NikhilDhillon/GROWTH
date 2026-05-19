@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { buildExerciseScorePoints, buildMuscleScorePoints, summarizeMuscles } from "@/services/strength/strengthService";
-import { createExercise, deleteExercise, deleteWorkoutSession, loadAllData, loginUser, logoutUser, logWorkout, registerUser, requestPasswordReset, updateConfigWeight, updateCurrentUserPassword, updateUnitSystem } from "@/database/database";
+import { createExercise, deleteExercise, deleteWorkoutSession, loadAllData, loginUser, logoutUser, logWorkout, registerUser, requestPasswordReset, updateConfigWeight, updateCurrentUserPassword, updateExerciseMuscle, updateUnitSystem } from "@/database/database";
 import { Exercise, ExerciseScorePoint, LoggedSetDraft, MuscleGroup, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { todayIso } from "@/utils/date";
 import { weightToStorageUnit } from "@/utils/units";
@@ -28,6 +28,7 @@ type FitnessState = {
   clearAuthError: () => void;
   addExercise: (input: { name: string; primaryMuscle: MuscleGroup; secondaryMuscle?: MuscleGroup | null; strength: boolean }) => Promise<void>;
   removeExercise: (exerciseId: number) => Promise<void>;
+  setExerciseMuscle: (exerciseId: number, muscle: MuscleGroup) => Promise<void>;
   saveWorkout: (input: { exerciseId: number; workoutDate: string; notes: string; sets: LoggedSetDraft[] }) => Promise<void>;
   deleteWorkoutLog: (sessionId: number) => Promise<void>;
   setUnitSystem: (unitSystem: UnitSystem) => Promise<void>;
@@ -116,6 +117,10 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   },
   removeExercise: async (exerciseId) => {
     await deleteExercise(exerciseId);
+    await get().hydrate();
+  },
+  setExerciseMuscle: async (exerciseId, muscle) => {
+    await updateExerciseMuscle(exerciseId, muscle);
     await get().hydrate();
   },
   saveWorkout: async (input) => {

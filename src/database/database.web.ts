@@ -262,6 +262,22 @@ export async function deleteExercise(exerciseId: number) {
   writeDatabase(data);
 }
 
+export async function updateExerciseMuscle(exerciseId: number, primaryMuscle: Exercise["primary_muscle"]) {
+  if (supabase) {
+    await requireCloudUser(supabase);
+    const exerciseResult = await supabase.from("exercises").update({ primary_muscle: primaryMuscle }).eq("id", exerciseId);
+    throwIfSupabaseError(exerciseResult.error);
+    const configResult = await supabase.from("muscle_strength_config").update({ muscle_group: primaryMuscle }).eq("exercise_id", exerciseId);
+    throwIfSupabaseError(configResult.error);
+    return;
+  }
+
+  const data = readDatabase();
+  data.exercises = data.exercises.map((exercise) => (exercise.id === exerciseId ? { ...exercise, primary_muscle: primaryMuscle } : exercise));
+  data.configs = data.configs.map((config) => (config.exercise_id === exerciseId ? { ...config, muscle_group: primaryMuscle } : config));
+  writeDatabase(data);
+}
+
 export async function logWorkout(input: { exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number }[] }) {
   if (supabase) {
     await requireCloudUser(supabase);

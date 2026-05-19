@@ -125,6 +125,12 @@ export async function deleteExercise(exerciseId: number) {
   }
 }
 
+export async function updateExerciseMuscle(exerciseId: number, primaryMuscle: MuscleGroup) {
+  const db = await getDatabase();
+  await db.runAsync("UPDATE exercises SET primary_muscle = ? WHERE id = ?", [primaryMuscle, exerciseId]);
+  await db.runAsync("UPDATE muscle_strength_config SET muscle_group = ? WHERE exercise_id = ?", [primaryMuscle, exerciseId]);
+}
+
 export async function logWorkout(input: { exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number }[] }) {
   const db = await getDatabase();
   const timestamp = `${input.workoutDate}T12:00:00.000Z`;
