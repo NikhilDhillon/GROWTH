@@ -1,5 +1,6 @@
 import "react-native-gesture-handler";
 
+import { Analytics } from "@vercel/analytics/react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { StatusBar } from "expo-status-bar";
@@ -30,6 +31,11 @@ export default function App() {
     void hydrate();
   }, [hydrate]);
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.title = isPasswordRecovery ? "Reset Password - GROWTH" : currentUser ? "GROWTH" : "Login - GROWTH";
+  }, [currentUser, isPasswordRecovery]);
+
   if (loading) {
     return (
       <SafeAreaProvider>
@@ -42,6 +48,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
+      <Analytics />
       <NavigationContainer>
         <StatusBar style="dark" />
         {isPasswordRecovery ? (

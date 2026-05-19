@@ -91,9 +91,9 @@ export function WorkoutScreen() {
         {draftSets.map((set, index) => (
           <View key={index} style={styles.setRow}>
             <Label style={styles.setNumber}>{index + 1}</Label>
-            <TextInput style={styles.input} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} keyboardType="numeric" placeholder={unitSystem} />
-            <TextInput style={styles.input} value={set.reps} onChangeText={(value) => updateSet(index, "reps", value)} keyboardType="numeric" placeholder="reps" />
-            <Pressable accessibilityLabel="Remove set" onPress={() => setDraftSets((current) => current.filter((_, itemIndex) => itemIndex !== index))} style={styles.iconButton}>
+            <TextInput style={[styles.input, styles.setInput]} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} keyboardType="numeric" placeholder={unitSystem} />
+            <TextInput style={[styles.input, styles.setInput]} value={set.reps} onChangeText={(value) => updateSet(index, "reps", value)} keyboardType="numeric" placeholder="reps" />
+            <Pressable accessibilityLabel="Remove set" onPress={() => setDraftSets((current) => current.filter((_, itemIndex) => itemIndex !== index))} style={[styles.iconButton, styles.removeButton]}>
               <Trash2 size={16} color={palette.danger} />
             </Pressable>
           </View>
@@ -148,19 +148,24 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    gap: spacing.md
+    gap: spacing.md,
+    minWidth: 0
   },
   setRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm
+    gap: spacing.xs,
+    width: "100%",
+    minWidth: 0
   },
   setNumber: {
-    width: 20,
-    textAlign: "center"
+    width: 18,
+    textAlign: "center",
+    flexShrink: 0
   },
   input: {
     flex: 1,
+    minWidth: 0,
     minHeight: 44,
     borderWidth: 1,
     borderColor: palette.border,
@@ -170,6 +175,10 @@ const styles = StyleSheet.create({
     color: palette.ink,
     fontWeight: "700"
   },
+  setInput: {
+    flexBasis: 0,
+    paddingHorizontal: spacing.sm
+  },
   notes: {
     minHeight: 72,
     textAlignVertical: "top",
@@ -178,12 +187,17 @@ const styles = StyleSheet.create({
   iconButton: {
     width: 42,
     height: 42,
+    flexShrink: 0,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: palette.border,
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: palette.surface
+  },
+  removeButton: {
+    width: 40,
+    height: 40
   },
   secondaryButton: {
     minHeight: 44,

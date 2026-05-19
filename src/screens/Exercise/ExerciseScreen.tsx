@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Pressable, StyleSheet, TextInput, View } from "react-native";
-import { Check, Plus } from "lucide-react-native";
+import { Check, Plus, Trash2 } from "lucide-react-native";
 
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
@@ -12,12 +12,10 @@ import { muscles, palette, spacing } from "@/utils/theme";
 export function ExerciseScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
   const addExercise = useFitnessStore((state) => state.addExercise);
-  const [selectedId, setSelectedId] = useState(exercises[0]?.id ?? 1);
+  const removeExercise = useFitnessStore((state) => state.removeExercise);
   const [name, setName] = useState("");
   const [muscle, setMuscle] = useState<MuscleGroup>("Chest");
   const [isStrengthExercise, setIsStrengthExercise] = useState(false);
-  const strengthExercises = exercises.filter((exercise) => exercise.is_strength_exercise);
-  const selected = strengthExercises.find((exercise) => exercise.id === selectedId) ?? strengthExercises[0];
 
   async function handleAddExercise() {
     if (!name.trim()) return;
@@ -59,15 +57,22 @@ export function ExerciseScreen() {
       </Panel>
 
       <Panel>
-        <SectionTitle>Exercise graphs</SectionTitle>
-        <View style={styles.chipRow}>
-          {strengthExercises.map((exercise) => (
-            <Pressable key={exercise.id} onPress={() => setSelectedId(exercise.id)} style={[styles.chip, selected?.id === exercise.id && styles.chipActive]}>
-              <Body style={[styles.chipText, selected?.id === exercise.id && styles.chipTextActive]}>{exercise.name}</Body>
-            </Pressable>
-          ))}
-        </View>
-        {!strengthExercises.length ? <Body>No strength exercises marked yet.</Body> : null}
+        <SectionTitle>Exercises</SectionTitle>
+        {exercises.length ? (
+          exercises.map((exercise) => (
+            <View key={exercise.id} style={styles.exerciseRow}>
+              <View style={styles.exerciseInfo}>
+                <Body style={styles.exerciseName}>{exercise.name}</Body>
+                <Body>{exercise.primary_muscle}{exercise.is_strength_exercise ? " · Strength" : ""}</Body>
+              </View>
+              <Pressable accessibilityLabel={`Delete ${exercise.name}`} onPress={() => void removeExercise(exercise.id)} style={styles.deleteButton}>
+                <Trash2 size={16} color={palette.danger} />
+              </Pressable>
+            </View>
+          ))
+        ) : (
+          <Body>No exercises yet.</Body>
+        )}
       </Panel>
 
     </Screen>
@@ -148,5 +153,34 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: palette.surface,
     fontWeight: "900"
+  },
+  exerciseRow: {
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
+    paddingTop: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md
+  },
+  exerciseInfo: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2
+  },
+  exerciseName: {
+    color: palette.ink,
+    fontWeight: "900"
+  },
+  deleteButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0
   }
 });

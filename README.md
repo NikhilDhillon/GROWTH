@@ -1,11 +1,13 @@
 # GROWTH
 
-A strength analytics tracker built with Expo, React Native, TypeScript, Zustand, Supabase on web, and SQLite/localStorage fallbacks.
+A web-based strength analytics tracker built with Expo Web, React Native, TypeScript, Zustand, and Supabase.
+
+Live site: https://growth-lift-tracker.vercel.app
 
 The app focuses on individual strength-exercise progression, not just workout logging:
 
 - Log exercises, sets, reps, weight, and notes
-- Register and log in with Supabase Auth on the published website
+- Register and log in with Supabase Auth
 - Calculate estimated 1RM with `weight x (1 + reps / 30)`
 - Score each set with rep-quality multipliers
 - Apply diminishing set-importance weights
@@ -13,18 +15,26 @@ The app focuses on individual strength-exercise progression, not just workout lo
 - Mark selected exercises as strength exercises
 - Show graphs and PRs for each strength exercise
 
-## Run
+## Web Development
 
 ```sh
 npm install
 npm run web
 ```
 
-For iOS:
+The local web app runs with Expo at a localhost URL such as:
+
+```text
+http://localhost:8083
+```
+
+## Web Build
 
 ```sh
-npm run ios
+npm run build
 ```
+
+The production web export is written to `dist/`.
 
 ## Structure
 
@@ -38,22 +48,3 @@ src/
   types/
   utils/
 ```
-
-## Supabase website setup
-
-1. Create a Supabase project.
-2. Open the Supabase SQL editor and run `supabase/schema.sql`.
-3. Copy `.env.example` to `.env` and fill in:
-
-```sh
-EXPO_PUBLIC_SUPABASE_URL=...
-EXPO_PUBLIC_SUPABASE_ANON_KEY=...
-```
-
-4. For Vercel or Netlify, add the same variables in the hosting dashboard.
-
-When those variables are present, the web app uses Supabase Auth and cloud tables. Without them, web preview falls back to browser localStorage.
-
-Password reset checks `public.profiles` before sending a reset email. If you update `supabase/schema.sql`, rerun it in Supabase SQL editor so the helper function stays current.
-
-SQLite is still used on native platforms.

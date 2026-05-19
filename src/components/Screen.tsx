@@ -20,7 +20,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.background
   },
   scroll: {
-    paddingBottom: 28
+    paddingBottom: 116
   },
   inner: {
     width: "100%",

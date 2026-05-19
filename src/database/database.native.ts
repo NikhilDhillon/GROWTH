@@ -110,6 +110,21 @@ export async function createExercise(input: { name: string; primaryMuscle: Muscl
   return result;
 }
 
+export async function deleteExercise(exerciseId: number) {
+  const db = await getDatabase();
+  const affectedSessions = await db.getAllAsync<{ session_id: number }>("SELECT DISTINCT session_id FROM workout_sets WHERE exercise_id = ?", [exerciseId]);
+  await db.runAsync("DELETE FROM workout_sets WHERE exercise_id = ?", [exerciseId]);
+  await db.runAsync("DELETE FROM muscle_strength_config WHERE exercise_id = ?", [exerciseId]);
+  await db.runAsync("DELETE FROM exercises WHERE id = ?", [exerciseId]);
+
+  for (const session of affectedSessions) {
+    const remaining = await db.getFirstAsync<{ count: number }>("SELECT COUNT(*) as count FROM workout_sets WHERE session_id = ?", [session.session_id]);
+    if (!remaining?.count) {
+      await db.runAsync("DELETE FROM workout_sessions WHERE id = ?", [session.session_id]);
+    }
+  }
+}
+
 export async function logWorkout(input: { exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number }[] }) {
   const db = await getDatabase();
   const timestamp = `${input.workoutDate}T12:00:00.000Z`;

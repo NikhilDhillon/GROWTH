@@ -225,6 +225,43 @@ export async function createExercise(input: { name: string; primaryMuscle: Exerc
   writeDatabase(data);
 }
 
+export async function deleteExercise(exerciseId: number) {
+  if (supabase) {
+    await requireCloudUser(supabase);
+    const sessionResult = await supabase.from("workout_sets").select("session_id").eq("exercise_id", exerciseId);
+    throwIfSupabaseError(sessionResult.error);
+    const affectedSessionIds = [...new Set((sessionResult.data ?? []).map((row) => row.session_id as number))];
+
+    const setsResult = await supabase.from("workout_sets").delete().eq("exercise_id", exerciseId);
+    throwIfSupabaseError(setsResult.error);
+    const configsResult = await supabase.from("muscle_strength_config").delete().eq("exercise_id", exerciseId);
+    throwIfSupabaseError(configsResult.error);
+    const exerciseResult = await supabase.from("exercises").delete().eq("id", exerciseId);
+    throwIfSupabaseError(exerciseResult.error);
+
+    if (affectedSessionIds.length) {
+      const remainingSetsResult = await supabase.from("workout_sets").select("session_id").in("session_id", affectedSessionIds);
+      throwIfSupabaseError(remainingSetsResult.error);
+      const sessionsWithSets = new Set((remainingSetsResult.data ?? []).map((row) => row.session_id as number));
+      const emptySessionIds = affectedSessionIds.filter((sessionId) => !sessionsWithSets.has(sessionId));
+      if (emptySessionIds.length) {
+        const sessionsResult = await supabase.from("workout_sessions").delete().in("id", emptySessionIds);
+        throwIfSupabaseError(sessionsResult.error);
+      }
+    }
+    return;
+  }
+
+  const data = readDatabase();
+  const affectedSessionIds = [...new Set(data.sets.filter((set) => set.exercise_id === exerciseId).map((set) => set.session_id))];
+  data.sets = data.sets.filter((set) => set.exercise_id !== exerciseId);
+  const sessionsWithSets = new Set(data.sets.map((set) => set.session_id));
+  data.sessions = data.sessions.filter((session) => !affectedSessionIds.includes(session.id) || sessionsWithSets.has(session.id));
+  data.configs = data.configs.filter((config) => config.exercise_id !== exerciseId);
+  data.exercises = data.exercises.filter((exercise) => exercise.id !== exerciseId);
+  writeDatabase(data);
+}
+
 export async function logWorkout(input: { exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number }[] }) {
   if (supabase) {
     await requireCloudUser(supabase);

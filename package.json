@@ -17,6 +17,7 @@
     "@react-navigation/native": "latest",
     "@react-navigation/native-stack": "latest",
     "@supabase/supabase-js": "^2.105.4",
+    "@vercel/analytics": "^2.0.1",
     "expo": "latest",
     "expo-sqlite": "latest",
     "expo-status-bar": "latest",
