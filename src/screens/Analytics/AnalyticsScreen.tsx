@@ -13,19 +13,21 @@ import { palette, spacing } from "@/utils/theme";
 
 export function AnalyticsScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
+  const sessions = useFitnessStore((state) => state.sessions);
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
   const sets = useFitnessStore((state) => state.sets);
+  const unitSystem = useFitnessStore((state) => state.unitSystem);
   const strengthExercises = exercises.filter((exercise) => exercise.is_strength_exercise);
   const [selectedId, setSelectedId] = useState(strengthExercises[0]?.id ?? 0);
   const selected = strengthExercises.find((exercise) => exercise.id === selectedId) ?? strengthExercises[0];
   const selectedPoints = selected
     ? exercisePoints.filter((point) => point.exerciseId === selected.id)
     : [];
-  const previousLogs = useMemo(() => buildPreviousLogs({ exerciseId: selected?.id, exercises, sets, points: selectedPoints }), [exercises, selected?.id, selectedPoints, sets]);
+  const previousLogs = useMemo(() => buildPreviousLogs({ exerciseId: selected?.id, exercises, sessions, sets, points: selectedPoints, unitSystem }), [exercises, selected?.id, selectedPoints, sessions, sets, unitSystem]);
   const weeklyExercisePoints = weeklyScoreAverages(selectedPoints).map((point) => ({ label: formatShortDate(point.date), value: point.score }));
   const monthlyExercisePoints = monthlyScoreAverages(selectedPoints).map((point) => ({ label: point.date, value: point.score }));
   const prs = useMemo(() => detectPersonalRecords(selectedPoints), [selectedPoints]);
-  const volume = weeklyVolume(sets).slice(-6);
+  const volume = weeklyVolume(sets, unitSystem).slice(-6);
 
   return (
     <Screen>
@@ -83,7 +85,7 @@ export function AnalyticsScreen() {
       ) : null}
 
       <Panel>
-        <SectionTitle>Weekly volume</SectionTitle>
+        <SectionTitle>Weekly volume ({unitSystem})</SectionTitle>
         <View style={styles.bars}>
           {volume.map((item) => {
             const max = Math.max(...volume.map((entry) => entry.volume), 1);

@@ -6,3 +6,6 @@ ios/
 android/
 *.log
 .DS_Store
+.env
+.env.local
+.env.example

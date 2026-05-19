@@ -5,6 +5,7 @@
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
+    "build": "expo export --platform web",
     "ios": "expo start --ios",
     "android": "expo start --android",
     "web": "expo start --web",
@@ -15,6 +16,7 @@
     "@react-navigation/bottom-tabs": "latest",
     "@react-navigation/native": "latest",
     "@react-navigation/native-stack": "latest",
+    "@supabase/supabase-js": "^2.105.4",
     "expo": "latest",
     "expo-sqlite": "latest",
     "expo-status-bar": "latest",

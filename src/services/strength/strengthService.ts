@@ -1,4 +1,4 @@
-import { Exercise, ExerciseScorePoint, MuscleGroup, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, TrendStatus, WorkoutSet } from "@/types";
+import { Exercise, ExerciseScorePoint, MuscleGroup, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, TrendStatus, WorkoutSession, WorkoutSet } from "@/types";
 import { muscles } from "@/utils/theme";
 
 export function calculateEstimated1RM(weight: number, reps: number) {
@@ -7,15 +7,15 @@ export function calculateEstimated1RM(weight: number, reps: number) {
 
 export function getRepQualityMultiplier(reps: number) {
   if (reps <= 5) return 1;
-  if (reps <= 8) return 0.97;
-  if (reps <= 12) return 0.93;
-  return 0.88;
+  if (reps <= 8) return 0.985;
+  if (reps <= 12) return 0.965;
+  return 0.945;
 }
 
 export function getSetImportanceWeight(setNumber: number) {
-  const weights = [1, 0.9, 0.82, 0.75, 0.69];
+  const weights = [1, 0.95, 0.91, 0.88, 0.85];
   if (setNumber <= weights.length) return weights[Math.max(setNumber, 1) - 1];
-  return Math.max(0.25, 0.69 - (setNumber - 5) * 0.06);
+  return Math.max(0.25, 0.85 - (setNumber - 5) * 0.03);
 }
 
 export function calculateSetScore(input: { weight: number; reps: number }) {
@@ -59,8 +59,9 @@ export function calculateTrendDirection(percentChange: number): TrendStatus {
   return "Stable";
 }
 
-export function buildExerciseScorePoints(exercises: Exercise[], sets: WorkoutSet[]) {
+export function buildExerciseScorePoints(exercises: Exercise[], sessions: WorkoutSession[], sets: WorkoutSet[]) {
   const byExerciseSession = new Map<string, WorkoutSet[]>();
+  const sessionById = new Map(sessions.map((session) => [session.id, session]));
 
   for (const set of sets) {
     const key = `${set.exercise_id}:${set.session_id}`;
@@ -72,7 +73,8 @@ export function buildExerciseScorePoints(exercises: Exercise[], sets: WorkoutSet
       const [exerciseIdRaw, sessionIdRaw] = key.split(":");
       const exerciseId = Number(exerciseIdRaw);
       const sessionId = Number(sessionIdRaw);
-      const date = groupedSets[0]?.created_at.slice(0, 10) ?? "";
+      const session = sessionById.get(sessionId);
+      const date = session?.workout_date ?? groupedSets[0]?.created_at.slice(0, 10) ?? "";
       const exercise = exercises.find((item) => item.id === exerciseId);
       const topSet = Math.max(...groupedSets.map((set) => calculateEstimated1RM(set.weight, set.reps)));
 

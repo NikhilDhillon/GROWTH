@@ -1,105 +1,128 @@
 import { StyleSheet, View } from "react-native";
-import { CalendarDays } from "lucide-react-native";
 
 import { LineGraph } from "@/components/LineGraph";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
+import { calculateEstimated1RM, calculateExerciseScore, calculateWeightedContribution, getRepQualityMultiplier, getSetImportanceWeight } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { formatShortDate } from "@/utils/date";
 import { palette, spacing } from "@/utils/theme";
 
+const formulaExamples = [
+  buildFormulaExample("Example 1", [
+      { weight: 185, reps: 6, set_number: 1 },
+      { weight: 185, reps: 6, set_number: 2 },
+      { weight: 185, reps: 6, set_number: 3 }
+  ]),
+  buildFormulaExample("Example 2", [
+      { weight: 185, reps: 7, set_number: 1 },
+      { weight: 185, reps: 6, set_number: 2 },
+      { weight: 185, reps: 5, set_number: 3 }
+  ])
+];
+
+function buildFormulaExample(label: string, sets: { weight: number; reps: number; set_number: number }[]) {
+  const rows = sets.map((set) => {
+    const estimated1RM = calculateEstimated1RM(set.weight, set.reps);
+    const repQuality = getRepQualityMultiplier(set.reps);
+    const importance = getSetImportanceWeight(set.set_number);
+    const contribution = calculateWeightedContribution({ weight: set.weight, reps: set.reps, setNumber: set.set_number });
+    return { ...set, estimated1RM, repQuality, importance, contribution };
+  });
+  const weightedTotal = rows.reduce((total, row) => total + row.contribution, 0);
+  const score = calculateExerciseScore(sets);
+
+  return {
+    label,
+    work: sets.map((set) => `${set.weight} lb x ${set.reps}`).join(", "),
+    rows,
+    weightedTotal,
+    divisor: Math.sqrt(sets.length),
+    score
+  };
+}
+
 export function HomeScreen() {
-  const sessions = useFitnessStore((state) => state.sessions);
   const exercises = useFitnessStore((state) => state.exercises);
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
   const strengthExercises = exercises.filter((exercise) => exercise.is_strength_exercise);
-  const latestStrengthExercise = strengthExercises
+  const strengthExercisesWithData = strengthExercises
     .map((exercise) => ({
       exercise,
-      latestDate: exercisePoints.filter((point) => point.exerciseId === exercise.id).at(-1)?.date ?? ""
-    }))
-    .sort((a, b) => b.latestDate.localeCompare(a.latestDate))[0]?.exercise;
-  const latestPoints = latestStrengthExercise
-    ? exercisePoints
-        .filter((point) => point.exerciseId === latestStrengthExercise.id)
+      points: exercisePoints
+        .filter((point) => point.exerciseId === exercise.id)
         .map((point) => ({ label: formatShortDate(point.date), value: point.score }))
-    : [];
+    }))
+    .filter((item) => item.points.length > 0);
 
   return (
     <Screen>
-      <View style={styles.header}>
-        <View>
-          <Label>Local exercise tracking</Label>
-          <Title>GROWTH</Title>
-        </View>
-        <View style={styles.scorePill}>
-          <SectionTitle>{strengthExercises.length}</SectionTitle>
-          <Body>strength</Body>
-        </View>
+      <View>
+        <Label>Strength exercise graphs</Label>
+        <Title>GROWTH</Title>
       </View>
 
       <Panel>
-        <View style={styles.panelHeader}>
-          <SectionTitle>{latestStrengthExercise ? latestStrengthExercise.name : "Strength graph"}</SectionTitle>
-          <Body>{latestStrengthExercise ? "Latest strength exercise progression" : "Mark exercises as strength exercises to show graphs here"}</Body>
-        </View>
-        <LineGraph points={latestPoints} suffix=" pts" />
-      </Panel>
-
-      <Panel>
-        <SectionTitle>Strength exercises</SectionTitle>
-        {strengthExercises.length ? (
-          strengthExercises.map((exercise) => (
-            <View key={exercise.id} style={styles.workoutRow}>
-              <Body style={{ color: palette.ink, fontWeight: "800" }}>{exercise.name}</Body>
-              <Body>{exercise.primary_muscle}</Body>
-            </View>
-          ))
-        ) : (
-          <Body>No strength exercises yet.</Body>
-        )}
-      </Panel>
-
-      <Panel>
-        <View style={styles.panelHeader}>
-          <SectionTitle>Recent workouts</SectionTitle>
-          <CalendarDays size={19} color={palette.muted} />
-        </View>
-        {sessions.slice(0, 5).map((session) => (
-          <View key={session.id} style={styles.workoutRow}>
-            <Body style={{ color: palette.ink, fontWeight: "800" }}>{formatShortDate(session.workout_date)}</Body>
-            <Body>{session.notes || "Workout logged"}</Body>
+        <SectionTitle>Score formula</SectionTitle>
+        <Body>Estimated 1RM = weight x (1 + reps / 30)</Body>
+        <Body>Set contribution = estimated 1RM x rep quality x set importance</Body>
+        <Body>Exercise score = sum(set contributions) / sqrt(number of sets)</Body>
+        <View style={styles.exampleList}>
+          <View style={styles.exampleRow}>
+            <Body style={styles.exampleLabel}>{formulaExamples[0].label}</Body>
+            <Body style={styles.exampleWork}>{formulaExamples[0].work}</Body>
+            {formulaExamples[0].rows.map((row) => (
+              <Body key={`${formulaExamples[0].label}-${row.set_number}`}>
+                Set {row.set_number}: {row.weight} x (1 + {row.reps} / 30) = {row.estimated1RM.toFixed(1)}; {row.estimated1RM.toFixed(1)} x {row.repQuality.toFixed(3)} x {row.importance.toFixed(2)} = {row.contribution.toFixed(1)}
+              </Body>
+            ))}
+            <Body>Weighted total = {formulaExamples[0].weightedTotal.toFixed(1)}</Body>
+            <Body>Normalize = {formulaExamples[0].weightedTotal.toFixed(1)} / sqrt({formulaExamples[0].rows.length}) = {formulaExamples[0].weightedTotal.toFixed(1)} / {formulaExamples[0].divisor.toFixed(3)}</Body>
+            <Body style={styles.exampleScore}>Final score = {formulaExamples[0].score.toFixed(1)} pts</Body>
           </View>
-        ))}
+          <View style={styles.exampleRow}>
+            <Body style={styles.exampleLabel}>{formulaExamples[1].label}</Body>
+            <Body style={styles.exampleWork}>{formulaExamples[1].work}</Body>
+            <Body style={styles.exampleScore}>Final score = {formulaExamples[1].score.toFixed(1)} pts</Body>
+          </View>
+        </View>
       </Panel>
+
+      {strengthExercisesWithData.length ? (
+        strengthExercisesWithData.map(({ exercise, points }) => (
+          <View key={exercise.id} style={styles.graphSection}>
+            <SectionTitle>{exercise.name}</SectionTitle>
+            <LineGraph points={points} suffix=" pts" />
+          </View>
+        ))
+      ) : (
+        <Panel>
+          <Body>No strength exercise logs yet.</Body>
+        </Panel>
+      )}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: spacing.lg
+  exampleList: {
+    gap: spacing.sm
   },
-  scorePill: {
-    backgroundColor: palette.accentSoft,
-    borderRadius: 8,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    flexDirection: "row",
-    gap: spacing.sm,
-    alignItems: "center"
-  },
-  panelHeader: {
+  exampleRow: {
     gap: 2
   },
-  workoutRow: {
-    borderTopWidth: 1,
-    borderTopColor: palette.border,
-    paddingTop: spacing.md,
-    gap: 2
+  exampleLabel: {
+    fontWeight: "900"
+  },
+  exampleWork: {
+    color: palette.ink,
+    fontWeight: "900"
+  },
+  exampleScore: {
+    fontWeight: "900"
+  },
+  graphSection: {
+    gap: spacing.sm
   }
 });

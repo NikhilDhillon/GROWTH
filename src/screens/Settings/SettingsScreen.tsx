@@ -11,12 +11,14 @@ export function SettingsScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
   const currentUser = useFitnessStore((state) => state.currentUser);
   const logout = useFitnessStore((state) => state.logout);
+  const unitSystem = useFitnessStore((state) => state.unitSystem);
+  const setUnitSystem = useFitnessStore((state) => state.setUnitSystem);
   const strengthCount = exercises.filter((exercise) => exercise.is_strength_exercise).length;
 
   return (
     <Screen>
       <View>
-        <Label>Local-only configuration</Label>
+        <Label>Account configuration</Label>
         <Title>Settings</Title>
       </View>
 
@@ -40,8 +42,14 @@ export function SettingsScreen() {
       </Panel>
 
       <Panel>
-        <SectionTitle>Storage</SectionTitle>
-        <Body>Data is stored locally in SQLite on device. There is no login, backend, cloud sync, or network dependency.</Body>
+        <SectionTitle>Units</SectionTitle>
+        <View style={styles.unitRow}>
+          {(["lb", "kg"] as const).map((unit) => (
+            <Pressable key={unit} onPress={() => void setUnitSystem(unit)} style={[styles.unitButton, unitSystem === unit && styles.unitButtonActive]}>
+              <Body style={[styles.unitText, unitSystem === unit && styles.unitTextActive]}>{unit}</Body>
+            </Pressable>
+          ))}
+        </View>
       </Panel>
     </Screen>
   );
@@ -60,5 +68,29 @@ const styles = StyleSheet.create({
   logoutText: {
     color: palette.surface,
     fontWeight: "900"
+  },
+  unitRow: {
+    flexDirection: "row",
+    gap: spacing.sm
+  },
+  unitButton: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  unitButtonActive: {
+    backgroundColor: palette.ink,
+    borderColor: palette.ink
+  },
+  unitText: {
+    color: palette.ink,
+    fontWeight: "900"
+  },
+  unitTextActive: {
+    color: palette.surface
   }
 });

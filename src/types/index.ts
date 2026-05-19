@@ -1,6 +1,7 @@
 export type MuscleGroup = "Chest" | "Back" | "Shoulders" | "Biceps" | "Triceps" | "Legs" | "Core";
 
 export type TrendStatus = "Increasing" | "Stable" | "Decreasing";
+export type UnitSystem = "lb" | "kg";
 
 export type Exercise = {
   id: number;
@@ -30,7 +31,7 @@ export type WorkoutSet = {
 };
 
 export type User = {
-  id: number;
+  id: number | string;
   name: string;
   email: string;
   password_hash: string;

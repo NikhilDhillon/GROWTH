@@ -1,7 +1,7 @@
 import * as SQLite from "expo-sqlite";
 
 import { schema } from "@/database/schema";
-import { Exercise, MuscleGroup, MuscleStrengthConfig, User, WorkoutSession, WorkoutSet } from "@/types";
+import { Exercise, MuscleGroup, MuscleStrengthConfig, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 type Database = SQLite.SQLiteDatabase;
@@ -44,15 +44,17 @@ async function removeLegacySeedData(db: Database) {
 
 export async function loadAllData() {
   const db = await getDatabase();
-  const [exercises, sessions, sets, configs, currentUser] = await Promise.all([
+  const [exercises, sessions, sets, configs, currentUser, unitSetting] = await Promise.all([
     db.getAllAsync<Exercise>("SELECT * FROM exercises ORDER BY name"),
     db.getAllAsync<WorkoutSession>("SELECT * FROM workout_sessions ORDER BY workout_date DESC"),
     db.getAllAsync<WorkoutSet>("SELECT * FROM workout_sets ORDER BY created_at ASC, set_number ASC"),
     db.getAllAsync<MuscleStrengthConfig>("SELECT * FROM muscle_strength_config ORDER BY muscle_group"),
-    db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1")
+    db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1"),
+    db.getFirstAsync<{ value: UnitSystem }>("SELECT value FROM app_settings WHERE key = ?", ["unit_system"])
   ]);
 
-  return { exercises, sessions, sets, configs, currentUser: currentUser ?? null };
+  const unitSystem: UnitSystem = unitSetting?.value === "kg" ? "kg" : "lb";
+  return { exercises, sessions, sets, configs, currentUser: currentUser ?? null, unitSystem };
 }
 
 export async function registerUser(input: { name: string; email: string; password: string }) {
@@ -82,13 +84,21 @@ export async function loginUser(input: { email: string; password: string }) {
     throw new Error("Email or password is incorrect.");
   }
 
-  await setCurrentUser(db, user.id);
+  await setCurrentUser(db, Number(user.id));
   return user;
 }
 
 export async function logoutUser() {
   const db = await getDatabase();
   await db.runAsync("DELETE FROM auth_session");
+}
+
+export async function requestPasswordReset(_input: { email: string }) {
+  throw new Error("Password reset is available on the Supabase-powered website.");
+}
+
+export async function updateCurrentUserPassword(_input: { password: string }) {
+  throw new Error("Password reset is available on the Supabase-powered website.");
 }
 
 export async function createExercise(input: { name: string; primaryMuscle: MuscleGroup; secondaryMuscle?: MuscleGroup | null; strength: boolean }) {
@@ -122,6 +132,11 @@ export async function deleteWorkoutSession(sessionId: number) {
 export async function updateConfigWeight(id: number, weightFactor: number) {
   const db = await getDatabase();
   await db.runAsync("UPDATE muscle_strength_config SET weight_factor = ? WHERE id = ?", [weightFactor, id]);
+}
+
+export async function updateUnitSystem(unitSystem: UnitSystem) {
+  const db = await getDatabase();
+  await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["unit_system", unitSystem]);
 }
 
 async function setCurrentUser(db: Database, userId: number) {

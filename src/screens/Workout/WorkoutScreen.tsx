@@ -11,6 +11,7 @@ import { useFitnessStore } from "@/store/useFitnessStore";
 import { LoggedSetDraft } from "@/types";
 import { todayIso } from "@/utils/date";
 import { palette, spacing } from "@/utils/theme";
+import { formatWeightInput, weightToStorageUnit } from "@/utils/units";
 
 const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
 
@@ -18,6 +19,7 @@ export function WorkoutScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
   const sets = useFitnessStore((state) => state.sets);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
+  const unitSystem = useFitnessStore((state) => state.unitSystem);
   const [exerciseId, setExerciseId] = useState<number | null>(exercises[0]?.id ?? null);
   const [draftSets, setDraftSets] = useState<LoggedSetDraft[]>([emptySet(), emptySet(), emptySet()]);
   const [workoutDate, setWorkoutDate] = useState(todayIso());
@@ -35,9 +37,10 @@ export function WorkoutScreen() {
     return calculateExerciseScore(
       draftSets
         .map((set, index) => ({ reps: Number(set.reps), weight: Number(set.weight), set_number: index + 1 }))
+        .map((set) => ({ ...set, weight: weightToStorageUnit(set.weight, unitSystem) }))
         .filter((set) => set.reps > 0 && set.weight >= 0)
     );
-  }, [draftSets]);
+  }, [draftSets, unitSystem]);
 
   async function handleSave() {
     if (!selectedExercise) return;
@@ -48,7 +51,7 @@ export function WorkoutScreen() {
 
   function duplicatePrevious() {
     if (!previousSets.length) return;
-    setDraftSets(previousSets.map((set) => ({ reps: String(set.reps), weight: String(set.weight) })));
+    setDraftSets(previousSets.map((set) => ({ reps: String(set.reps), weight: formatWeightInput(set.weight, unitSystem) })));
   }
 
   return (
@@ -88,7 +91,7 @@ export function WorkoutScreen() {
         {draftSets.map((set, index) => (
           <View key={index} style={styles.setRow}>
             <Label style={styles.setNumber}>{index + 1}</Label>
-            <TextInput style={styles.input} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} keyboardType="numeric" placeholder="lb" />
+            <TextInput style={styles.input} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} keyboardType="numeric" placeholder={unitSystem} />
             <TextInput style={styles.input} value={set.reps} onChangeText={(value) => updateSet(index, "reps", value)} keyboardType="numeric" placeholder="reps" />
             <Pressable accessibilityLabel="Remove set" onPress={() => setDraftSets((current) => current.filter((_, itemIndex) => itemIndex !== index))} style={styles.iconButton}>
               <Trash2 size={16} color={palette.danger} />
