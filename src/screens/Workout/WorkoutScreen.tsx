@@ -19,13 +19,16 @@ export function WorkoutScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
   const sets = useFitnessStore((state) => state.sets);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
+  const saveBodyWeightLog = useFitnessStore((state) => state.saveBodyWeightLog);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
+  const [selectedKind, setSelectedKind] = useState<"exercise" | "weight">("exercise");
   const [exerciseId, setExerciseId] = useState<number | null>(exercises[0]?.id ?? null);
   const [draftSets, setDraftSets] = useState<LoggedSetDraft[]>([emptySet(), emptySet(), emptySet()]);
+  const [weightDraft, setWeightDraft] = useState("");
   const [workoutDate, setWorkoutDate] = useState(todayIso());
   const [notes, setNotes] = useState("");
 
-  const selectedExercise = exercises.find((exercise) => exercise.id === exerciseId) ?? exercises[0];
+  const selectedExercise = selectedKind === "exercise" ? exercises.find((exercise) => exercise.id === exerciseId) ?? exercises[0] : null;
   const previousSets = useMemo(() => {
     if (!selectedExercise) return [];
     const matching = sets.filter((set) => set.exercise_id === selectedExercise.id);
@@ -49,6 +52,11 @@ export function WorkoutScreen() {
     setNotes("");
   }
 
+  async function handleSaveWeight() {
+    await saveBodyWeightLog({ loggedDate: workoutDate, weight: weightDraft });
+    setWeightDraft("");
+  }
+
   function duplicatePrevious() {
     if (!previousSets.length) return;
     setDraftSets(previousSets.map((set) => ({ reps: String(set.reps), weight: formatWeightInput(set.weight, unitSystem) })));
@@ -58,15 +66,25 @@ export function WorkoutScreen() {
     <Screen>
       <View>
         <Label>Fast workout capture</Label>
-        <Title>Log sets</Title>
+        <Title>{selectedKind === "weight" ? "Log weight" : "Log sets"}</Title>
       </View>
 
       <Panel>
-        <SectionTitle>Exercise</SectionTitle>
+        <SectionTitle>Log type</SectionTitle>
         <View style={styles.exerciseGrid}>
+          <Pressable onPress={() => setSelectedKind("weight")} style={[styles.exerciseButton, selectedKind === "weight" && styles.exerciseButtonActive]}>
+            <Body style={[styles.exerciseText, selectedKind === "weight" && styles.exerciseTextActive]}>Weight</Body>
+          </Pressable>
           {exercises.map((exercise) => (
-            <Pressable key={exercise.id} onPress={() => setExerciseId(exercise.id)} style={[styles.exerciseButton, exercise.id === selectedExercise?.id && styles.exerciseButtonActive]}>
-              <Body style={[styles.exerciseText, exercise.id === selectedExercise?.id && styles.exerciseTextActive]}>{exercise.name}</Body>
+            <Pressable
+              key={exercise.id}
+              onPress={() => {
+                setSelectedKind("exercise");
+                setExerciseId(exercise.id);
+              }}
+              style={[styles.exerciseButton, selectedKind === "exercise" && exercise.id === selectedExercise?.id && styles.exerciseButtonActive]}
+            >
+              <Body style={[styles.exerciseText, selectedKind === "exercise" && exercise.id === selectedExercise?.id && styles.exerciseTextActive]}>{exercise.name}</Body>
             </Pressable>
           ))}
         </View>
@@ -77,6 +95,16 @@ export function WorkoutScreen() {
         <DatePickerField value={workoutDate} onChange={setWorkoutDate} />
       </Panel>
 
+      {selectedKind === "weight" ? (
+        <Panel>
+          <SectionTitle>Body weight</SectionTitle>
+          <TextInput style={styles.input} value={weightDraft} onChangeText={setWeightDraft} keyboardType="numeric" placeholder="kg" />
+          <Pressable style={styles.primaryButton} onPress={handleSaveWeight}>
+            <Save size={19} color={palette.surface} />
+            <Body style={styles.primaryButtonText}>Save weight</Body>
+          </Pressable>
+        </Panel>
+      ) : (
       <Panel>
         <View style={styles.rowBetween}>
           <View>
@@ -111,6 +139,7 @@ export function WorkoutScreen() {
           <Body style={styles.primaryButtonText}>Save workout</Body>
         </Pressable>
       </Panel>
+      )}
     </Screen>
   );
 

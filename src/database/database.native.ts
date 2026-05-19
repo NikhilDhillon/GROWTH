@@ -1,7 +1,7 @@
 import * as SQLite from "expo-sqlite";
 
 import { schema } from "@/database/schema";
-import { Exercise, MuscleGroup, MuscleStrengthConfig, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { BodyWeightLog, Exercise, MuscleGroup, MuscleStrengthConfig, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 type Database = SQLite.SQLiteDatabase;
@@ -44,17 +44,18 @@ async function removeLegacySeedData(db: Database) {
 
 export async function loadAllData() {
   const db = await getDatabase();
-  const [exercises, sessions, sets, configs, currentUser, unitSetting] = await Promise.all([
+  const [exercises, sessions, sets, bodyWeightLogs, configs, currentUser, unitSetting] = await Promise.all([
     db.getAllAsync<Exercise>("SELECT * FROM exercises ORDER BY name"),
     db.getAllAsync<WorkoutSession>("SELECT * FROM workout_sessions ORDER BY workout_date DESC"),
     db.getAllAsync<WorkoutSet>("SELECT * FROM workout_sets ORDER BY created_at ASC, set_number ASC"),
+    db.getAllAsync<BodyWeightLog>("SELECT * FROM body_weight_logs ORDER BY logged_date DESC, created_at DESC"),
     db.getAllAsync<MuscleStrengthConfig>("SELECT * FROM muscle_strength_config ORDER BY muscle_group"),
     db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1"),
     db.getFirstAsync<{ value: UnitSystem }>("SELECT value FROM app_settings WHERE key = ?", ["unit_system"])
   ]);
 
   const unitSystem: UnitSystem = unitSetting?.value === "kg" ? "kg" : "lb";
-  return { exercises, sessions, sets, configs, currentUser: currentUser ?? null, unitSystem };
+  return { exercises, sessions, sets, bodyWeightLogs, configs, currentUser: currentUser ?? null, unitSystem };
 }
 
 export async function registerUser(input: { name: string; email: string; password: string }) {
@@ -148,6 +149,19 @@ export async function deleteWorkoutSession(sessionId: number) {
   const db = await getDatabase();
   await db.runAsync("DELETE FROM workout_sets WHERE session_id = ?", [sessionId]);
   await db.runAsync("DELETE FROM workout_sessions WHERE id = ?", [sessionId]);
+}
+
+export async function saveBodyWeightLog(input: { loggedDate: string; weight: number }) {
+  const db = await getDatabase();
+  await db.runAsync(
+    "INSERT INTO body_weight_logs (weight, logged_date, created_at) VALUES (?, ?, ?) ON CONFLICT(logged_date) DO UPDATE SET weight = excluded.weight, created_at = excluded.created_at",
+    [input.weight, input.loggedDate, `${input.loggedDate}T12:00:00.000Z`]
+  );
+}
+
+export async function deleteBodyWeightLog(id: number) {
+  const db = await getDatabase();
+  await db.runAsync("DELETE FROM body_weight_logs WHERE id = ?", [id]);
 }
 
 export async function updateConfigWeight(id: number, weightFactor: number) {

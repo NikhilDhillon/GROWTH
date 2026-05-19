@@ -30,6 +30,13 @@ export type WorkoutSet = {
   created_at: string;
 };
 
+export type BodyWeightLog = {
+  id: number;
+  weight: number;
+  logged_date: string;
+  created_at: string;
+};
+
 export type User = {
   id: number | string;
   name: string;

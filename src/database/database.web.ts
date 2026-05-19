@@ -1,6 +1,6 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-import { Exercise, MuscleStrengthConfig, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { BodyWeightLog, Exercise, MuscleStrengthConfig, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 const storageKey = "growth.preview.database.v2";
@@ -12,6 +12,7 @@ type WebDatabase = {
   exercises: Exercise[];
   sessions: WorkoutSession[];
   sets: WorkoutSet[];
+  bodyWeightLogs: BodyWeightLog[];
   configs: MuscleStrengthConfig[];
   users: User[];
   currentUserId: number | null;
@@ -30,7 +31,7 @@ function now() {
 }
 
 function seedDatabase(): WebDatabase {
-  return { exercises: [], sessions: [], sets: [], configs: [], users: [], currentUserId: null, unitSystem: "lb" };
+  return { exercises: [], sessions: [], sets: [], bodyWeightLogs: [], configs: [], users: [], currentUserId: null, unitSystem: "lb" };
 }
 
 function readDatabase(): WebDatabase {
@@ -42,6 +43,7 @@ function readDatabase(): WebDatabase {
       exercises: parsed.exercises ?? [],
       sessions: parsed.sessions ?? [],
       sets: parsed.sets ?? [],
+      bodyWeightLogs: parsed.bodyWeightLogs ?? [],
       configs: parsed.configs ?? [],
       users: parsed.users ?? [],
       currentUserId: parsed.currentUserId ?? null,
@@ -65,6 +67,7 @@ export async function loadAllData() {
     exercises: [...data.exercises].sort((a, b) => a.name.localeCompare(b.name)),
     sessions: [...data.sessions].sort((a, b) => b.workout_date.localeCompare(a.workout_date)),
     sets: [...data.sets].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.set_number - b.set_number),
+    bodyWeightLogs: [...data.bodyWeightLogs].sort((a, b) => b.logged_date.localeCompare(a.logged_date) || b.created_at.localeCompare(a.created_at)),
     configs: [...data.configs].sort((a, b) => a.muscle_group.localeCompare(b.muscle_group)),
     currentUser: data.users.find((user) => user.id === data.currentUserId) ?? null,
     unitSystem: data.unitSystem
@@ -74,14 +77,15 @@ export async function loadAllData() {
 async function loadCloudData(client: SupabaseClient) {
   const user = await requireCloudUser(client, false);
   if (!user) {
-    return { exercises: [], sessions: [], sets: [], configs: [], currentUser: null, unitSystem: "lb" as UnitSystem };
+    return { exercises: [], sessions: [], sets: [], bodyWeightLogs: [], configs: [], currentUser: null, unitSystem: "lb" as UnitSystem };
   }
 
-  const [profileResult, exercisesResult, sessionsResult, setsResult, configsResult, settingResult] = await Promise.all([
+  const [profileResult, exercisesResult, sessionsResult, setsResult, bodyWeightResult, configsResult, settingResult] = await Promise.all([
     client.from("profiles").select("*").eq("id", user.id).maybeSingle<ProfileRow>(),
     client.from("exercises").select("*").order("name"),
     client.from("workout_sessions").select("*").order("workout_date", { ascending: false }),
     client.from("workout_sets").select("*").order("created_at").order("set_number"),
+    client.from("body_weight_logs").select("*").order("logged_date", { ascending: false }).order("created_at", { ascending: false }),
     client.from("muscle_strength_config").select("*").order("muscle_group"),
     client.from("app_settings").select("value").eq("key", "unit_system").maybeSingle<{ value: UnitSystem }>()
   ]);
@@ -90,6 +94,9 @@ async function loadCloudData(client: SupabaseClient) {
   throwIfSupabaseError(exercisesResult.error);
   throwIfSupabaseError(sessionsResult.error);
   throwIfSupabaseError(setsResult.error);
+  if (bodyWeightResult.error && !isMissingBodyWeightTableError(bodyWeightResult.error)) {
+    throwIfSupabaseError(bodyWeightResult.error);
+  }
   throwIfSupabaseError(configsResult.error);
   throwIfSupabaseError(settingResult.error);
 
@@ -97,6 +104,7 @@ async function loadCloudData(client: SupabaseClient) {
     exercises: (exercisesResult.data ?? []) as Exercise[],
     sessions: (sessionsResult.data ?? []) as WorkoutSession[],
     sets: (setsResult.data ?? []) as WorkoutSet[],
+    bodyWeightLogs: bodyWeightResult.error ? [] : (bodyWeightResult.data ?? []) as BodyWeightLog[],
     configs: (configsResult.data ?? []) as MuscleStrengthConfig[],
     currentUser: cloudUserToAppUser(user, profileResult.data),
     unitSystem: settingResult.data?.value === "kg" ? "kg" : "lb"
@@ -346,6 +354,56 @@ export async function deleteWorkoutSession(sessionId: number) {
   writeDatabase(data);
 }
 
+export async function saveBodyWeightLog(input: { loggedDate: string; weight: number }) {
+  if (supabase) {
+    const user = await requireCloudUser(supabase);
+    if (!user) throw new Error("Please log in again.");
+    const result = await supabase.from("body_weight_logs").upsert(
+      {
+        user_id: user.id,
+        logged_date: input.loggedDate,
+        weight: input.weight,
+        created_at: `${input.loggedDate}T12:00:00.000Z`
+      },
+      { onConflict: "user_id,logged_date" }
+    );
+    if (result.error && isMissingBodyWeightTableError(result.error)) {
+      throw new Error("Body weight logging needs the Supabase schema update for body_weight_logs.");
+    }
+    throwIfSupabaseError(result.error);
+    return;
+  }
+
+  const data = readDatabase();
+  const existing = data.bodyWeightLogs.find((log) => log.logged_date === input.loggedDate);
+  const row = {
+    id: existing?.id ?? Math.max(0, ...data.bodyWeightLogs.map((log) => log.id)) + 1,
+    weight: input.weight,
+    logged_date: input.loggedDate,
+    created_at: `${input.loggedDate}T12:00:00.000Z`
+  };
+  data.bodyWeightLogs = existing
+    ? data.bodyWeightLogs.map((log) => (log.id === existing.id ? row : log))
+    : [...data.bodyWeightLogs, row];
+  writeDatabase(data);
+}
+
+export async function deleteBodyWeightLog(id: number) {
+  if (supabase) {
+    await requireCloudUser(supabase);
+    const result = await supabase.from("body_weight_logs").delete().eq("id", id);
+    if (result.error && isMissingBodyWeightTableError(result.error)) {
+      throw new Error("Body weight logging needs the Supabase schema update for body_weight_logs.");
+    }
+    throwIfSupabaseError(result.error);
+    return;
+  }
+
+  const data = readDatabase();
+  data.bodyWeightLogs = data.bodyWeightLogs.filter((log) => log.id !== id);
+  writeDatabase(data);
+}
+
 export async function updateConfigWeight(id: number, weightFactor: number) {
   if (supabase) {
     await requireCloudUser(supabase);
@@ -402,4 +460,9 @@ function cloudUserToAppUser(user: NonNullable<Awaited<ReturnType<SupabaseClient[
 
 function throwIfSupabaseError(error: { message: string } | null) {
   if (error) throw new Error(error.message);
+}
+
+function isMissingBodyWeightTableError(error: { message: string; code?: string } | null) {
+  if (!error) return false;
+  return error.message.includes("body_weight_logs") && (error.message.includes("schema cache") || error.message.includes("does not exist") || error.code === "PGRST205");
 }

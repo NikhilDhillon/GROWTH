@@ -16,9 +16,11 @@ export function AnalyticsScreen() {
   const sessions = useFitnessStore((state) => state.sessions);
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
   const sets = useFitnessStore((state) => state.sets);
+  const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const strengthExercises = exercises.filter((exercise) => exercise.is_strength_exercise);
   const [selectedId, setSelectedId] = useState(strengthExercises[0]?.id ?? 0);
+  const [viewMode, setViewMode] = useState<"progress" | "comparison">("progress");
   const selected = strengthExercises.find((exercise) => exercise.id === selectedId) ?? strengthExercises[0];
   const selectedPoints = selected
     ? exercisePoints.filter((point) => point.exerciseId === selected.id)
@@ -26,6 +28,38 @@ export function AnalyticsScreen() {
   const previousLogs = useMemo(() => buildPreviousLogs({ exerciseId: selected?.id, exercises, sessions, sets, points: selectedPoints, unitSystem }), [exercises, selected?.id, selectedPoints, sessions, sets, unitSystem]);
   const weeklyExercisePoints = weeklyScoreAverages(selectedPoints).map((point) => ({ label: formatShortDate(point.date), value: point.score }));
   const monthlyExercisePoints = monthlyScoreAverages(selectedPoints).map((point) => ({ label: point.date, value: point.score }));
+  const bodyWeightByDate = new Map(bodyWeightLogs.map((log) => [log.logged_date, log]));
+  const strengthPointByDate = new Map(selectedPoints.map((point) => [point.date, point]));
+  const logByDate = new Map(previousLogs.map((log) => [log.date, log]));
+  const comparisonDates = [...new Set([...bodyWeightLogs.map((log) => log.logged_date), ...selectedPoints.map((point) => point.date)])].sort();
+  const weightPoints = [...bodyWeightLogs]
+    .sort((a, b) => a.logged_date.localeCompare(b.logged_date) || a.created_at.localeCompare(b.created_at))
+    .map((log) => {
+      const strengthPoint = strengthPointByDate.get(log.logged_date);
+      const workoutLog = logByDate.get(log.logged_date);
+      return {
+        key: log.logged_date,
+        label: formatShortDate(log.logged_date),
+        value: log.weight,
+        details: [
+          strengthPoint ? `Score ${strengthPoint.score.toFixed(1)} pts` : "No lift logged",
+          ...(workoutLog?.sets ?? [])
+        ]
+      };
+    });
+  const comparisonStrengthPoints = selectedPoints.map((point) => {
+    const weightLog = bodyWeightByDate.get(point.date);
+    const workoutLog = previousLogs.find((item) => item.sessionId === point.sessionId);
+    return {
+      key: point.date,
+      label: formatShortDate(point.date),
+      value: point.score,
+      details: [
+        weightLog ? `Body weight ${weightLog.weight.toFixed(1)} kg` : "No body weight logged",
+        ...(workoutLog?.sets ?? [])
+      ]
+    };
+  });
   const prs = useMemo(() => detectPersonalRecords(selectedPoints), [selectedPoints]);
   const volume = weeklyVolume(sets, unitSystem).slice(-6);
 
@@ -48,7 +82,29 @@ export function AnalyticsScreen() {
         {!strengthExercises.length ? <Body>No exercises have been marked as strength exercises yet.</Body> : null}
       </Panel>
 
-      {selected ? (
+      <Panel>
+        <SectionTitle>View</SectionTitle>
+        <View style={styles.segmentRow}>
+          <Pressable onPress={() => setViewMode("progress")} style={[styles.segmentButton, viewMode === "progress" && styles.segmentButtonActive]}>
+            <Body style={[styles.segmentText, viewMode === "progress" && styles.segmentTextActive]}>Progress</Body>
+          </Pressable>
+          <Pressable onPress={() => setViewMode("comparison")} style={[styles.segmentButton, viewMode === "comparison" && styles.segmentButtonActive]}>
+            <Body style={[styles.segmentText, viewMode === "comparison" && styles.segmentTextActive]}>Weight comparison</Body>
+          </Pressable>
+        </View>
+      </Panel>
+
+      {selected && viewMode === "comparison" ? (
+        <Panel>
+          <SectionTitle>{selected.name} vs body weight</SectionTitle>
+          <Label>Body weight</Label>
+          <LineGraph points={weightPoints} suffix=" kg" height={150} emptyMessage="Log body weight to draw a trend." xLabels={comparisonDates} />
+          <Label>Strength score</Label>
+          <LineGraph points={comparisonStrengthPoints} suffix=" pts" height={150} xLabels={comparisonDates} />
+        </Panel>
+      ) : null}
+
+      {selected && viewMode === "progress" ? (
         <Panel>
           <View style={styles.summaryRow}>
             <View>
@@ -74,7 +130,7 @@ export function AnalyticsScreen() {
         </Panel>
       ) : null}
 
-      {selected ? (
+      {selected && viewMode === "progress" ? (
         <Panel>
           <SectionTitle>Exercise averages</SectionTitle>
           <Label>Weekly</Label>
@@ -84,6 +140,7 @@ export function AnalyticsScreen() {
         </Panel>
       ) : null}
 
+      {viewMode === "progress" ? (
       <Panel>
         <SectionTitle>Weekly volume ({unitSystem})</SectionTitle>
         <View style={styles.bars}>
@@ -98,6 +155,7 @@ export function AnalyticsScreen() {
           })}
         </View>
       </Panel>
+      ) : null}
     </Screen>
   );
 }
@@ -125,6 +183,32 @@ const styles = StyleSheet.create({
     fontWeight: "800"
   },
   chipTextActive: {
+    color: palette.surface
+  },
+  segmentRow: {
+    flexDirection: "row",
+    gap: spacing.sm
+  },
+  segmentButton: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.sm
+  },
+  segmentButtonActive: {
+    backgroundColor: palette.ink,
+    borderColor: palette.ink
+  },
+  segmentText: {
+    color: palette.ink,
+    fontWeight: "900",
+    textAlign: "center"
+  },
+  segmentTextActive: {
     color: palette.surface
   },
   summaryRow: {

@@ -6,21 +6,37 @@ import { Body } from "@/components/Text";
 import { palette } from "@/utils/theme";
 
 type Point = {
+  key?: string;
   label: string;
   value: number;
   details?: string[];
 };
 
-export function LineGraph({ points, height = 180, suffix = "" }: { points: Point[]; height?: number; suffix?: string }) {
+export function LineGraph({
+  points,
+  height = 180,
+  suffix = "",
+  emptyMessage = "Log more workouts to draw a trend.",
+  xLabels
+}: {
+  points: Point[];
+  height?: number;
+  suffix?: string;
+  emptyMessage?: string;
+  xLabels?: string[];
+}) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const width = 340;
   const padding = 28;
-  const recent = points.slice(-8);
+  const domain = (xLabels?.length ? xLabels : points.map((point) => point.key ?? point.label)).slice(-8);
+  const recent = xLabels?.length
+    ? points.filter((point) => domain.includes(point.key ?? point.label)).slice(-8)
+    : points.slice(-8);
 
   if (!recent.length) {
     return (
       <View style={[styles.empty, { height }]}>
-        <Body>Log more workouts to draw a trend.</Body>
+        <Body>{emptyMessage}</Body>
       </View>
     );
   }
@@ -31,16 +47,17 @@ export function LineGraph({ points, height = 180, suffix = "" }: { points: Point
   const span = max - min || 1;
   const plotWidth = width - padding * 2;
   const plotHeight = height - padding * 2;
-  const coordinates = recent.map((point, index) => {
-    const x = recent.length === 1 ? width / 2 : padding + (index / (recent.length - 1)) * plotWidth;
+  const coordinates = recent.map((point) => {
+    const domainIndex = Math.max(0, domain.indexOf(point.key ?? point.label));
+    const x = domain.length === 1 ? width / 2 : padding + (domainIndex / (domain.length - 1)) * plotWidth;
     const y = padding + (1 - (point.value - min) / span) * plotHeight;
     return { x, y, point };
   });
   const activePoint = activeIndex === null ? null : coordinates[activeIndex];
   const tooltipLines = activePoint ? [activePoint.point.label, `${activePoint.point.value.toFixed(1)}${suffix}`, ...(activePoint.point.details ?? [])] : [];
-  const detailCount = Math.min(Math.max(tooltipLines.length - 2, 0), 4);
-  const tooltipWidth = 190;
-  const tooltipHeight = 62 + detailCount * 20;
+  const detailLines = tooltipLines.slice(2);
+  const tooltipWidth = 220;
+  const tooltipHeight = 62 + detailLines.length * 20;
   const tooltipX = activePoint ? Math.max(8, Math.min(activePoint.x - tooltipWidth / 2, width - tooltipWidth - 8)) : 0;
   const tooltipY = activePoint ? Math.max(8, activePoint.y - tooltipHeight - 14) : 0;
 
@@ -81,9 +98,9 @@ export function LineGraph({ points, height = 180, suffix = "" }: { points: Point
             <SvgText pointerEvents="none" x={tooltipX + 14} y={tooltipY + 47} fill={palette.surface} fontSize="18" fontWeight="900">
               {tooltipLines[1]}
             </SvgText>
-            {tooltipLines.slice(2, 6).map((line, index) => (
+            {detailLines.map((line, index) => (
               <SvgText pointerEvents="none" key={`${line}-${index}`} x={tooltipX + 14} y={tooltipY + 72 + index * 20} fill={palette.surfaceAlt} fontSize="13" fontWeight="700">
-                {line.length > 24 ? `${line.slice(0, 23)}...` : line}
+                {line.length > 28 ? `${line.slice(0, 27)}...` : line}
               </SvgText>
             ))}
           </>

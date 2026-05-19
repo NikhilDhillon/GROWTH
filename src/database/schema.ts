@@ -26,6 +26,13 @@ CREATE TABLE IF NOT EXISTS workout_sets (
   created_at TEXT
 );
 
+CREATE TABLE IF NOT EXISTS body_weight_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  weight REAL NOT NULL,
+  logged_date TEXT NOT NULL UNIQUE,
+  created_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS muscle_strength_config (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   muscle_group TEXT NOT NULL,

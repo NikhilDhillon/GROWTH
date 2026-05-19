@@ -15,11 +15,14 @@ export function LogsScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
   const sessions = useFitnessStore((state) => state.sessions);
   const sets = useFitnessStore((state) => state.sets);
+  const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
   const points = useFitnessStore((state) => state.exercisePoints);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const deleteWorkoutLog = useFitnessStore((state) => state.deleteWorkoutLog);
+  const deleteBodyWeightLog = useFitnessStore((state) => state.deleteBodyWeightLog);
   const logs = buildPreviousLogs({ exercises, sessions, sets, points, unitSystem });
   const groupedLogs = useMemo(() => groupLogsByMuscle(logs, exercises), [exercises, logs]);
+  const [bodyWeightCollapsed, setBodyWeightCollapsed] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [collapsedMuscles, setCollapsedMuscles] = useState<Record<string, boolean>>({});
 
@@ -29,6 +32,37 @@ export function LogsScreen() {
         <Label>Workout history</Label>
         <Title>Logs</Title>
       </View>
+
+      <Panel>
+        <Pressable
+          accessibilityLabel={`${bodyWeightCollapsed ? "Expand" : "Collapse"} body weight logs`}
+          onPress={() => setBodyWeightCollapsed((current) => !current)}
+          style={styles.muscleHeader}
+        >
+          <View style={styles.exerciseHeaderTitle}>
+            {bodyWeightCollapsed ? <ChevronRight size={20} color={palette.ink} /> : <ChevronDown size={20} color={palette.ink} />}
+            <SectionTitle style={styles.muscleTitle}>Body weight</SectionTitle>
+          </View>
+          <Body style={styles.countText}>{bodyWeightLogs.length} logs</Body>
+        </Pressable>
+        {!bodyWeightCollapsed && bodyWeightLogs.length ? (
+          bodyWeightLogs.map((log) => (
+            <View key={log.id} style={styles.historyRow}>
+              <View style={styles.historyHeader}>
+                <View style={styles.historyText}>
+                  <Body style={styles.dateText}>{formatShortDate(log.logged_date)}</Body>
+                  <Body>{log.weight.toFixed(1)} kg</Body>
+                </View>
+                <Pressable accessibilityLabel={`Delete body weight log from ${log.logged_date}`} onPress={() => void deleteBodyWeightLog(log.id)} style={styles.deleteButton}>
+                  <Trash2 size={16} color={palette.danger} />
+                </Pressable>
+              </View>
+            </View>
+          ))
+        ) : !bodyWeightCollapsed ? (
+          <Body>No body weight logs yet.</Body>
+        ) : null}
+      </Panel>
 
       <Panel>
         <SectionTitle>Previous logs</SectionTitle>
