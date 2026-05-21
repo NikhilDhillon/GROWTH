@@ -10,6 +10,7 @@ import { useFitnessStore } from "@/store/useFitnessStore";
 import { formatShortDate } from "@/utils/date";
 import { buildPreviousLogs } from "@/utils/logs";
 import { palette, spacing } from "@/utils/theme";
+import { formatWeight, weightFromStorageUnit } from "@/utils/units";
 
 export function AnalyticsScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
@@ -28,19 +29,20 @@ export function AnalyticsScreen() {
   const previousLogs = useMemo(() => buildPreviousLogs({ exerciseId: selected?.id, exercises, sessions, sets, points: selectedPoints, unitSystem }), [exercises, selected?.id, selectedPoints, sessions, sets, unitSystem]);
   const weeklyExercisePoints = weeklyScoreAverages(selectedPoints).map((point) => ({ label: formatShortDate(point.date), value: point.score }));
   const monthlyExercisePoints = monthlyScoreAverages(selectedPoints).map((point) => ({ label: point.date, value: point.score }));
-  const bodyWeightByDate = new Map(bodyWeightLogs.map((log) => [log.logged_date, log]));
+  const bodyWeightByDate = new Map(bodyWeightLogs.map((log) => [log.logged_at.slice(0, 10), log]));
   const strengthPointByDate = new Map(selectedPoints.map((point) => [point.date, point]));
   const logByDate = new Map(previousLogs.map((log) => [log.date, log]));
-  const comparisonDates = [...new Set([...bodyWeightLogs.map((log) => log.logged_date), ...selectedPoints.map((point) => point.date)])].sort();
+  const comparisonDates = [...new Set([...bodyWeightLogs.map((log) => log.logged_at.slice(0, 10)), ...selectedPoints.map((point) => point.date)])].sort();
   const weightPoints = [...bodyWeightLogs]
-    .sort((a, b) => a.logged_date.localeCompare(b.logged_date) || a.created_at.localeCompare(b.created_at))
+    .sort((a, b) => a.logged_at.localeCompare(b.logged_at) || a.created_at.localeCompare(b.created_at))
     .map((log) => {
-      const strengthPoint = strengthPointByDate.get(log.logged_date);
-      const workoutLog = logByDate.get(log.logged_date);
+      const loggedDate = log.logged_at.slice(0, 10);
+      const strengthPoint = strengthPointByDate.get(loggedDate);
+      const workoutLog = logByDate.get(loggedDate);
       return {
-        key: log.logged_date,
-        label: formatShortDate(log.logged_date),
-        value: log.weight,
+        key: loggedDate,
+        label: formatShortDate(loggedDate),
+        value: weightFromStorageUnit(log.weight, unitSystem),
         details: [
           strengthPoint ? `Score ${strengthPoint.score.toFixed(1)} pts` : "No lift logged",
           ...(workoutLog?.sets ?? [])
@@ -55,7 +57,7 @@ export function AnalyticsScreen() {
       label: formatShortDate(point.date),
       value: point.score,
       details: [
-        weightLog ? `Body weight ${weightLog.weight.toFixed(1)} kg` : "No body weight logged",
+        weightLog ? `Body weight ${formatWeight(weightLog.weight, unitSystem)}` : "No body weight logged",
         ...(workoutLog?.sets ?? [])
       ]
     };
@@ -98,7 +100,7 @@ export function AnalyticsScreen() {
         <Panel>
           <SectionTitle>{selected.name} vs body weight</SectionTitle>
           <Label>Body weight</Label>
-          <LineGraph points={weightPoints} suffix=" kg" height={150} emptyMessage="Log body weight to draw a trend." xLabels={comparisonDates} />
+          <LineGraph points={weightPoints} suffix={` ${unitSystem}`} height={150} emptyMessage="Log body weight to draw a trend." xLabels={comparisonDates} />
           <Label>Strength score</Label>
           <LineGraph points={comparisonStrengthPoints} suffix=" pts" height={150} xLabels={comparisonDates} />
         </Panel>

@@ -8,9 +8,9 @@ import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { calculateExerciseScore } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { LoggedSetDraft } from "@/types";
+import { LoggedSetDraft, MuscleGroup } from "@/types";
 import { todayIso } from "@/utils/date";
-import { palette, spacing } from "@/utils/theme";
+import { muscles, palette, spacing } from "@/utils/theme";
 import { formatWeightInput, weightToStorageUnit } from "@/utils/units";
 
 const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
@@ -22,13 +22,21 @@ export function WorkoutScreen() {
   const saveBodyWeightLog = useFitnessStore((state) => state.saveBodyWeightLog);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const [selectedKind, setSelectedKind] = useState<"exercise" | "weight">("exercise");
+  const [selectedMuscle, setSelectedMuscle] = useState<MuscleGroup>(exercises[0]?.primary_muscle ?? "Chest");
   const [exerciseId, setExerciseId] = useState<number | null>(exercises[0]?.id ?? null);
   const [draftSets, setDraftSets] = useState<LoggedSetDraft[]>([emptySet(), emptySet(), emptySet()]);
   const [weightDraft, setWeightDraft] = useState("");
   const [workoutDate, setWorkoutDate] = useState(todayIso());
   const [notes, setNotes] = useState("");
 
-  const selectedExercise = selectedKind === "exercise" ? exercises.find((exercise) => exercise.id === exerciseId) ?? exercises[0] : null;
+  const exercisesByMuscle = useMemo(() => {
+    return muscles.reduce((output, muscle) => {
+      output[muscle] = exercises.filter((exercise) => exercise.primary_muscle === muscle);
+      return output;
+    }, {} as Record<MuscleGroup, typeof exercises>);
+  }, [exercises]);
+  const visibleExercises = exercisesByMuscle[selectedMuscle] ?? [];
+  const selectedExercise = selectedKind === "exercise" ? visibleExercises.find((exercise) => exercise.id === exerciseId) ?? visibleExercises[0] ?? null : null;
   const previousSets = useMemo(() => {
     if (!selectedExercise) return [];
     const matching = sets.filter((set) => set.exercise_id === selectedExercise.id);
@@ -75,11 +83,29 @@ export function WorkoutScreen() {
           <Pressable onPress={() => setSelectedKind("weight")} style={[styles.exerciseButton, selectedKind === "weight" && styles.exerciseButtonActive]}>
             <Body style={[styles.exerciseText, selectedKind === "weight" && styles.exerciseTextActive]}>Weight</Body>
           </Pressable>
-          {exercises.map((exercise) => (
+        </View>
+        <View style={styles.muscleTabs}>
+          {muscles.map((muscle) => (
+            <Pressable
+              key={muscle}
+              onPress={() => {
+                setSelectedKind("exercise");
+                setSelectedMuscle(muscle);
+                setExerciseId(exercisesByMuscle[muscle]?.[0]?.id ?? null);
+              }}
+              style={[styles.muscleTab, selectedKind === "exercise" && selectedMuscle === muscle && styles.muscleTabActive]}
+            >
+              <Body style={[styles.muscleTabText, selectedKind === "exercise" && selectedMuscle === muscle && styles.muscleTabTextActive]}>{muscle}</Body>
+            </Pressable>
+          ))}
+        </View>
+        <View style={styles.exerciseGrid}>
+          {visibleExercises.map((exercise) => (
             <Pressable
               key={exercise.id}
               onPress={() => {
                 setSelectedKind("exercise");
+                setSelectedMuscle(exercise.primary_muscle);
                 setExerciseId(exercise.id);
               }}
               style={[styles.exerciseButton, selectedKind === "exercise" && exercise.id === selectedExercise?.id && styles.exerciseButtonActive]}
@@ -87,6 +113,7 @@ export function WorkoutScreen() {
               <Body style={[styles.exerciseText, selectedKind === "exercise" && exercise.id === selectedExercise?.id && styles.exerciseTextActive]}>{exercise.name}</Body>
             </Pressable>
           ))}
+          {!visibleExercises.length ? <Body>No exercises in {selectedMuscle} yet.</Body> : null}
         </View>
       </Panel>
 
@@ -98,7 +125,7 @@ export function WorkoutScreen() {
       {selectedKind === "weight" ? (
         <Panel>
           <SectionTitle>Body weight</SectionTitle>
-          <TextInput style={styles.input} value={weightDraft} onChangeText={setWeightDraft} keyboardType="numeric" placeholder="kg" />
+          <TextInput style={styles.input} value={weightDraft} onChangeText={setWeightDraft} keyboardType="numeric" placeholder={unitSystem} />
           <Pressable style={styles.primaryButton} onPress={handleSaveWeight}>
             <Save size={19} color={palette.surface} />
             <Body style={styles.primaryButtonText}>Save weight</Body>
@@ -153,6 +180,32 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: spacing.sm
+  },
+  muscleTabs: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+    paddingBottom: spacing.sm
+  },
+  muscleTab: {
+    minHeight: 38,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.surfaceAlt
+  },
+  muscleTabActive: {
+    backgroundColor: palette.accentSoft
+  },
+  muscleTabText: {
+    color: palette.muted,
+    fontWeight: "900"
+  },
+  muscleTabTextActive: {
+    color: palette.ink
   },
   exerciseButton: {
     borderWidth: 1,

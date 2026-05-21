@@ -33,7 +33,9 @@ export type WorkoutSet = {
 export type BodyWeightLog = {
   id: number;
   weight: number;
-  logged_date: string;
+  unit: UnitSystem;
+  logged_at: string;
+  logged_date?: string;
   created_at: string;
 };
 
@@ -80,3 +82,10 @@ export type MuscleSummary = {
   trend: TrendStatus;
   contributors: string[];
 };
+
+export type BulkAnalyticsRange = "7d" | "14d" | "30d" | "60d" | "90d" | "all";
+
+export type BulkAnalyticsScope =
+  | { scope: "exercise"; exerciseId: number }
+  | { scope: "muscle"; muscleGroup: MuscleGroup }
+  | { scope: "overall" };

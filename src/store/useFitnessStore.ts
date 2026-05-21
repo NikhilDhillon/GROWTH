@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { buildExerciseScorePoints, buildMuscleScorePoints, summarizeMuscles } from "@/services/strength/strengthService";
-import { createExercise, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteExercise, deleteWorkoutSession, loadAllData, loginUser, logoutUser, logWorkout, registerUser, requestPasswordReset, saveBodyWeightLog as saveStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateExerciseMuscle, updateUnitSystem } from "@/database/database";
+import { createExercise, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteExercise, deleteWorkoutSession, loadAllData, loginUser, logoutUser, logWorkout, registerUser, requestPasswordReset, saveBodyWeightLog as saveStoredBodyWeightLog, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateExerciseMuscle, updateUnitSystem } from "@/database/database";
 import { BodyWeightLog, Exercise, ExerciseScorePoint, LoggedSetDraft, MuscleGroup, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { todayIso } from "@/utils/date";
 import { weightToStorageUnit } from "@/utils/units";
@@ -33,6 +33,7 @@ type FitnessState = {
   saveWorkout: (input: { exerciseId: number; workoutDate: string; notes: string; sets: LoggedSetDraft[] }) => Promise<void>;
   deleteWorkoutLog: (sessionId: number) => Promise<void>;
   saveBodyWeightLog: (input: { loggedDate: string; weight: string }) => Promise<void>;
+  updateBodyWeightLog: (input: { id: number; loggedDate: string; weight: string }) => Promise<void>;
   deleteBodyWeightLog: (id: number) => Promise<void>;
   setUnitSystem: (unitSystem: UnitSystem) => Promise<void>;
   setConfigWeight: (id: number, weightFactor: number) => Promise<void>;
@@ -146,9 +147,19 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   saveBodyWeightLog: async (input) => {
     const weight = Number(input.weight);
     const loggedDate = /^\d{4}-\d{2}-\d{2}$/.test(input.loggedDate) ? input.loggedDate : todayIso();
+    const unitSystem = get().unitSystem;
 
     if (!Number.isFinite(weight) || weight <= 0) return;
-    await saveStoredBodyWeightLog({ loggedDate, weight });
+    await saveStoredBodyWeightLog({ loggedDate, weight: weightToStorageUnit(weight, unitSystem), unit: unitSystem });
+    await get().hydrate();
+  },
+  updateBodyWeightLog: async (input) => {
+    const weight = Number(input.weight);
+    const loggedDate = /^\d{4}-\d{2}-\d{2}$/.test(input.loggedDate) ? input.loggedDate : todayIso();
+    const unitSystem = get().unitSystem;
+
+    if (!Number.isFinite(weight) || weight <= 0) return;
+    await updateStoredBodyWeightLog({ id: input.id, loggedDate, weight: weightToStorageUnit(weight, unitSystem), unit: unitSystem });
     await get().hydrate();
   },
   deleteBodyWeightLog: async (id) => {

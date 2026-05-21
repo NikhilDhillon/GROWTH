@@ -67,7 +67,7 @@ export async function loadAllData() {
     exercises: [...data.exercises].sort((a, b) => a.name.localeCompare(b.name)),
     sessions: [...data.sessions].sort((a, b) => b.workout_date.localeCompare(a.workout_date)),
     sets: [...data.sets].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.set_number - b.set_number),
-    bodyWeightLogs: [...data.bodyWeightLogs].sort((a, b) => b.logged_date.localeCompare(a.logged_date) || b.created_at.localeCompare(a.created_at)),
+    bodyWeightLogs: normalizeBodyWeightLogs(data.bodyWeightLogs).sort((a, b) => b.logged_at.localeCompare(a.logged_at) || b.created_at.localeCompare(a.created_at)),
     configs: [...data.configs].sort((a, b) => a.muscle_group.localeCompare(b.muscle_group)),
     currentUser: data.users.find((user) => user.id === data.currentUserId) ?? null,
     unitSystem: data.unitSystem
@@ -104,7 +104,7 @@ async function loadCloudData(client: SupabaseClient) {
     exercises: (exercisesResult.data ?? []) as Exercise[],
     sessions: (sessionsResult.data ?? []) as WorkoutSession[],
     sets: (setsResult.data ?? []) as WorkoutSet[],
-    bodyWeightLogs: bodyWeightResult.error ? [] : (bodyWeightResult.data ?? []) as BodyWeightLog[],
+    bodyWeightLogs: normalizeBodyWeightLogs(bodyWeightResult.error ? [] : (bodyWeightResult.data ?? []) as BodyWeightLog[]),
     configs: (configsResult.data ?? []) as MuscleStrengthConfig[],
     currentUser: cloudUserToAppUser(user, profileResult.data),
     unitSystem: settingResult.data?.value === "kg" ? "kg" : "lb"
@@ -354,7 +354,7 @@ export async function deleteWorkoutSession(sessionId: number) {
   writeDatabase(data);
 }
 
-export async function saveBodyWeightLog(input: { loggedDate: string; weight: number }) {
+export async function saveBodyWeightLog(input: { loggedDate: string; weight: number; unit: UnitSystem }) {
   if (supabase) {
     const user = await requireCloudUser(supabase);
     if (!user) throw new Error("Please log in again.");
@@ -375,16 +375,38 @@ export async function saveBodyWeightLog(input: { loggedDate: string; weight: num
   }
 
   const data = readDatabase();
-  const existing = data.bodyWeightLogs.find((log) => log.logged_date === input.loggedDate);
-  const row = {
-    id: existing?.id ?? Math.max(0, ...data.bodyWeightLogs.map((log) => log.id)) + 1,
+  const row: BodyWeightLog = {
+    id: Math.max(0, ...data.bodyWeightLogs.map((log) => log.id)) + 1,
     weight: input.weight,
+    unit: input.unit,
+    logged_at: `${input.loggedDate}T12:00:00.000Z`,
     logged_date: input.loggedDate,
-    created_at: `${input.loggedDate}T12:00:00.000Z`
+    created_at: now()
   };
-  data.bodyWeightLogs = existing
-    ? data.bodyWeightLogs.map((log) => (log.id === existing.id ? row : log))
-    : [...data.bodyWeightLogs, row];
+  data.bodyWeightLogs = [...normalizeBodyWeightLogs(data.bodyWeightLogs), row];
+  writeDatabase(data);
+}
+
+export async function updateBodyWeightLog(input: { id: number; loggedDate: string; weight: number; unit: UnitSystem }) {
+  if (supabase) {
+    await requireCloudUser(supabase);
+    const result = await supabase
+      .from("body_weight_logs")
+      .update({ logged_date: input.loggedDate, weight: input.weight, created_at: `${input.loggedDate}T12:00:00.000Z` })
+      .eq("id", input.id);
+    if (result.error && isMissingBodyWeightTableError(result.error)) {
+      throw new Error("Body weight logging needs the Supabase schema update for body_weight_logs.");
+    }
+    throwIfSupabaseError(result.error);
+    return;
+  }
+
+  const data = readDatabase();
+  data.bodyWeightLogs = normalizeBodyWeightLogs(data.bodyWeightLogs).map((log) =>
+    log.id === input.id
+      ? { ...log, weight: input.weight, unit: input.unit, logged_at: `${input.loggedDate}T12:00:00.000Z`, logged_date: input.loggedDate }
+      : log
+  );
   writeDatabase(data);
 }
 
@@ -465,4 +487,16 @@ function throwIfSupabaseError(error: { message: string } | null) {
 function isMissingBodyWeightTableError(error: { message: string; code?: string } | null) {
   if (!error) return false;
   return error.message.includes("body_weight_logs") && (error.message.includes("schema cache") || error.message.includes("does not exist") || error.code === "PGRST205");
+}
+
+function normalizeBodyWeightLogs(logs: BodyWeightLog[]) {
+  return logs.map((log) => {
+    const loggedDate = log.logged_at?.slice(0, 10) ?? log.logged_date ?? log.created_at.slice(0, 10);
+    return {
+      ...log,
+      unit: log.unit ?? "lb",
+      logged_at: log.logged_at ?? `${loggedDate}T12:00:00.000Z`,
+      logged_date: loggedDate
+    };
+  });
 }

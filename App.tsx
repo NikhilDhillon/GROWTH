@@ -4,7 +4,7 @@ import { Analytics } from "@vercel/analytics/react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { StatusBar } from "expo-status-bar";
-import { BarChart3, Dumbbell, Home, LineChart, ListChecks, Settings } from "lucide-react-native";
+import { BarChart3, Dumbbell, Home, LineChart, ListChecks, Scale, Settings, TrendingUp } from "lucide-react-native";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -18,6 +18,8 @@ import { AnalyticsScreen } from "@/screens/Analytics/AnalyticsScreen";
 import { SettingsScreen } from "@/screens/Settings/SettingsScreen";
 import { AuthScreen } from "@/screens/Auth/AuthScreen";
 import { LogsScreen } from "@/screens/Logs/LogsScreen";
+import { BodyweightScreen } from "@/screens/Bodyweight/BodyweightScreen";
+import { BulkAnalyticsScreen } from "@/screens/BulkAnalytics/BulkAnalyticsScreen";
 
 const Tab = createBottomTabNavigator();
 
@@ -88,6 +90,8 @@ export default function App() {
               <Tab.Screen name="Log" component={WorkoutScreen} options={{ tabBarIcon: ({ color }) => <Dumbbell size={21} color={color} /> }} />
               <Tab.Screen name="Exercises" component={ExerciseScreen} options={{ tabBarIcon: ({ color }) => <LineChart size={21} color={color} /> }} />
               <Tab.Screen name="Progress" component={AnalyticsScreen} options={{ tabBarIcon: ({ color }) => <BarChart3 size={21} color={color} /> }} />
+              <Tab.Screen name="Bodyweight" component={BodyweightScreen} options={{ tabBarIcon: ({ color }) => <Scale size={21} color={color} /> }} />
+              <Tab.Screen name="Bulk" component={BulkAnalyticsScreen} options={{ tabBarIcon: ({ color }) => <TrendingUp size={21} color={color} /> }} />
               <Tab.Screen name="Logs" component={LogsScreen} options={{ tabBarIcon: ({ color }) => <ListChecks size={21} color={color} /> }} />
               <Tab.Screen name="Settings" component={SettingsScreen} options={{ tabBarIcon: ({ color }) => <Settings size={21} color={color} /> }} />
             </Tab.Navigator>

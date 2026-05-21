@@ -10,6 +10,7 @@ import { Exercise, MuscleGroup } from "@/types";
 import { formatShortDate } from "@/utils/date";
 import { buildPreviousLogs } from "@/utils/logs";
 import { muscles, palette, spacing } from "@/utils/theme";
+import { formatWeight } from "@/utils/units";
 
 export function LogsScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
@@ -50,10 +51,10 @@ export function LogsScreen() {
             <View key={log.id} style={styles.historyRow}>
               <View style={styles.historyHeader}>
                 <View style={styles.historyText}>
-                  <Body style={styles.dateText}>{formatShortDate(log.logged_date)}</Body>
-                  <Body>{log.weight.toFixed(1)} kg</Body>
+                  <Body style={styles.dateText}>{formatShortDate(log.logged_at.slice(0, 10))}</Body>
+                  <Body>{formatWeight(log.weight, unitSystem)}</Body>
                 </View>
-                <Pressable accessibilityLabel={`Delete body weight log from ${log.logged_date}`} onPress={() => void deleteBodyWeightLog(log.id)} style={styles.deleteButton}>
+                <Pressable accessibilityLabel={`Delete body weight log from ${log.logged_at.slice(0, 10)}`} onPress={() => void deleteBodyWeightLog(log.id)} style={styles.deleteButton}>
                   <Trash2 size={16} color={palette.danger} />
                 </Pressable>
               </View>

@@ -12,9 +12,39 @@ async function getDatabase() {
   if (!database) {
     database = await SQLite.openDatabaseAsync("growth.db");
     await database.execAsync(schema);
+    await ensureBodyWeightLogSchema(database);
     await removeLegacySeedData(database);
   }
   return database;
+}
+
+async function ensureBodyWeightLogSchema(db: Database) {
+  const renamed = await db.getFirstAsync<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", ["bodyweight_logs"]);
+  if (renamed) {
+    await db.runAsync(`
+      INSERT INTO body_weight_logs (weight, unit, logged_at, logged_date, created_at)
+      SELECT weight, unit, logged_at, substr(logged_at, 1, 10), created_at
+      FROM bodyweight_logs
+      WHERE NOT EXISTS (
+        SELECT 1 FROM body_weight_logs WHERE body_weight_logs.id = bodyweight_logs.id
+      )
+    `);
+  }
+
+  const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(body_weight_logs)");
+  const columnNames = new Set(columns.map((column) => column.name));
+  if (!columnNames.has("unit")) {
+    await db.runAsync("ALTER TABLE body_weight_logs ADD COLUMN unit TEXT NOT NULL DEFAULT 'lb'");
+  }
+  if (!columnNames.has("logged_at")) {
+    await db.runAsync("ALTER TABLE body_weight_logs ADD COLUMN logged_at TEXT");
+  }
+  if (!columnNames.has("logged_date")) {
+    await db.runAsync("ALTER TABLE body_weight_logs ADD COLUMN logged_date TEXT");
+  }
+
+  await db.runAsync("UPDATE body_weight_logs SET logged_date = COALESCE(logged_date, substr(logged_at, 1, 10), substr(created_at, 1, 10))");
+  await db.runAsync("UPDATE body_weight_logs SET logged_at = COALESCE(logged_at, logged_date || 'T12:00:00.000Z', created_at)");
 }
 
 async function removeLegacySeedData(db: Database) {
@@ -48,7 +78,7 @@ export async function loadAllData() {
     db.getAllAsync<Exercise>("SELECT * FROM exercises ORDER BY name"),
     db.getAllAsync<WorkoutSession>("SELECT * FROM workout_sessions ORDER BY workout_date DESC"),
     db.getAllAsync<WorkoutSet>("SELECT * FROM workout_sets ORDER BY created_at ASC, set_number ASC"),
-    db.getAllAsync<BodyWeightLog>("SELECT * FROM body_weight_logs ORDER BY logged_date DESC, created_at DESC"),
+    db.getAllAsync<BodyWeightLog>("SELECT id, weight, unit, logged_at, created_at, COALESCE(logged_date, substr(logged_at, 1, 10)) as logged_date FROM body_weight_logs ORDER BY logged_at DESC, created_at DESC"),
     db.getAllAsync<MuscleStrengthConfig>("SELECT * FROM muscle_strength_config ORDER BY muscle_group"),
     db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1"),
     db.getFirstAsync<{ value: UnitSystem }>("SELECT value FROM app_settings WHERE key = ?", ["unit_system"])
@@ -151,11 +181,19 @@ export async function deleteWorkoutSession(sessionId: number) {
   await db.runAsync("DELETE FROM workout_sessions WHERE id = ?", [sessionId]);
 }
 
-export async function saveBodyWeightLog(input: { loggedDate: string; weight: number }) {
+export async function saveBodyWeightLog(input: { loggedDate: string; weight: number; unit: UnitSystem }) {
   const db = await getDatabase();
   await db.runAsync(
-    "INSERT INTO body_weight_logs (weight, logged_date, created_at) VALUES (?, ?, ?) ON CONFLICT(logged_date) DO UPDATE SET weight = excluded.weight, created_at = excluded.created_at",
-    [input.weight, input.loggedDate, `${input.loggedDate}T12:00:00.000Z`]
+    "INSERT INTO body_weight_logs (weight, unit, logged_at, logged_date, created_at) VALUES (?, ?, ?, ?, ?)",
+    [input.weight, input.unit, `${input.loggedDate}T12:00:00.000Z`, input.loggedDate, new Date().toISOString()]
+  );
+}
+
+export async function updateBodyWeightLog(input: { id: number; loggedDate: string; weight: number; unit: UnitSystem }) {
+  const db = await getDatabase();
+  await db.runAsync(
+    "UPDATE body_weight_logs SET weight = ?, unit = ?, logged_at = ?, logged_date = ? WHERE id = ?",
+    [input.weight, input.unit, `${input.loggedDate}T12:00:00.000Z`, input.loggedDate, input.id]
   );
 }
 
