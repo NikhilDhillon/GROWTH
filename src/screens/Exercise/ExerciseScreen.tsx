@@ -101,6 +101,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     color: palette.ink,
     backgroundColor: palette.surface,
+    fontSize: 16,
     fontWeight: "800"
   },
   chipRow: {

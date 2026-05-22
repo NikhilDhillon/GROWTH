@@ -31,7 +31,7 @@ const styles = StyleSheet.create({
   },
   scroll: {
     paddingBottom: 116,
-    ...(Platform.OS === "web" ? { touchAction: "pan-y" } : null)
+    ...(Platform.OS === "web" ? { touchAction: "pan-y pinch-zoom" } : null)
   },
   inner: {
     width: "100%",

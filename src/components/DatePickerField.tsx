@@ -55,7 +55,7 @@ const webInputStyle = {
   backgroundColor: "transparent",
   color: palette.ink,
   fontWeight: "700",
-  fontSize: 14,
+  fontSize: 16,
   outlineStyle: "none"
 } as const;
 

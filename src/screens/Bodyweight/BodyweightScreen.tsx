@@ -172,6 +172,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: spacing.md,
     color: palette.ink,
+    fontSize: 16,
     fontWeight: "800"
   },
   unitToggle: {
