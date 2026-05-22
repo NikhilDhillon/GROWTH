@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Pressable, StyleSheet, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, TextInput, useWindowDimensions, View } from "react-native";
 import { Pencil, Plus, Save, Trash2, X } from "lucide-react-native";
 
 import { DatePickerField } from "@/components/DatePickerField";
@@ -15,6 +15,7 @@ import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { formatWeight, formatWeightInput } from "@/utils/units";
 
 export function BodyweightScreen() {
+  const { width } = useWindowDimensions();
   const logs = useFitnessStore((state) => state.bodyWeightLogs);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const saveBodyWeightLog = useFitnessStore((state) => state.saveBodyWeightLog);
@@ -25,6 +26,7 @@ export function BodyweightScreen() {
   const [weight, setWeight] = useState("");
   const [entryUnit, setEntryUnit] = useState<UnitSystem>(unitSystem);
   const latest = logs[0];
+  const isCompact = width < 430;
   const sortedLogs = [...logs].sort((a, b) => a.logged_at.localeCompare(b.logged_at) || a.created_at.localeCompare(b.created_at));
   const graphPoints = sortedLogs.map((log) => ({
     key: String(log.id),
@@ -92,21 +94,23 @@ export function BodyweightScreen() {
           ) : null}
         </View>
         <DatePickerField value={loggedDate} onChange={setLoggedDate} />
-        <View style={styles.inputRow}>
-          <TextInput style={styles.input} value={weight} onChangeText={setWeight} keyboardType="decimal-pad" inputMode="decimal" placeholder={entryUnit} />
-          <View style={styles.unitToggle}>
-            {(["lb", "kg"] as UnitSystem[]).map((unit) => (
-              <Pressable
-                key={unit}
-                hitSlop={touchHitSlop}
-                onPress={() => setEntryUnit(unit)}
-                style={pressableFeedback([styles.unitButton, entryUnit === unit && styles.unitButtonActive])}
-              >
-                <Body style={[styles.unitButtonText, entryUnit === unit && styles.unitButtonTextActive]}>{unit}</Body>
-              </Pressable>
-            ))}
+        <View style={[styles.inputRow, isCompact && styles.inputRowCompact]}>
+          <View style={styles.inputControls}>
+            <TextInput style={styles.input} value={weight} onChangeText={setWeight} keyboardType="decimal-pad" inputMode="decimal" placeholder={entryUnit} />
+            <View style={styles.unitToggle}>
+              {(["lb", "kg"] as UnitSystem[]).map((unit) => (
+                <Pressable
+                  key={unit}
+                  hitSlop={touchHitSlop}
+                  onPress={() => setEntryUnit(unit)}
+                  style={pressableFeedback([styles.unitButton, entryUnit === unit && styles.unitButtonActive])}
+                >
+                  <Body style={[styles.unitButtonText, entryUnit === unit && styles.unitButtonTextActive]}>{unit}</Body>
+                </Pressable>
+              ))}
+            </View>
           </View>
-          <Pressable hitSlop={touchHitSlop} style={pressableFeedback(styles.primaryButton)} onPress={handleSave}>
+          <Pressable hitSlop={touchHitSlop} style={pressableFeedback([styles.primaryButton, isCompact && styles.primaryButtonCompact])} onPress={handleSave}>
             {editing ? <Save size={18} color={palette.surface} /> : <Plus size={18} color={palette.surface} />}
             <Body style={styles.primaryButtonText}>{editing ? "Update" : "Add"}</Body>
           </Pressable>
@@ -148,8 +152,19 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     alignItems: "stretch"
   },
+  inputRowCompact: {
+    flexDirection: "column"
+  },
+  inputControls: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    gap: spacing.sm,
+    alignItems: "stretch"
+  },
   input: {
     flex: 1,
+    minWidth: 0,
     minHeight: 44,
     borderWidth: 1,
     borderColor: palette.border,
@@ -196,6 +211,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
     ...fastTouchStyle
+  },
+  primaryButtonCompact: {
+    width: "100%"
   },
   primaryButtonText: {
     color: palette.surface,
