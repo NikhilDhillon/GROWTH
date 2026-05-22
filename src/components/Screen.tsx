@@ -1,5 +1,5 @@
 import { ReactNode } from "react";
-import { ScrollView, StyleSheet, View } from "react-native";
+import { Platform, ScrollView, StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { palette, spacing } from "@/utils/theme";
@@ -9,7 +9,17 @@ export function Screen({ children, scroll = true }: { children: ReactNode; scrol
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      {scroll ? <ScrollView contentContainerStyle={styles.scroll}>{content}</ScrollView> : content}
+      {scroll ? (
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          keyboardShouldPersistTaps="handled"
+          scrollEventThrottle={16}
+          showsVerticalScrollIndicator={false}
+          {...(Platform.OS === "ios" ? { keyboardDismissMode: "interactive" as const } : null)}
+        >
+          {content}
+        </ScrollView>
+      ) : content}
     </SafeAreaView>
   );
 }
@@ -20,7 +30,8 @@ const styles = StyleSheet.create({
     backgroundColor: palette.background
   },
   scroll: {
-    paddingBottom: 116
+    paddingBottom: 116,
+    ...(Platform.OS === "web" ? { touchAction: "pan-y" } : null)
   },
   inner: {
     width: "100%",

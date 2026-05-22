@@ -6,6 +6,7 @@ import { Platform, Pressable, StyleSheet, View } from "react-native";
 import { Body } from "@/components/Text";
 import { dateToIso, formatShortDate, isoToDate } from "@/utils/date";
 import { palette, spacing } from "@/utils/theme";
+import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 
 export function DatePickerField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const [showPicker, setShowPicker] = useState(false);
@@ -28,7 +29,7 @@ export function DatePickerField({ value, onChange }: { value: string; onChange: 
 
   return (
     <View style={styles.wrap}>
-      <Pressable accessibilityLabel="Choose workout date" onPress={() => setShowPicker(true)} style={styles.button}>
+      <Pressable accessibilityLabel="Choose workout date" hitSlop={touchHitSlop} onPress={() => setShowPicker(true)} style={pressableFeedback(styles.button)}>
         <CalendarDays size={18} color={palette.ink} />
         <Body style={styles.buttonText}>{formatShortDate(value)}</Body>
       </Pressable>
@@ -71,7 +72,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm
+    gap: spacing.sm,
+    ...fastTouchStyle
   },
   buttonText: {
     color: palette.ink,
@@ -86,6 +88,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.sm
+    gap: spacing.sm,
+    ...fastTouchStyle
   }
 });

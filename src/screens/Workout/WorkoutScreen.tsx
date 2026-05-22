@@ -11,6 +11,7 @@ import { useFitnessStore } from "@/store/useFitnessStore";
 import { LoggedSetDraft, MuscleGroup } from "@/types";
 import { todayIso } from "@/utils/date";
 import { muscles, palette, spacing } from "@/utils/theme";
+import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { formatWeightInput, weightToStorageUnit } from "@/utils/units";
 
 const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
@@ -80,7 +81,7 @@ export function WorkoutScreen() {
       <Panel>
         <SectionTitle>Log type</SectionTitle>
         <View style={styles.exerciseGrid}>
-          <Pressable onPress={() => setSelectedKind("weight")} style={[styles.exerciseButton, selectedKind === "weight" && styles.exerciseButtonActive]}>
+          <Pressable hitSlop={touchHitSlop} onPress={() => setSelectedKind("weight")} style={pressableFeedback([styles.exerciseButton, selectedKind === "weight" && styles.exerciseButtonActive])}>
             <Body style={[styles.exerciseText, selectedKind === "weight" && styles.exerciseTextActive]}>Weight</Body>
           </Pressable>
         </View>
@@ -88,12 +89,13 @@ export function WorkoutScreen() {
           {muscles.map((muscle) => (
             <Pressable
               key={muscle}
+              hitSlop={touchHitSlop}
               onPress={() => {
                 setSelectedKind("exercise");
                 setSelectedMuscle(muscle);
                 setExerciseId(exercisesByMuscle[muscle]?.[0]?.id ?? null);
               }}
-              style={[styles.muscleTab, selectedKind === "exercise" && selectedMuscle === muscle && styles.muscleTabActive]}
+              style={pressableFeedback([styles.muscleTab, selectedKind === "exercise" && selectedMuscle === muscle && styles.muscleTabActive])}
             >
               <Body style={[styles.muscleTabText, selectedKind === "exercise" && selectedMuscle === muscle && styles.muscleTabTextActive]}>{muscle}</Body>
             </Pressable>
@@ -103,12 +105,13 @@ export function WorkoutScreen() {
           {visibleExercises.map((exercise) => (
             <Pressable
               key={exercise.id}
+              hitSlop={touchHitSlop}
               onPress={() => {
                 setSelectedKind("exercise");
                 setSelectedMuscle(exercise.primary_muscle);
                 setExerciseId(exercise.id);
               }}
-              style={[styles.exerciseButton, selectedKind === "exercise" && exercise.id === selectedExercise?.id && styles.exerciseButtonActive]}
+              style={pressableFeedback([styles.exerciseButton, selectedKind === "exercise" && exercise.id === selectedExercise?.id && styles.exerciseButtonActive])}
             >
               <Body style={[styles.exerciseText, selectedKind === "exercise" && exercise.id === selectedExercise?.id && styles.exerciseTextActive]}>{exercise.name}</Body>
             </Pressable>
@@ -126,7 +129,7 @@ export function WorkoutScreen() {
         <Panel>
           <SectionTitle>Body weight</SectionTitle>
           <TextInput style={styles.input} value={weightDraft} onChangeText={setWeightDraft} keyboardType="numeric" placeholder={unitSystem} />
-          <Pressable style={styles.primaryButton} onPress={handleSaveWeight}>
+          <Pressable hitSlop={touchHitSlop} style={pressableFeedback(styles.primaryButton)} onPress={handleSaveWeight}>
             <Save size={19} color={palette.surface} />
             <Body style={styles.primaryButtonText}>Save weight</Body>
           </Pressable>
@@ -138,7 +141,7 @@ export function WorkoutScreen() {
             <SectionTitle>Working sets</SectionTitle>
             <Body>Projected score: {projectedScore ? projectedScore.toFixed(1) : "..."}</Body>
           </View>
-          <Pressable accessibilityLabel="Duplicate previous workout" onPress={duplicatePrevious} style={styles.iconButton}>
+          <Pressable accessibilityLabel="Duplicate previous workout" hitSlop={touchHitSlop} onPress={duplicatePrevious} style={pressableFeedback(styles.iconButton)}>
             <Copy size={18} color={palette.ink} />
           </Pressable>
         </View>
@@ -148,20 +151,20 @@ export function WorkoutScreen() {
             <Label style={styles.setNumber}>{index + 1}</Label>
             <TextInput style={[styles.input, styles.setInput]} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} keyboardType="numeric" placeholder={unitSystem} />
             <TextInput style={[styles.input, styles.setInput]} value={set.reps} onChangeText={(value) => updateSet(index, "reps", value)} keyboardType="numeric" placeholder="reps" />
-            <Pressable accessibilityLabel="Remove set" onPress={() => setDraftSets((current) => current.filter((_, itemIndex) => itemIndex !== index))} style={[styles.iconButton, styles.removeButton]}>
+            <Pressable accessibilityLabel="Remove set" hitSlop={touchHitSlop} onPress={() => setDraftSets((current) => current.filter((_, itemIndex) => itemIndex !== index))} style={pressableFeedback([styles.iconButton, styles.removeButton])}>
               <Trash2 size={16} color={palette.danger} />
             </Pressable>
           </View>
         ))}
 
-        <Pressable style={styles.secondaryButton} onPress={() => setDraftSets((current) => [...current, emptySet()])}>
+        <Pressable hitSlop={touchHitSlop} style={pressableFeedback(styles.secondaryButton)} onPress={() => setDraftSets((current) => [...current, emptySet()])}>
           <Plus size={18} color={palette.ink} />
           <Body style={styles.buttonText}>Add set</Body>
         </Pressable>
 
         <TextInput style={[styles.input, styles.notes]} value={notes} onChangeText={setNotes} multiline placeholder="Notes" />
 
-        <Pressable style={styles.primaryButton} onPress={handleSave}>
+        <Pressable hitSlop={touchHitSlop} style={pressableFeedback(styles.primaryButton)} onPress={handleSave}>
           <Save size={19} color={palette.surface} />
           <Body style={styles.primaryButtonText}>Save workout</Body>
         </Pressable>
@@ -195,7 +198,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: palette.surfaceAlt
+    backgroundColor: palette.surfaceAlt,
+    ...fastTouchStyle
   },
   muscleTabActive: {
     backgroundColor: palette.accentSoft
@@ -213,7 +217,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 12,
-    backgroundColor: palette.surface
+    backgroundColor: palette.surface,
+    ...fastTouchStyle
   },
   exerciseButtonActive: {
     backgroundColor: palette.ink,
@@ -275,7 +280,8 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: palette.surface
+    backgroundColor: palette.surface,
+    ...fastTouchStyle
   },
   removeButton: {
     width: 40,
@@ -289,7 +295,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
-    gap: spacing.sm
+    gap: spacing.sm,
+    ...fastTouchStyle
   },
   buttonText: {
     color: palette.ink,
@@ -302,7 +309,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
-    gap: spacing.sm
+    gap: spacing.sm,
+    ...fastTouchStyle
   },
   primaryButtonText: {
     color: palette.surface,

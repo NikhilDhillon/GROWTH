@@ -10,6 +10,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { palette } from "@/utils/theme";
+import { fastTouchStyle } from "@/utils/touch";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { HomeScreen } from "@/screens/Home/HomeScreen";
 import { WorkoutScreen } from "@/screens/Workout/WorkoutScreen";
@@ -37,6 +38,39 @@ export default function App() {
     if (typeof document === "undefined") return;
     document.title = isPasswordRecovery ? "Reset Password - GROWTH" : currentUser ? "GROWTH" : "Login - GROWTH";
   }, [currentUser, isPasswordRecovery]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const styleId = "growth-touch-responsiveness";
+    if (document.getElementById(styleId)) return;
+
+    const style = document.createElement("style");
+    style.id = styleId;
+    style.textContent = `
+      html, body, #root {
+        touch-action: manipulation;
+        -webkit-text-size-adjust: 100%;
+      }
+
+      body {
+        overscroll-behavior-y: none;
+      }
+
+      *, *::before, *::after {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      [role="button"], button, input, textarea, select {
+        touch-action: manipulation;
+      }
+
+      [role="button"], button {
+        -webkit-touch-callout: none;
+        user-select: none;
+      }
+    `;
+    document.head.appendChild(style);
+  }, []);
 
   if (loading) {
     return (
@@ -73,13 +107,17 @@ export default function App() {
                 headerShown: false,
                 tabBarActiveTintColor: palette.ink,
                 tabBarInactiveTintColor: palette.muted,
-                tabBarStyle: {
-                  backgroundColor: palette.surface,
-                  borderTopColor: palette.border,
-                  height: 68,
-                  paddingBottom: 10,
-                  paddingTop: 8
-                },
+                tabBarStyle: [
+                  {
+                    backgroundColor: palette.surface,
+                    borderTopColor: palette.border,
+                    height: 68,
+                    paddingBottom: 10,
+                    paddingTop: 8
+                  },
+                  fastTouchStyle
+                ],
+                tabBarHideOnKeyboard: true,
                 tabBarLabelStyle: {
                   fontSize: 11,
                   fontWeight: "700"
