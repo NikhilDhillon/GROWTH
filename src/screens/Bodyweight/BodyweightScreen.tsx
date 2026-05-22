@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pressable, StyleSheet, TextInput, View } from "react-native";
 import { Pencil, Plus, Save, Trash2, X } from "lucide-react-native";
 
@@ -8,9 +8,10 @@ import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { BodyWeightLog } from "@/types";
+import { BodyWeightLog, UnitSystem } from "@/types";
 import { formatShortDate, todayIso } from "@/utils/date";
 import { palette, spacing } from "@/utils/theme";
+import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { formatWeight, formatWeightInput } from "@/utils/units";
 
 export function BodyweightScreen() {
@@ -22,6 +23,7 @@ export function BodyweightScreen() {
   const [editing, setEditing] = useState<BodyWeightLog | null>(null);
   const [loggedDate, setLoggedDate] = useState(todayIso());
   const [weight, setWeight] = useState("");
+  const [entryUnit, setEntryUnit] = useState<UnitSystem>(unitSystem);
   const latest = logs[0];
   const sortedLogs = [...logs].sort((a, b) => a.logged_at.localeCompare(b.logged_at) || a.created_at.localeCompare(b.created_at));
   const graphPoints = sortedLogs.map((log) => ({
@@ -31,11 +33,15 @@ export function BodyweightScreen() {
     details: [log.logged_at.slice(0, 10)]
   }));
 
+  useEffect(() => {
+    if (!editing) setEntryUnit(unitSystem);
+  }, [editing, unitSystem]);
+
   async function handleSave() {
     if (editing) {
-      await updateBodyWeightLog({ id: editing.id, loggedDate, weight });
+      await updateBodyWeightLog({ id: editing.id, loggedDate, weight, unitSystem: entryUnit });
     } else {
-      await saveBodyWeightLog({ loggedDate, weight });
+      await saveBodyWeightLog({ loggedDate, weight, unitSystem: entryUnit });
     }
     clearForm();
   }
@@ -43,13 +49,15 @@ export function BodyweightScreen() {
   function startEdit(log: BodyWeightLog) {
     setEditing(log);
     setLoggedDate(log.logged_at.slice(0, 10));
-    setWeight(formatWeightInput(log.weight, unitSystem));
+    setEntryUnit(log.unit);
+    setWeight(formatWeightInput(log.weight, log.unit));
   }
 
   function clearForm() {
     setEditing(null);
     setLoggedDate(todayIso());
     setWeight("");
+    setEntryUnit(unitSystem);
   }
 
   function displayWeight(value: number) {
@@ -78,15 +86,27 @@ export function BodyweightScreen() {
         <View style={styles.summaryRow}>
           <SectionTitle>{editing ? "Edit entry" : "Add entry"}</SectionTitle>
           {editing ? (
-            <Pressable accessibilityLabel="Cancel edit" onPress={clearForm} style={styles.iconButton}>
+            <Pressable accessibilityLabel="Cancel edit" hitSlop={touchHitSlop} onPress={clearForm} style={pressableFeedback(styles.iconButton)}>
               <X size={18} color={palette.ink} />
             </Pressable>
           ) : null}
         </View>
         <DatePickerField value={loggedDate} onChange={setLoggedDate} />
         <View style={styles.inputRow}>
-          <TextInput style={styles.input} value={weight} onChangeText={setWeight} keyboardType="numeric" placeholder={unitSystem} />
-          <Pressable style={styles.primaryButton} onPress={handleSave}>
+          <TextInput style={styles.input} value={weight} onChangeText={setWeight} keyboardType="decimal-pad" inputMode="decimal" placeholder={entryUnit} />
+          <View style={styles.unitToggle}>
+            {(["lb", "kg"] as UnitSystem[]).map((unit) => (
+              <Pressable
+                key={unit}
+                hitSlop={touchHitSlop}
+                onPress={() => setEntryUnit(unit)}
+                style={pressableFeedback([styles.unitButton, entryUnit === unit && styles.unitButtonActive])}
+              >
+                <Body style={[styles.unitButtonText, entryUnit === unit && styles.unitButtonTextActive]}>{unit}</Body>
+              </Pressable>
+            ))}
+          </View>
+          <Pressable hitSlop={touchHitSlop} style={pressableFeedback(styles.primaryButton)} onPress={handleSave}>
             {editing ? <Save size={18} color={palette.surface} /> : <Plus size={18} color={palette.surface} />}
             <Body style={styles.primaryButtonText}>{editing ? "Update" : "Add"}</Body>
           </Pressable>
@@ -102,10 +122,10 @@ export function BodyweightScreen() {
               <SectionTitle>{formatWeight(log.weight, unitSystem)}</SectionTitle>
             </View>
             <View style={styles.actions}>
-              <Pressable accessibilityLabel={`Edit bodyweight from ${log.logged_at.slice(0, 10)}`} onPress={() => startEdit(log)} style={styles.iconButton}>
+              <Pressable accessibilityLabel={`Edit bodyweight from ${log.logged_at.slice(0, 10)}`} hitSlop={touchHitSlop} onPress={() => startEdit(log)} style={pressableFeedback(styles.iconButton)}>
                 <Pencil size={17} color={palette.ink} />
               </Pressable>
-              <Pressable accessibilityLabel={`Delete bodyweight from ${log.logged_at.slice(0, 10)}`} onPress={() => void deleteBodyWeightLog(log.id)} style={styles.iconButton}>
+              <Pressable accessibilityLabel={`Delete bodyweight from ${log.logged_at.slice(0, 10)}`} hitSlop={touchHitSlop} onPress={() => void deleteBodyWeightLog(log.id)} style={pressableFeedback(styles.iconButton)}>
                 <Trash2 size={17} color={palette.danger} />
               </Pressable>
             </View>
@@ -125,7 +145,8 @@ const styles = StyleSheet.create({
   },
   inputRow: {
     flexDirection: "row",
-    gap: spacing.sm
+    gap: spacing.sm,
+    alignItems: "stretch"
   },
   input: {
     flex: 1,
@@ -138,6 +159,32 @@ const styles = StyleSheet.create({
     color: palette.ink,
     fontWeight: "800"
   },
+  unitToggle: {
+    flexDirection: "row",
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 8,
+    overflow: "hidden",
+    backgroundColor: palette.surfaceAlt
+  },
+  unitButton: {
+    minWidth: 48,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+    ...fastTouchStyle
+  },
+  unitButtonActive: {
+    backgroundColor: palette.ink
+  },
+  unitButtonText: {
+    color: palette.muted,
+    fontWeight: "900"
+  },
+  unitButtonTextActive: {
+    color: palette.surface
+  },
   primaryButton: {
     minHeight: 44,
     minWidth: 104,
@@ -147,7 +194,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     flexDirection: "row",
     gap: spacing.sm,
-    paddingHorizontal: spacing.md
+    paddingHorizontal: spacing.md,
+    ...fastTouchStyle
   },
   primaryButtonText: {
     color: palette.surface,
@@ -181,6 +229,7 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     backgroundColor: palette.surfaceAlt,
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
+    ...fastTouchStyle
   }
 });

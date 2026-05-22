@@ -32,8 +32,8 @@ type FitnessState = {
   setExerciseMuscle: (exerciseId: number, muscle: MuscleGroup) => Promise<void>;
   saveWorkout: (input: { exerciseId: number; workoutDate: string; notes: string; sets: LoggedSetDraft[] }) => Promise<void>;
   deleteWorkoutLog: (sessionId: number) => Promise<void>;
-  saveBodyWeightLog: (input: { loggedDate: string; weight: string }) => Promise<void>;
-  updateBodyWeightLog: (input: { id: number; loggedDate: string; weight: string }) => Promise<void>;
+  saveBodyWeightLog: (input: { loggedDate: string; weight: string; unitSystem?: UnitSystem }) => Promise<void>;
+  updateBodyWeightLog: (input: { id: number; loggedDate: string; weight: string; unitSystem?: UnitSystem }) => Promise<void>;
   deleteBodyWeightLog: (id: number) => Promise<void>;
   setUnitSystem: (unitSystem: UnitSystem) => Promise<void>;
   setConfigWeight: (id: number, weightFactor: number) => Promise<void>;
@@ -145,18 +145,18 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
     await get().hydrate();
   },
   saveBodyWeightLog: async (input) => {
-    const weight = Number(input.weight);
+    const weight = parseWeightInput(input.weight);
     const loggedDate = /^\d{4}-\d{2}-\d{2}$/.test(input.loggedDate) ? input.loggedDate : todayIso();
-    const unitSystem = get().unitSystem;
+    const unitSystem = input.unitSystem ?? get().unitSystem;
 
     if (!Number.isFinite(weight) || weight <= 0) return;
     await saveStoredBodyWeightLog({ loggedDate, weight: weightToStorageUnit(weight, unitSystem), unit: unitSystem });
     await get().hydrate();
   },
   updateBodyWeightLog: async (input) => {
-    const weight = Number(input.weight);
+    const weight = parseWeightInput(input.weight);
     const loggedDate = /^\d{4}-\d{2}-\d{2}$/.test(input.loggedDate) ? input.loggedDate : todayIso();
-    const unitSystem = get().unitSystem;
+    const unitSystem = input.unitSystem ?? get().unitSystem;
 
     if (!Number.isFinite(weight) || weight <= 0) return;
     await updateStoredBodyWeightLog({ id: input.id, loggedDate, weight: weightToStorageUnit(weight, unitSystem), unit: unitSystem });
@@ -175,3 +175,7 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
     await get().hydrate();
   }
 }));
+
+function parseWeightInput(value: string) {
+  return Number(value.trim().replace(",", "."));
+}

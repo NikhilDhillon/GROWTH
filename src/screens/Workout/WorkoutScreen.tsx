@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, TextInput, View } from "react-native";
 import { Copy, Plus, Save, Trash2 } from "lucide-react-native";
 
@@ -8,7 +8,7 @@ import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { calculateExerciseScore } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { LoggedSetDraft, MuscleGroup } from "@/types";
+import { LoggedSetDraft, MuscleGroup, UnitSystem } from "@/types";
 import { todayIso } from "@/utils/date";
 import { muscles, palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
@@ -27,8 +27,13 @@ export function WorkoutScreen() {
   const [exerciseId, setExerciseId] = useState<number | null>(exercises[0]?.id ?? null);
   const [draftSets, setDraftSets] = useState<LoggedSetDraft[]>([emptySet(), emptySet(), emptySet()]);
   const [weightDraft, setWeightDraft] = useState("");
+  const [bodyWeightUnit, setBodyWeightUnit] = useState<UnitSystem>(unitSystem);
   const [workoutDate, setWorkoutDate] = useState(todayIso());
   const [notes, setNotes] = useState("");
+
+  useEffect(() => {
+    setBodyWeightUnit(unitSystem);
+  }, [unitSystem]);
 
   const exercisesByMuscle = useMemo(() => {
     return muscles.reduce((output, muscle) => {
@@ -62,7 +67,7 @@ export function WorkoutScreen() {
   }
 
   async function handleSaveWeight() {
-    await saveBodyWeightLog({ loggedDate: workoutDate, weight: weightDraft });
+    await saveBodyWeightLog({ loggedDate: workoutDate, weight: weightDraft, unitSystem: bodyWeightUnit });
     setWeightDraft("");
   }
 
@@ -128,7 +133,28 @@ export function WorkoutScreen() {
       {selectedKind === "weight" ? (
         <Panel>
           <SectionTitle>Body weight</SectionTitle>
-          <TextInput style={styles.input} value={weightDraft} onChangeText={setWeightDraft} keyboardType="numeric" placeholder={unitSystem} />
+          <View style={styles.bodyWeightRow}>
+            <TextInput
+              style={styles.input}
+              value={weightDraft}
+              onChangeText={setWeightDraft}
+              keyboardType="decimal-pad"
+              inputMode="decimal"
+              placeholder={bodyWeightUnit}
+            />
+            <View style={styles.unitToggle}>
+              {(["lb", "kg"] as UnitSystem[]).map((unit) => (
+                <Pressable
+                  key={unit}
+                  hitSlop={touchHitSlop}
+                  onPress={() => setBodyWeightUnit(unit)}
+                  style={pressableFeedback([styles.unitButton, bodyWeightUnit === unit && styles.unitButtonActive])}
+                >
+                  <Body style={[styles.unitButtonText, bodyWeightUnit === unit && styles.unitButtonTextActive]}>{unit}</Body>
+                </Pressable>
+              ))}
+            </View>
+          </View>
           <Pressable hitSlop={touchHitSlop} style={pressableFeedback(styles.primaryButton)} onPress={handleSaveWeight}>
             <Save size={19} color={palette.surface} />
             <Body style={styles.primaryButtonText}>Save weight</Body>
@@ -149,8 +175,8 @@ export function WorkoutScreen() {
         {draftSets.map((set, index) => (
           <View key={index} style={styles.setRow}>
             <Label style={styles.setNumber}>{index + 1}</Label>
-            <TextInput style={[styles.input, styles.setInput]} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} keyboardType="numeric" placeholder={unitSystem} />
-            <TextInput style={[styles.input, styles.setInput]} value={set.reps} onChangeText={(value) => updateSet(index, "reps", value)} keyboardType="numeric" placeholder="reps" />
+            <TextInput style={[styles.input, styles.setInput]} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} keyboardType="decimal-pad" inputMode="decimal" placeholder={unitSystem} />
+            <TextInput style={[styles.input, styles.setInput]} value={set.reps} onChangeText={(value) => updateSet(index, "reps", value)} keyboardType="number-pad" inputMode="numeric" placeholder="reps" />
             <Pressable accessibilityLabel="Remove set" hitSlop={touchHitSlop} onPress={() => setDraftSets((current) => current.filter((_, itemIndex) => itemIndex !== index))} style={pressableFeedback([styles.iconButton, styles.removeButton])}>
               <Trash2 size={16} color={palette.danger} />
             </Pressable>
@@ -261,6 +287,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     color: palette.ink,
     fontWeight: "700"
+  },
+  bodyWeightRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: spacing.sm
+  },
+  unitToggle: {
+    flexDirection: "row",
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 8,
+    overflow: "hidden",
+    backgroundColor: palette.surfaceAlt
+  },
+  unitButton: {
+    minWidth: 48,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+    ...fastTouchStyle
+  },
+  unitButtonActive: {
+    backgroundColor: palette.ink
+  },
+  unitButtonText: {
+    color: palette.muted,
+    fontWeight: "900"
+  },
+  unitButtonTextActive: {
+    color: palette.surface
   },
   setInput: {
     flexBasis: 0,
