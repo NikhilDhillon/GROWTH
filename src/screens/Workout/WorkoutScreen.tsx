@@ -17,11 +17,12 @@ import { formatWeightInput, weightToStorageUnit } from "@/utils/units";
 const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
 
 export function WorkoutScreen() {
-  const exercises = useFitnessStore((state) => state.exercises.filter((exercise) => exercise.is_strength_exercise));
+  const allExercises = useFitnessStore((state) => state.exercises);
   const sets = useFitnessStore((state) => state.sets);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
   const saveBodyWeightLog = useFitnessStore((state) => state.saveBodyWeightLog);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
+  const exercises = useMemo(() => allExercises.filter((exercise) => exercise.is_strength_exercise), [allExercises]);
   const [selectedKind, setSelectedKind] = useState<"exercise" | "weight">("exercise");
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleGroup>(exercises[0]?.primary_muscle ?? "Chest");
   const [exerciseId, setExerciseId] = useState<number | null>(exercises[0]?.id ?? null);
@@ -168,6 +169,11 @@ export function WorkoutScreen() {
             <Save size={19} color={palette.surface} />
             <Body style={styles.primaryButtonText}>Save weight</Body>
           </Pressable>
+        </Panel>
+      ) : !exercises.length ? (
+        <Panel>
+          <SectionTitle>No exercises selected</SectionTitle>
+          <Body>Select exercises on the Exercises page to make them available for logging.</Body>
         </Panel>
       ) : (
       <Panel>
