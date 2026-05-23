@@ -17,7 +17,7 @@ import { formatWeightInput, weightToStorageUnit } from "@/utils/units";
 const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
 
 export function WorkoutScreen() {
-  const exercises = useFitnessStore((state) => state.exercises);
+  const exercises = useFitnessStore((state) => state.exercises.filter((exercise) => exercise.is_strength_exercise));
   const sets = useFitnessStore((state) => state.sets);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
   const saveBodyWeightLog = useFitnessStore((state) => state.saveBodyWeightLog);
@@ -34,6 +34,15 @@ export function WorkoutScreen() {
   useEffect(() => {
     setBodyWeightUnit(unitSystem);
   }, [unitSystem]);
+
+  useEffect(() => {
+    if (selectedKind !== "exercise") return;
+    const selectedExists = exercises.some((exercise) => exercise.id === exerciseId);
+    if (selectedExists) return;
+    const nextExercise = exercises[0] ?? null;
+    setSelectedMuscle(nextExercise?.primary_muscle ?? "Chest");
+    setExerciseId(nextExercise?.id ?? null);
+  }, [exerciseId, exercises, selectedKind]);
 
   const exercisesByMuscle = useMemo(() => {
     return muscles.reduce((output, muscle) => {
@@ -121,7 +130,7 @@ export function WorkoutScreen() {
               <Body style={[styles.exerciseText, selectedKind === "exercise" && exercise.id === selectedExercise?.id && styles.exerciseTextActive]}>{exercise.name}</Body>
             </Pressable>
           ))}
-          {!visibleExercises.length ? <Body>No exercises in {selectedMuscle} yet.</Body> : null}
+          {!visibleExercises.length ? <Body>No selected exercises in {selectedMuscle} yet.</Body> : null}
         </View>
       </Panel>
 

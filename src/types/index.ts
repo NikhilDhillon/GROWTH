@@ -12,6 +12,14 @@ export type Exercise = {
   created_at: string;
 };
 
+export type UserExercisePreference = {
+  user_id: number | string;
+  exercise_id: number;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+};
+
 export type WorkoutSession = {
   id: number;
   workout_date: string;

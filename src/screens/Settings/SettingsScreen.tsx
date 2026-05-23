@@ -38,7 +38,7 @@ export function SettingsScreen() {
 
       <Panel>
         <SectionTitle>Exercise tracking</SectionTitle>
-        <Body>{exercises.length} exercises created. {strengthCount} marked as strength exercises for graphing.</Body>
+        <Body>{exercises.length} standard exercises available. {strengthCount} selected for logging and scoring.</Body>
       </Panel>
 
       <Panel>

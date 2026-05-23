@@ -81,7 +81,7 @@ export function AnalyticsScreen() {
             </Pressable>
           ))}
         </View>
-        {!strengthExercises.length ? <Body>No exercises have been marked as strength exercises yet.</Body> : null}
+        {!strengthExercises.length ? <Body>Select exercises on the Exercises page to enable scoring.</Body> : null}
       </Panel>
 
       <Panel>

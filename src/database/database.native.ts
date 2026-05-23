@@ -1,7 +1,8 @@
 import * as SQLite from "expo-sqlite";
 
+import { catalogExercises } from "@/constants/exercises";
 import { schema } from "@/database/schema";
-import { BodyWeightLog, Exercise, MuscleGroup, MuscleStrengthConfig, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { BodyWeightLog, Exercise, MuscleStrengthConfig, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 type Database = SQLite.SQLiteDatabase;
@@ -14,6 +15,7 @@ async function getDatabase() {
     await database.execAsync(schema);
     await ensureBodyWeightLogSchema(database);
     await removeLegacySeedData(database);
+    await ensureExerciseCatalog(database);
   }
   return database;
 }
@@ -72,16 +74,55 @@ async function removeLegacySeedData(db: Database) {
   await db.execAsync("PRAGMA user_version = 1");
 }
 
+async function ensureExerciseCatalog(db: Database) {
+  const version = await db.getFirstAsync<{ user_version: number }>("PRAGMA user_version");
+  if ((version?.user_version ?? 0) >= 2) return;
+
+  await db.runAsync("DELETE FROM workout_sets");
+  await db.runAsync("DELETE FROM workout_sessions");
+  await db.runAsync("DELETE FROM muscle_strength_config");
+  await db.runAsync("DELETE FROM user_exercise_preferences");
+  await db.runAsync("DELETE FROM exercises");
+
+  const timestamp = new Date().toISOString();
+  for (const exercise of catalogExercises) {
+    await db.runAsync(
+      "INSERT INTO exercises (name, primary_muscle, secondary_muscle, is_strength_exercise, created_at) VALUES (?, ?, ?, 0, ?)",
+      [exercise.name, exercise.primary_muscle, exercise.secondary_muscle ?? null, timestamp]
+    );
+  }
+
+  await db.execAsync("PRAGMA user_version = 2");
+}
+
 export async function loadAllData() {
   const db = await getDatabase();
-  const [exercises, sessions, sets, bodyWeightLogs, configs, currentUser, unitSetting] = await Promise.all([
-    db.getAllAsync<Exercise>("SELECT * FROM exercises ORDER BY name"),
+  const [currentUser, unitSetting] = await Promise.all([
+    db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1"),
+    db.getFirstAsync<{ value: UnitSystem }>("SELECT value FROM app_settings WHERE key = ?", ["unit_system"])
+  ]);
+  const [exercises, sessions, sets, bodyWeightLogs, configs] = await Promise.all([
+    db.getAllAsync<Exercise>(
+      `
+      SELECT
+        exercises.id,
+        exercises.name,
+        exercises.primary_muscle,
+        exercises.secondary_muscle,
+        COALESCE(user_exercise_preferences.enabled, 0) as is_strength_exercise,
+        exercises.created_at
+      FROM exercises
+      LEFT JOIN user_exercise_preferences
+        ON user_exercise_preferences.exercise_id = exercises.id
+        AND user_exercise_preferences.user_id = ?
+      ORDER BY exercises.name
+      `,
+      [currentUser?.id ?? -1]
+    ),
     db.getAllAsync<WorkoutSession>("SELECT * FROM workout_sessions ORDER BY workout_date DESC"),
     db.getAllAsync<WorkoutSet>("SELECT * FROM workout_sets ORDER BY created_at ASC, set_number ASC"),
     db.getAllAsync<BodyWeightLog>("SELECT id, weight, unit, logged_at, created_at, COALESCE(logged_date, substr(logged_at, 1, 10)) as logged_date FROM body_weight_logs ORDER BY logged_at DESC, created_at DESC"),
-    db.getAllAsync<MuscleStrengthConfig>("SELECT * FROM muscle_strength_config ORDER BY muscle_group"),
-    db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1"),
-    db.getFirstAsync<{ value: UnitSystem }>("SELECT value FROM app_settings WHERE key = ?", ["unit_system"])
+    db.getAllAsync<MuscleStrengthConfig>("SELECT * FROM muscle_strength_config ORDER BY muscle_group")
   ]);
 
   const unitSystem: UnitSystem = unitSetting?.value === "kg" ? "kg" : "lb";
@@ -132,34 +173,20 @@ export async function updateCurrentUserPassword(_input: { password: string }) {
   throw new Error("Password reset is available on the Supabase-powered website.");
 }
 
-export async function createExercise(input: { name: string; primaryMuscle: MuscleGroup; secondaryMuscle?: MuscleGroup | null; strength: boolean }) {
+export async function setExerciseEnabled(exerciseId: number, enabled: boolean) {
   const db = await getDatabase();
-  const result = await db.runAsync(
-    "INSERT INTO exercises (name, primary_muscle, secondary_muscle, is_strength_exercise, created_at) VALUES (?, ?, ?, ?, ?)",
-    [input.name.trim(), input.primaryMuscle, input.secondaryMuscle ?? null, input.strength ? 1 : 0, new Date().toISOString()]
+  const currentUser = await db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1");
+  if (!currentUser) throw new Error("Please log in again.");
+  const timestamp = new Date().toISOString();
+  await db.runAsync(
+    `
+    INSERT INTO user_exercise_preferences (user_id, exercise_id, enabled, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, exercise_id)
+    DO UPDATE SET enabled = excluded.enabled, updated_at = excluded.updated_at
+    `,
+    [currentUser.id, exerciseId, enabled ? 1 : 0, timestamp, timestamp]
   );
-  return result;
-}
-
-export async function deleteExercise(exerciseId: number) {
-  const db = await getDatabase();
-  const affectedSessions = await db.getAllAsync<{ session_id: number }>("SELECT DISTINCT session_id FROM workout_sets WHERE exercise_id = ?", [exerciseId]);
-  await db.runAsync("DELETE FROM workout_sets WHERE exercise_id = ?", [exerciseId]);
-  await db.runAsync("DELETE FROM muscle_strength_config WHERE exercise_id = ?", [exerciseId]);
-  await db.runAsync("DELETE FROM exercises WHERE id = ?", [exerciseId]);
-
-  for (const session of affectedSessions) {
-    const remaining = await db.getFirstAsync<{ count: number }>("SELECT COUNT(*) as count FROM workout_sets WHERE session_id = ?", [session.session_id]);
-    if (!remaining?.count) {
-      await db.runAsync("DELETE FROM workout_sessions WHERE id = ?", [session.session_id]);
-    }
-  }
-}
-
-export async function updateExerciseMuscle(exerciseId: number, primaryMuscle: MuscleGroup) {
-  const db = await getDatabase();
-  await db.runAsync("UPDATE exercises SET primary_muscle = ? WHERE id = ?", [primaryMuscle, exerciseId]);
-  await db.runAsync("UPDATE muscle_strength_config SET muscle_group = ? WHERE exercise_id = ?", [primaryMuscle, exerciseId]);
 }
 
 export async function logWorkout(input: { exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number }[] }) {
