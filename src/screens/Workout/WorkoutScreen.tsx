@@ -8,11 +8,11 @@ import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { calculateExerciseScore } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { LoggedSetDraft, MuscleGroup, UnitSystem } from "@/types";
+import { LoggedSetDraft, MuscleGroup } from "@/types";
 import { todayIso } from "@/utils/date";
 import { muscles, palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
-import { formatWeightInput, weightToStorageUnit } from "@/utils/units";
+import { bodyWeightDisplayUnit, formatWeightInput, weightToStorageUnit } from "@/utils/units";
 
 const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
 
@@ -28,13 +28,8 @@ export function WorkoutScreen() {
   const [exerciseId, setExerciseId] = useState<number | null>(exercises[0]?.id ?? null);
   const [draftSets, setDraftSets] = useState<LoggedSetDraft[]>([emptySet(), emptySet(), emptySet()]);
   const [weightDraft, setWeightDraft] = useState("");
-  const [bodyWeightUnit, setBodyWeightUnit] = useState<UnitSystem>(unitSystem);
   const [workoutDate, setWorkoutDate] = useState(todayIso());
   const [notes, setNotes] = useState("");
-
-  useEffect(() => {
-    setBodyWeightUnit(unitSystem);
-  }, [unitSystem]);
 
   useEffect(() => {
     if (selectedKind !== "exercise") return;
@@ -77,7 +72,7 @@ export function WorkoutScreen() {
   }
 
   async function handleSaveWeight() {
-    await saveBodyWeightLog({ loggedDate: workoutDate, weight: weightDraft, unitSystem: bodyWeightUnit });
+    await saveBodyWeightLog({ loggedDate: workoutDate, weight: weightDraft, unitSystem: bodyWeightDisplayUnit });
     setWeightDraft("");
   }
 
@@ -150,19 +145,10 @@ export function WorkoutScreen() {
               onChangeText={setWeightDraft}
               keyboardType="decimal-pad"
               inputMode="decimal"
-              placeholder={bodyWeightUnit}
+              placeholder={bodyWeightDisplayUnit}
             />
-            <View style={styles.unitToggle}>
-              {(["lb", "kg"] as UnitSystem[]).map((unit) => (
-                <Pressable
-                  key={unit}
-                  hitSlop={touchHitSlop}
-                  onPress={() => setBodyWeightUnit(unit)}
-                  style={pressableFeedback([styles.unitButton, bodyWeightUnit === unit && styles.unitButtonActive])}
-                >
-                  <Body style={[styles.unitButtonText, bodyWeightUnit === unit && styles.unitButtonTextActive]}>{unit}</Body>
-                </Pressable>
-              ))}
+            <View style={styles.unitBadge}>
+              <Body style={styles.unitBadgeText}>{bodyWeightDisplayUnit}</Body>
             </View>
           </View>
           <Pressable hitSlop={touchHitSlop} style={pressableFeedback(styles.primaryButton)} onPress={handleSaveWeight}>
@@ -309,31 +295,21 @@ const styles = StyleSheet.create({
     alignItems: "stretch",
     gap: spacing.sm
   },
-  unitToggle: {
-    flexDirection: "row",
+  unitBadge: {
+    minWidth: 48,
     borderWidth: 1,
     borderColor: palette.border,
     borderRadius: 8,
-    overflow: "hidden",
-    backgroundColor: palette.surfaceAlt
-  },
-  unitButton: {
-    minWidth: 48,
     minHeight: 44,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: spacing.md,
+    backgroundColor: palette.ink,
     ...fastTouchStyle
   },
-  unitButtonActive: {
-    backgroundColor: palette.ink
-  },
-  unitButtonText: {
-    color: palette.muted,
+  unitBadgeText: {
+    color: palette.surface,
     fontWeight: "900"
-  },
-  unitButtonTextActive: {
-    color: palette.surface
   },
   setInput: {
     flexBasis: 0,

@@ -10,7 +10,7 @@ import { useFitnessStore } from "@/store/useFitnessStore";
 import { formatShortDate } from "@/utils/date";
 import { buildPreviousLogs } from "@/utils/logs";
 import { palette, spacing } from "@/utils/theme";
-import { formatWeight, weightFromStorageUnit } from "@/utils/units";
+import { bodyWeightDisplayUnit, bodyWeightFromStorageUnit, formatBodyWeight } from "@/utils/units";
 
 export function AnalyticsScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
@@ -42,7 +42,7 @@ export function AnalyticsScreen() {
       return {
         key: loggedDate,
         label: formatShortDate(loggedDate),
-        value: weightFromStorageUnit(log.weight, unitSystem),
+        value: bodyWeightFromStorageUnit(log.weight),
         details: [
           strengthPoint ? `Score ${strengthPoint.score.toFixed(1)} pts` : "No lift logged",
           ...(workoutLog?.sets ?? [])
@@ -57,7 +57,7 @@ export function AnalyticsScreen() {
       label: formatShortDate(point.date),
       value: point.score,
       details: [
-        weightLog ? `Body weight ${formatWeight(weightLog.weight, unitSystem)}` : "No body weight logged",
+        weightLog ? `Body weight ${formatBodyWeight(weightLog.weight)}` : "No body weight logged",
         ...(workoutLog?.sets ?? [])
       ]
     };
@@ -100,7 +100,7 @@ export function AnalyticsScreen() {
         <Panel>
           <SectionTitle>{selected.name} vs body weight</SectionTitle>
           <Label>Body weight</Label>
-          <LineGraph points={weightPoints} suffix={` ${unitSystem}`} height={150} emptyMessage="Log body weight to draw a trend." xLabels={comparisonDates} />
+          <LineGraph points={weightPoints} suffix={` ${bodyWeightDisplayUnit}`} height={150} emptyMessage="Log body weight to draw a trend." xLabels={comparisonDates} />
           <Label>Strength score</Label>
           <LineGraph points={comparisonStrengthPoints} suffix=" pts" height={150} xLabels={comparisonDates} />
         </Panel>

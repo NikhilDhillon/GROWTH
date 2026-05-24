@@ -10,7 +10,7 @@ import { Exercise, MuscleGroup } from "@/types";
 import { formatShortDate } from "@/utils/date";
 import { buildPreviousLogs } from "@/utils/logs";
 import { muscles, palette, spacing } from "@/utils/theme";
-import { formatWeight } from "@/utils/units";
+import { formatBodyWeight } from "@/utils/units";
 
 export function LogsScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
@@ -52,7 +52,7 @@ export function LogsScreen() {
               <View style={styles.historyHeader}>
                 <View style={styles.historyText}>
                   <Body style={styles.dateText}>{formatShortDate(log.logged_at.slice(0, 10))}</Body>
-                  <Body>{formatWeight(log.weight, unitSystem)}</Body>
+                  <Body>{formatBodyWeight(log.weight)}</Body>
                 </View>
                 <Pressable accessibilityLabel={`Delete body weight log from ${log.logged_at.slice(0, 10)}`} onPress={() => void deleteBodyWeightLog(log.id)} style={styles.deleteButton}>
                   <Trash2 size={16} color={palette.danger} />

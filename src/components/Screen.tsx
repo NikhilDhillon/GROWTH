@@ -8,7 +8,7 @@ export function Screen({ children, scroll = true }: { children: ReactNode; scrol
   const content = <View style={styles.inner}>{children}</View>;
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+    <SafeAreaView style={styles.safe} edges={["left", "right"]}>
       {scroll ? (
         <ScrollView
           contentContainerStyle={styles.scroll}
@@ -30,7 +30,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.background
   },
   scroll: {
-    paddingBottom: 116,
+    paddingBottom: spacing.xxl,
     ...(Platform.OS === "web" ? { touchAction: "pan-y pinch-zoom" } : null)
   },
   inner: {

@@ -1,12 +1,9 @@
 import { StyleSheet, View } from "react-native";
 
-import { LineGraph } from "@/components/LineGraph";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { calculateEstimated1RM, calculateExerciseScore, calculateWeightedContribution, getRepQualityMultiplier, getSetImportanceWeight } from "@/services/strength/strengthService";
-import { useFitnessStore } from "@/store/useFitnessStore";
-import { formatShortDate } from "@/utils/date";
 import { palette, spacing } from "@/utils/theme";
 
 const formulaExamples = [
@@ -44,22 +41,10 @@ function buildFormulaExample(label: string, sets: { weight: number; reps: number
 }
 
 export function HomeScreen() {
-  const exercises = useFitnessStore((state) => state.exercises);
-  const exercisePoints = useFitnessStore((state) => state.exercisePoints);
-  const strengthExercises = exercises.filter((exercise) => exercise.is_strength_exercise);
-  const strengthExercisesWithData = strengthExercises
-    .map((exercise) => ({
-      exercise,
-      points: exercisePoints
-        .filter((point) => point.exerciseId === exercise.id)
-        .map((point) => ({ label: formatShortDate(point.date), value: point.score }))
-    }))
-    .filter((item) => item.points.length > 0);
-
   return (
     <Screen>
       <View>
-        <Label>Strength exercise graphs</Label>
+        <Label>Strength scoring</Label>
         <Title>GROWTH</Title>
       </View>
 
@@ -88,19 +73,6 @@ export function HomeScreen() {
           </View>
         </View>
       </Panel>
-
-      {strengthExercisesWithData.length ? (
-        strengthExercisesWithData.map(({ exercise, points }) => (
-          <View key={exercise.id} style={styles.graphSection}>
-            <SectionTitle>{exercise.name}</SectionTitle>
-            <LineGraph points={points} suffix=" pts" />
-          </View>
-        ))
-      ) : (
-        <Panel>
-          <Body>No strength exercise logs yet.</Body>
-        </Panel>
-      )}
     </Screen>
   );
 }
@@ -121,8 +93,5 @@ const styles = StyleSheet.create({
   },
   exampleScore: {
     fontWeight: "900"
-  },
-  graphSection: {
-    gap: spacing.sm
   }
 });

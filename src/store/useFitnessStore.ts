@@ -1,10 +1,10 @@
 import { create } from "zustand";
 
 import { buildExerciseScorePoints, buildMuscleScorePoints, summarizeMuscles } from "@/services/strength/strengthService";
-import { deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, loadAllData, loginUser, logoutUser, logWorkout, registerUser, requestPasswordReset, saveBodyWeightLog as saveStoredBodyWeightLog, setExerciseEnabled as setStoredExerciseEnabled, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateUnitSystem } from "@/database/database";
-import { BodyWeightLog, Exercise, ExerciseScorePoint, LoggedSetDraft, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, requestPasswordReset, revokeFriendInvite as revokeStoredFriendInvite, saveBodyWeightLog as saveStoredBodyWeightLog, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateUnitSystem } from "@/database/database";
+import { BodyWeightLog, Exercise, ExerciseScorePoint, LoggedSetDraft, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, SocialData, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { todayIso } from "@/utils/date";
-import { weightToStorageUnit } from "@/utils/units";
+import { bodyWeightDisplayUnit, bodyWeightToStorageUnit, weightToStorageUnit } from "@/utils/units";
 
 type FitnessState = {
   loading: boolean;
@@ -20,7 +20,16 @@ type FitnessState = {
   exercisePoints: ExerciseScorePoint[];
   musclePoints: MuscleScorePoint[];
   muscleSummaries: MuscleSummary[];
+  socialData: SocialData;
+  socialLoading: boolean;
+  socialError: string | null;
+  lastInviteUrl: string | null;
   hydrate: () => Promise<void>;
+  loadSocial: () => Promise<void>;
+  createFriendInvite: () => Promise<void>;
+  acceptFriendInvite: (token: string) => Promise<void>;
+  revokeFriendInvite: (inviteId: string) => Promise<void>;
+  removeFriend: (friendId: string) => Promise<void>;
   login: (input: { email: string; password: string }) => Promise<void>;
   register: (input: { name: string; email: string; password: string }) => Promise<void>;
   resetPassword: (input: { email: string }) => Promise<void>;
@@ -58,10 +67,21 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   exercisePoints: [],
   musclePoints: [],
   muscleSummaries: [],
+  socialData: { friends: [], invites: [], leaderboard: [], notice: null },
+  socialLoading: false,
+  socialError: null,
+  lastInviteUrl: null,
   hydrate: async () => {
     try {
       const data = await loadAllData();
-      set({ ...data, ...derive(data.exercises, data.sessions, data.sets, data.configs), loading: false, authError: null });
+      const derived = derive(data.exercises, data.sessions, data.sets, data.configs);
+      set({ ...data, ...derived, loading: false, authError: null });
+      try {
+        await syncScoreSnapshots(derived.exercisePoints);
+      } catch (error) {
+        set({ socialError: error instanceof Error ? error.message : "Could not sync leaderboard scores." });
+      }
+      await get().loadSocial();
     } catch (error) {
       set({
         currentUser: null,
@@ -73,9 +93,63 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
         exercisePoints: [],
         musclePoints: [],
         muscleSummaries: [],
+        socialData: { friends: [], invites: [], leaderboard: [], notice: null },
         loading: false,
         authError: error instanceof Error ? error.message : "Could not load app data."
       });
+    }
+  },
+  loadSocial: async () => {
+    set({ socialLoading: true, socialError: null });
+    try {
+      const socialData = await loadStoredSocialData();
+      set({ socialData, socialLoading: false, socialError: null });
+    } catch (error) {
+      set({
+        socialData: { friends: [], invites: [], leaderboard: [], notice: null },
+        socialLoading: false,
+        socialError: error instanceof Error ? error.message : "Could not load friend leaderboards."
+      });
+    }
+  },
+  createFriendInvite: async () => {
+    set({ socialLoading: true, socialError: null });
+    try {
+      const lastInviteUrl = await createStoredFriendInvite();
+      set({ lastInviteUrl, socialLoading: false, socialError: null });
+      await get().loadSocial();
+    } catch (error) {
+      set({ socialLoading: false, socialError: error instanceof Error ? error.message : "Could not create invite." });
+    }
+  },
+  acceptFriendInvite: async (token) => {
+    set({ socialLoading: true, socialError: null });
+    try {
+      await acceptStoredFriendInvite(token);
+      set({ socialLoading: false, socialError: null, lastInviteUrl: null });
+      await get().loadSocial();
+    } catch (error) {
+      set({ socialLoading: false, socialError: error instanceof Error ? error.message : "Could not accept invite." });
+    }
+  },
+  revokeFriendInvite: async (inviteId) => {
+    set({ socialLoading: true, socialError: null });
+    try {
+      await revokeStoredFriendInvite(inviteId);
+      set({ socialLoading: false, socialError: null, lastInviteUrl: null });
+      await get().loadSocial();
+    } catch (error) {
+      set({ socialLoading: false, socialError: error instanceof Error ? error.message : "Could not revoke invite." });
+    }
+  },
+  removeFriend: async (friendId) => {
+    set({ socialLoading: true, socialError: null });
+    try {
+      await removeStoredFriend(friendId);
+      set({ socialLoading: false, socialError: null });
+      await get().loadSocial();
+    } catch (error) {
+      set({ socialLoading: false, socialError: error instanceof Error ? error.message : "Could not remove friend." });
     }
   },
   login: async (input) => {
@@ -114,7 +188,7 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   },
   logout: async () => {
     await logoutUser();
-    set({ currentUser: null, authError: null, authNotice: null });
+    set({ currentUser: null, authError: null, authNotice: null, socialData: { friends: [], invites: [], leaderboard: [], notice: null }, lastInviteUrl: null });
   },
   clearAuthError: () => set({ authError: null, authNotice: null }),
   setExerciseEnabled: async (exerciseId, enabled) => {
@@ -139,19 +213,19 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   saveBodyWeightLog: async (input) => {
     const weight = parseWeightInput(input.weight);
     const loggedDate = /^\d{4}-\d{2}-\d{2}$/.test(input.loggedDate) ? input.loggedDate : todayIso();
-    const unitSystem = input.unitSystem ?? get().unitSystem;
+    const unitSystem = input.unitSystem ?? bodyWeightDisplayUnit;
 
     if (!Number.isFinite(weight) || weight <= 0) return;
-    await saveStoredBodyWeightLog({ loggedDate, weight: weightToStorageUnit(weight, unitSystem), unit: unitSystem });
+    await saveStoredBodyWeightLog({ loggedDate, weight: unitSystem === bodyWeightDisplayUnit ? bodyWeightToStorageUnit(weight) : weightToStorageUnit(weight, unitSystem), unit: unitSystem });
     await get().hydrate();
   },
   updateBodyWeightLog: async (input) => {
     const weight = parseWeightInput(input.weight);
     const loggedDate = /^\d{4}-\d{2}-\d{2}$/.test(input.loggedDate) ? input.loggedDate : todayIso();
-    const unitSystem = input.unitSystem ?? get().unitSystem;
+    const unitSystem = input.unitSystem ?? bodyWeightDisplayUnit;
 
     if (!Number.isFinite(weight) || weight <= 0) return;
-    await updateStoredBodyWeightLog({ id: input.id, loggedDate, weight: weightToStorageUnit(weight, unitSystem), unit: unitSystem });
+    await updateStoredBodyWeightLog({ id: input.id, loggedDate, weight: unitSystem === bodyWeightDisplayUnit ? bodyWeightToStorageUnit(weight) : weightToStorageUnit(weight, unitSystem), unit: unitSystem });
     await get().hydrate();
   },
   deleteBodyWeightLog: async (id) => {

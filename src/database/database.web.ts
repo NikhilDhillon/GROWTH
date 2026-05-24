@@ -1,7 +1,7 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 import { catalogExerciseRows } from "@/constants/exercises";
-import { BodyWeightLog, Exercise, MuscleStrengthConfig, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
+import { BodyWeightLog, Exercise, ExerciseScorePoint, Friend, FriendInvite, LeaderboardEntry, MuscleStrengthConfig, SocialData, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 const storageKey = "growth.preview.database.v2";
@@ -26,6 +26,33 @@ type ProfileRow = {
   name: string | null;
   email: string | null;
   created_at: string | null;
+};
+
+type FriendshipRow = {
+  id: string;
+  requester_id: string;
+  addressee_id: string;
+  status: Friend["status"];
+  created_at: string;
+  updated_at: string;
+};
+
+type FriendInviteRow = {
+  id: string;
+  owner_id: string;
+  token: string;
+  expires_at: string;
+  accepted_by: string | null;
+  created_at: string;
+};
+
+type ScoreSnapshotRow = {
+  user_id: string;
+  exercise_id: number;
+  exercise_name: string;
+  best_score: number;
+  achieved_at: string;
+  updated_at: string;
 };
 
 function now() {
@@ -417,6 +444,156 @@ export async function updateUnitSystem(unitSystem: UnitSystem) {
   writeDatabase(data);
 }
 
+export async function loadSocialData(): Promise<SocialData> {
+  if (!supabase) return localSocialNotice();
+
+  const user = await requireCloudUser(supabase, false);
+  if (!user) return localSocialNotice("Log in with a cloud account to use friend leaderboards.");
+
+  const friendshipsResult = await supabase
+    .from("friendships")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (friendshipsResult.error && isMissingSocialTableError(friendshipsResult.error)) {
+    return localSocialNotice("Friend leaderboards need the Supabase social schema update before they can sync.");
+  }
+  throwIfSupabaseError(friendshipsResult.error);
+
+  const friendships = (friendshipsResult.data ?? []) as FriendshipRow[];
+  const friendIds = [...new Set(friendships.map((friendship) => otherFriendId(friendship, user.id)).filter(Boolean))];
+  const profileIds = [...new Set([user.id, ...friendIds])];
+  const [profilesResult, invitesResult, snapshotsResult] = await Promise.all([
+    supabase.from("profiles").select("id,name,email,created_at").in("id", profileIds),
+    supabase.from("friend_invites").select("*").eq("owner_id", user.id).is("accepted_by", null).order("created_at", { ascending: false }),
+    supabase.from("leaderboard_score_snapshots").select("*").order("best_score", { ascending: false })
+  ]);
+
+  throwIfSupabaseError(profilesResult.error);
+  throwIfSupabaseError(invitesResult.error);
+  throwIfSupabaseError(snapshotsResult.error);
+
+  const profiles = new Map((profilesResult.data ?? []).map((profile) => [profile.id, profile as ProfileRow]));
+  const currentProfile = profiles.get(user.id);
+  const friends = friendships.map((friendship) => {
+    const friendId = otherFriendId(friendship, user.id);
+    const profile = profiles.get(friendId);
+    return {
+      id: friendId,
+      name: profileDisplayName(profile, "Friend"),
+      email: profile?.email ?? null,
+      status: friendship.status,
+      direction: friendship.requester_id === user.id ? ("sent" as const) : ("received" as const),
+      created_at: friendship.created_at
+    };
+  });
+
+  const invites = ((invitesResult.data ?? []) as FriendInviteRow[]).map((invite) => ({
+    id: invite.id,
+    token: invite.token,
+    invite_url: inviteUrl(invite.token),
+    expires_at: invite.expires_at,
+    accepted_by: invite.accepted_by,
+    created_at: invite.created_at
+  }));
+
+  const leaderboard = ((snapshotsResult.data ?? []) as ScoreSnapshotRow[]).map((snapshot) => {
+    const profile = profiles.get(snapshot.user_id);
+    return {
+      user_id: snapshot.user_id,
+      name: snapshot.user_id === user.id ? profileDisplayName(currentProfile, "You") : profileDisplayName(profile, "Friend"),
+      exercise_id: snapshot.exercise_id,
+      exercise_name: snapshot.exercise_name,
+      best_score: Number(snapshot.best_score),
+      achieved_at: snapshot.achieved_at
+    };
+  });
+
+  return { friends, invites, leaderboard, notice: null };
+}
+
+export async function createFriendInvite() {
+  if (!supabase) throw new Error("Friend invites need the Supabase-powered web app.");
+  const user = await requireCloudUser(supabase);
+  if (!user) throw new Error("Please log in again.");
+
+  const token = createInviteToken();
+  const expiresAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+  const result = await supabase
+    .from("friend_invites")
+    .insert({ owner_id: user.id, token, expires_at: expiresAt })
+    .select("token")
+    .single<{ token: string }>();
+
+  if (result.error && isMissingSocialTableError(result.error)) {
+    throw new Error("Friend invites need the Supabase social schema update.");
+  }
+  throwIfSupabaseError(result.error);
+  return inviteUrl(result.data?.token ?? token);
+}
+
+export async function acceptFriendInvite(token: string) {
+  if (!supabase) throw new Error("Friend invites need the Supabase-powered web app.");
+  await requireCloudUser(supabase);
+  const normalizedToken = token.trim();
+  if (!normalizedToken) return;
+
+  const result = await supabase.rpc("accept_friend_invite", { invite_token: normalizedToken });
+  if (result.error && isMissingSocialTableError(result.error)) {
+    throw new Error("Friend invites need the Supabase social schema update.");
+  }
+  throwIfSupabaseError(result.error);
+}
+
+export async function revokeFriendInvite(inviteId: string) {
+  if (!supabase) throw new Error("Friend invites need the Supabase-powered web app.");
+  await requireCloudUser(supabase);
+  const result = await supabase.from("friend_invites").delete().eq("id", inviteId);
+  throwIfSupabaseError(result.error);
+}
+
+export async function removeFriend(friendId: string) {
+  if (!supabase) throw new Error("Friend management needs the Supabase-powered web app.");
+  const user = await requireCloudUser(supabase);
+  if (!user) throw new Error("Please log in again.");
+
+  const result = await supabase
+    .from("friendships")
+    .delete()
+    .or(`and(requester_id.eq.${user.id},addressee_id.eq.${friendId}),and(requester_id.eq.${friendId},addressee_id.eq.${user.id})`);
+  throwIfSupabaseError(result.error);
+}
+
+export async function syncScoreSnapshots(points: ExerciseScorePoint[]) {
+  if (!supabase) return;
+  const user = await requireCloudUser(supabase, false);
+  if (!user) return;
+
+  const bestByExercise = new Map<number, ExerciseScorePoint>();
+  for (const point of points) {
+    const existing = bestByExercise.get(point.exerciseId);
+    if (!existing || point.score > existing.score || (point.score === existing.score && point.date > existing.date)) {
+      bestByExercise.set(point.exerciseId, point);
+    }
+  }
+
+  const rows = [...bestByExercise.values()].map((point) => ({
+    user_id: user.id,
+    exercise_id: point.exerciseId,
+    exercise_name: point.exerciseName,
+    best_score: point.score,
+    achieved_at: point.date,
+    updated_at: now()
+  }));
+
+  if (!rows.length) return;
+  const result = await supabase
+    .from("leaderboard_score_snapshots")
+    .upsert(rows, { onConflict: "user_id,exercise_id" });
+  if (result.error && isMissingSocialTableError(result.error)) return;
+  throwIfSupabaseError(result.error);
+}
+
 async function requireCloudUser(client: SupabaseClient, throwOnMissing = true) {
   const result = await client.auth.getUser();
   if (result.error) {
@@ -446,9 +623,55 @@ function throwIfSupabaseError(error: { message: string } | null) {
   if (error) throw new Error(error.message);
 }
 
+function localSocialNotice(notice = "Friend leaderboards need the Supabase-powered web app so scores can sync between accounts."): SocialData {
+  return { friends: [], invites: [], leaderboard: [], notice };
+}
+
 function isMissingBodyWeightTableError(error: { message: string; code?: string } | null) {
   if (!error) return false;
   return error.message.includes("body_weight_logs") && (error.message.includes("schema cache") || error.message.includes("does not exist") || error.code === "PGRST205");
+}
+
+function isMissingSocialTableError(error: { message: string; code?: string } | null) {
+  if (!error) return false;
+  return (
+    (error.message.includes("friendships") ||
+      error.message.includes("friend_invites") ||
+      error.message.includes("leaderboard_score_snapshots") ||
+      error.message.includes("accept_friend_invite")) &&
+    (error.message.includes("schema cache") || error.message.includes("does not exist") || error.code === "PGRST205")
+  );
+}
+
+function otherFriendId(friendship: FriendshipRow, currentUserId: string) {
+  return friendship.requester_id === currentUserId ? friendship.addressee_id : friendship.requester_id;
+}
+
+function profileDisplayName(profile: ProfileRow | undefined, fallback: string) {
+  const name = profile?.name?.trim();
+  if (name) return name.split(/\s+/)[0];
+  const email = profile?.email?.trim();
+  if (email) return email.split("@")[0] || fallback;
+  return fallback;
+}
+
+function inviteUrl(token: string) {
+  if (typeof window === "undefined") return token;
+  const url = new URL(window.location.origin);
+  url.searchParams.set("invite", token);
+  return url.toString();
+}
+
+function createInviteToken() {
+  const bytes = new Uint8Array(18);
+  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+    crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function normalizeBodyWeightLogs(logs: BodyWeightLog[]) {
