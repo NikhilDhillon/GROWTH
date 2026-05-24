@@ -55,6 +55,40 @@ export type User = {
   created_at: string;
 };
 
+export type Friend = {
+  id: string;
+  name: string;
+  email?: string | null;
+  status: "pending" | "accepted" | "declined";
+  direction: "sent" | "received";
+  created_at: string;
+};
+
+export type FriendInvite = {
+  id: string;
+  token: string;
+  invite_url: string;
+  expires_at: string;
+  accepted_by?: string | null;
+  created_at: string;
+};
+
+export type LeaderboardEntry = {
+  user_id: string;
+  name: string;
+  exercise_id: number;
+  exercise_name: string;
+  best_score: number;
+  achieved_at: string;
+};
+
+export type SocialData = {
+  friends: Friend[];
+  invites: FriendInvite[];
+  leaderboard: LeaderboardEntry[];
+  notice?: string | null;
+};
+
 export type MuscleStrengthConfig = {
   id: number;
   muscle_group: MuscleGroup;

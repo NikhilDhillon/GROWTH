@@ -2,15 +2,16 @@ import "react-native-gesture-handler";
 
 import { Analytics } from "@vercel/analytics/react";
 import { NavigationContainer } from "@react-navigation/native";
-import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { BarChart3, Dumbbell, Home, LineChart, ListChecks, Scale, Settings, TrendingUp } from "lucide-react-native";
+import { BarChart3, Dumbbell, Home, LineChart, ListChecks, Menu, Scale, Settings, TrendingUp, Users, X } from "lucide-react-native";
+import type { ComponentType } from "react";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
-import { palette } from "@/utils/theme";
-import { fastTouchStyle } from "@/utils/touch";
+import { palette, spacing } from "@/utils/theme";
+import { pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { HomeScreen } from "@/screens/Home/HomeScreen";
 import { WorkoutScreen } from "@/screens/Workout/WorkoutScreen";
@@ -21,14 +22,44 @@ import { AuthScreen } from "@/screens/Auth/AuthScreen";
 import { LogsScreen } from "@/screens/Logs/LogsScreen";
 import { BodyweightScreen } from "@/screens/Bodyweight/BodyweightScreen";
 import { BulkAnalyticsScreen } from "@/screens/BulkAnalytics/BulkAnalyticsScreen";
+import { SocialScreen } from "@/screens/Social/SocialScreen";
 
-const Tab = createBottomTabNavigator();
+type RootStackParamList = {
+  Home: undefined;
+  Log: undefined;
+  Exercises: undefined;
+  Progress: undefined;
+  Bodyweight: undefined;
+  Bulk: undefined;
+  Social: undefined;
+  Logs: undefined;
+  Settings: undefined;
+};
+
+type AppRouteName = keyof RootStackParamList;
+type NavIcon = ComponentType<{ color: string; size: number }>;
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
+
+const appRoutes: Array<{ name: AppRouteName; label: string; component: ComponentType; Icon: NavIcon }> = [
+  { name: "Home", label: "Home", component: HomeScreen, Icon: Home },
+  { name: "Log", label: "Log", component: WorkoutScreen, Icon: Dumbbell },
+  { name: "Exercises", label: "Exercises", component: ExerciseScreen, Icon: LineChart },
+  { name: "Progress", label: "Progress", component: AnalyticsScreen, Icon: BarChart3 },
+  { name: "Bodyweight", label: "Bodyweight", component: BodyweightScreen, Icon: Scale },
+  { name: "Bulk", label: "Bulk", component: BulkAnalyticsScreen, Icon: TrendingUp },
+  { name: "Social", label: "Social", component: SocialScreen, Icon: Users },
+  { name: "Logs", label: "Logs", component: LogsScreen, Icon: ListChecks },
+  { name: "Settings", label: "Settings", component: SettingsScreen, Icon: Settings }
+];
 
 export default function App() {
   const hydrate = useFitnessStore((state) => state.hydrate);
   const loading = useFitnessStore((state) => state.loading);
   const currentUser = useFitnessStore((state) => state.currentUser);
+  const acceptFriendInvite = useFitnessStore((state) => state.acceptFriendInvite);
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(() => isRecoveryUrl());
+  const [pendingInviteToken, setPendingInviteToken] = useState(() => getInviteToken());
 
   useEffect(() => {
     void hydrate();
@@ -72,6 +103,18 @@ export default function App() {
     document.head.appendChild(style);
   }, []);
 
+  useEffect(() => {
+    if (!currentUser || !pendingInviteToken || isPasswordRecovery) return;
+    void acceptFriendInvite(pendingInviteToken).finally(() => {
+      setPendingInviteToken(null);
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        url.searchParams.delete("invite");
+        window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+      }
+    });
+  }, [acceptFriendInvite, currentUser, isPasswordRecovery, pendingInviteToken]);
+
   if (loading) {
     return (
       <SafeAreaProvider>
@@ -99,40 +142,21 @@ export default function App() {
           />
         ) : currentUser ? (
           <View style={styles.appShell}>
-            <View style={styles.userBadge} pointerEvents="none">
-              <Text style={styles.userBadgeText}>{displayName(currentUser.name, currentUser.email)}</Text>
-            </View>
-            <Tab.Navigator
-              screenOptions={{
-                headerShown: false,
-                tabBarActiveTintColor: palette.ink,
-                tabBarInactiveTintColor: palette.muted,
-                tabBarStyle: [
-                  {
-                    backgroundColor: palette.surface,
-                    borderTopColor: palette.border,
-                    height: 68,
-                    paddingBottom: 10,
-                    paddingTop: 8
-                  },
-                  fastTouchStyle
-                ],
-                tabBarHideOnKeyboard: true,
-                tabBarLabelStyle: {
-                  fontSize: 11,
-                  fontWeight: "700"
-                }
-              }}
+            <Stack.Navigator
+              screenOptions={({ navigation, route }) => ({
+                header: () => (
+                  <AppHeader
+                    activeRouteName={route.name as AppRouteName}
+                    currentUserName={displayName(currentUser.name, currentUser.email)}
+                    onNavigate={(routeName) => navigation.navigate(routeName)}
+                  />
+                )
+              })}
             >
-              <Tab.Screen name="Home" component={HomeScreen} options={{ tabBarIcon: ({ color }) => <Home size={21} color={color} /> }} />
-              <Tab.Screen name="Log" component={WorkoutScreen} options={{ tabBarIcon: ({ color }) => <Dumbbell size={21} color={color} /> }} />
-              <Tab.Screen name="Exercises" component={ExerciseScreen} options={{ tabBarIcon: ({ color }) => <LineChart size={21} color={color} /> }} />
-              <Tab.Screen name="Progress" component={AnalyticsScreen} options={{ tabBarIcon: ({ color }) => <BarChart3 size={21} color={color} /> }} />
-              <Tab.Screen name="Bodyweight" component={BodyweightScreen} options={{ tabBarIcon: ({ color }) => <Scale size={21} color={color} /> }} />
-              <Tab.Screen name="Bulk" component={BulkAnalyticsScreen} options={{ tabBarIcon: ({ color }) => <TrendingUp size={21} color={color} /> }} />
-              <Tab.Screen name="Logs" component={LogsScreen} options={{ tabBarIcon: ({ color }) => <ListChecks size={21} color={color} /> }} />
-              <Tab.Screen name="Settings" component={SettingsScreen} options={{ tabBarIcon: ({ color }) => <Settings size={21} color={color} /> }} />
-            </Tab.Navigator>
+              {appRoutes.map((route) => (
+                <Stack.Screen key={route.name} name={route.name} component={route.component} />
+              ))}
+            </Stack.Navigator>
           </View>
         ) : (
           <AuthScreen />
@@ -148,31 +172,212 @@ function isRecoveryUrl() {
   return value.includes("type=recovery");
 }
 
+function getInviteToken() {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("invite");
+}
+
 function displayName(name: string, email: string) {
   const trimmedName = name.trim();
   if (trimmedName) return trimmedName.split(/\s+/)[0];
   return email.split("@")[0] || "User";
 }
 
+function AppHeader({
+  activeRouteName,
+  currentUserName,
+  onNavigate
+}: {
+  activeRouteName: AppRouteName;
+  currentUserName: string;
+  onNavigate: (routeName: AppRouteName) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const activeRoute = appRoutes.find((route) => route.name === activeRouteName) ?? appRoutes[0];
+
+  function navigateTo(routeName: AppRouteName) {
+    setMenuOpen(false);
+    if (routeName !== activeRouteName) {
+      onNavigate(routeName);
+    }
+  }
+
+  return (
+    <SafeAreaView style={styles.headerSafe} edges={["top", "left", "right"]}>
+      <View style={styles.header}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Open navigation menu"
+          hitSlop={touchHitSlop}
+          onPress={() => setMenuOpen(true)}
+          style={pressableFeedback(styles.iconButton)}
+        >
+          <Menu size={23} color={palette.ink} />
+        </Pressable>
+        <Text style={styles.headerTitle} numberOfLines={1}>{activeRoute.label}</Text>
+        <View style={styles.userBadge} pointerEvents="none">
+          <Text style={styles.userBadgeText} numberOfLines={1}>{currentUserName}</Text>
+        </View>
+      </View>
+
+      <Modal animationType="fade" transparent visible={menuOpen} onRequestClose={() => setMenuOpen(false)}>
+        <View style={styles.menuLayer}>
+          <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)} />
+          <SafeAreaView style={styles.menuSafe} edges={["top", "left", "right", "bottom"]}>
+            <View style={styles.menuPanel}>
+              <View style={styles.menuHeader}>
+                <Text style={styles.menuTitle}>Navigate</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Close navigation menu"
+                  hitSlop={touchHitSlop}
+                  onPress={() => setMenuOpen(false)}
+                  style={pressableFeedback(styles.iconButton)}
+                >
+                  <X size={22} color={palette.ink} />
+                </Pressable>
+              </View>
+
+              <ScrollView contentContainerStyle={styles.menuList} showsVerticalScrollIndicator={false}>
+                {appRoutes.map((route) => {
+                  const selected = route.name === activeRouteName;
+                  const Icon = route.Icon;
+                  const color = selected ? palette.ink : palette.muted;
+
+                  return (
+                    <Pressable
+                      key={route.name}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                      onPress={() => navigateTo(route.name)}
+                      style={pressableFeedback([styles.menuItem, selected && styles.menuItemActive])}
+                    >
+                      <Icon size={22} color={color} />
+                      <Text style={[styles.menuItemText, selected && styles.menuItemTextActive]}>{route.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          </SafeAreaView>
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
 const styles = StyleSheet.create({
   appShell: {
     flex: 1
   },
+  headerSafe: {
+    backgroundColor: palette.surface,
+    borderBottomColor: palette.border,
+    borderBottomWidth: 1
+  },
+  header: {
+    minHeight: 58,
+    maxWidth: 880,
+    width: "100%",
+    alignSelf: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm
+  },
+  iconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.surfaceAlt,
+    borderColor: palette.border,
+    borderWidth: 1
+  },
+  headerTitle: {
+    flex: 1,
+    color: palette.ink,
+    fontSize: 19,
+    fontWeight: "900"
+  },
   userBadge: {
-    position: "absolute",
-    right: 18,
-    top: 12,
-    zIndex: 10,
     backgroundColor: palette.surface,
     borderColor: palette.border,
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 7
+    paddingVertical: 7,
+    maxWidth: 128
   },
   userBadgeText: {
     color: palette.ink,
     fontSize: 13,
     fontWeight: "900"
+  },
+  menuLayer: {
+    flex: 1
+  },
+  menuBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(23, 32, 28, 0.36)"
+  },
+  menuSafe: {
+    flex: 1,
+    justifyContent: "flex-start",
+    alignItems: "center",
+    padding: spacing.lg
+  },
+  menuPanel: {
+    width: "100%",
+    maxWidth: 460,
+    maxHeight: "100%",
+    backgroundColor: palette.surface,
+    borderColor: palette.border,
+    borderWidth: 1,
+    borderRadius: 8,
+    overflow: "hidden"
+  },
+  menuHeader: {
+    minHeight: 58,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderBottomColor: palette.border,
+    borderBottomWidth: 1
+  },
+  menuTitle: {
+    color: palette.ink,
+    fontSize: 18,
+    fontWeight: "900"
+  },
+  menuList: {
+    padding: spacing.sm,
+    gap: spacing.xs
+  },
+  menuItem: {
+    minHeight: 52,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    borderColor: "transparent",
+    borderWidth: 1
+  },
+  menuItemActive: {
+    backgroundColor: palette.accentSoft,
+    borderColor: palette.border
+  },
+  menuItemText: {
+    color: palette.muted,
+    fontSize: 16,
+    fontWeight: "800"
+  },
+  menuItemTextActive: {
+    color: palette.ink
   }
 });

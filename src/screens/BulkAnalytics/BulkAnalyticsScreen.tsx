@@ -10,7 +10,7 @@ import { useFitnessStore } from "@/store/useFitnessStore";
 import { BulkAnalyticsRange, BulkAnalyticsScope, MuscleGroup } from "@/types";
 import { formatShortDate } from "@/utils/date";
 import { muscles, palette, spacing } from "@/utils/theme";
-import { weightFromStorageUnit } from "@/utils/units";
+import { bodyWeightDisplayUnit, bodyWeightFromStorageUnit } from "@/utils/units";
 
 const ranges: BulkAnalyticsRange[] = ["7d", "14d", "30d", "60d", "90d", "all"];
 const scopeKinds = ["overall", "muscle", "exercise"] as const;
@@ -20,7 +20,6 @@ export function BulkAnalyticsScreen() {
   const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
   const musclePoints = useFitnessStore((state) => state.musclePoints);
-  const unitSystem = useFitnessStore((state) => state.unitSystem);
   const strengthExercises = exercises.filter((exercise) => exercise.is_strength_exercise);
   const [range, setRange] = useState<BulkAnalyticsRange>("30d");
   const [scopeKind, setScopeKind] = useState<(typeof scopeKinds)[number]>("overall");
@@ -34,14 +33,14 @@ export function BulkAnalyticsScreen() {
   }, [bodyWeightLogs, exercisePoints, musclePoints, range, scope]);
 
   const bodyweightDelta = analytics?.previousBodyweight !== null && analytics?.currentBodyweight !== null
-    ? weightFromStorageUnit((analytics?.currentBodyweight ?? 0) - (analytics?.previousBodyweight ?? 0), unitSystem)
+    ? bodyWeightFromStorageUnit((analytics?.currentBodyweight ?? 0) - (analytics?.previousBodyweight ?? 0))
     : null;
   const absoluteTrend = analytics?.trend
     .filter((point) => point.absoluteStrength !== null)
     .map((point) => ({ label: formatShortDate(point.date), value: point.absoluteStrength ?? 0 })) ?? [];
   const bodyweightTrend = analytics?.trend
     .filter((point) => point.bodyweight !== null)
-    .map((point) => ({ label: formatShortDate(point.date), value: weightFromStorageUnit(point.bodyweight ?? 0, unitSystem) })) ?? [];
+    .map((point) => ({ label: formatShortDate(point.date), value: bodyWeightFromStorageUnit(point.bodyweight ?? 0) })) ?? [];
   const relativeTrend = analytics?.trend
     .filter((point) => point.relativeStrength !== null)
     .map((point) => ({ label: formatShortDate(point.date), value: point.relativeStrength ?? 0 })) ?? [];
@@ -98,7 +97,7 @@ export function BulkAnalyticsScreen() {
       </Panel>
 
       <View style={styles.cardGrid}>
-        <MetricCard title="Bodyweight" value={bodyweightDelta === null ? "--" : `${bodyweightDelta >= 0 ? "+" : ""}${bodyweightDelta.toFixed(1)} ${unitSystem}`} detail={rangeLabel(range)} />
+        <MetricCard title="Bodyweight" value={bodyweightDelta === null ? "--" : `${bodyweightDelta >= 0 ? "+" : ""}${bodyweightDelta.toFixed(1)} ${bodyWeightDisplayUnit}`} detail={rangeLabel(range)} />
         <MetricCard title="Absolute Strength" value={formatPercent(analytics?.strengthChangePercent)} detail={analytics?.currentStrength ? `${analytics.currentStrength.toFixed(1)} pts avg` : "Strength data required"} />
         <MetricCard title="Relative Strength" value={formatPercent(analytics?.relativeStrengthChangePercent)} detail={analytics?.relativeStrength ? `${analytics.relativeStrength.toFixed(3)} current` : "Bodyweight data required"} />
         <MetricCard title="Bulk Efficiency" value={analytics?.bulkEfficiency === null || analytics?.bulkEfficiency === undefined ? "--" : analytics.bulkEfficiency.toFixed(2)} detail={`Status: ${analytics?.status ?? "Bodyweight data required"}`} />
@@ -112,7 +111,7 @@ export function BulkAnalyticsScreen() {
       <Panel>
         <SectionTitle>Trends</SectionTitle>
         <Label>Bodyweight</Label>
-        <LineGraph points={bodyweightTrend} suffix={` ${unitSystem}`} height={150} emptyMessage="Bodyweight data required." />
+        <LineGraph points={bodyweightTrend} suffix={` ${bodyWeightDisplayUnit}`} height={150} emptyMessage="Bodyweight data required." />
         <Label>Absolute strength</Label>
         <LineGraph points={absoluteTrend} suffix=" pts" height={150} emptyMessage="Strength data required." />
         <Label>Relative strength</Label>

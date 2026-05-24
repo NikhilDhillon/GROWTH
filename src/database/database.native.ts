@@ -2,7 +2,7 @@ import * as SQLite from "expo-sqlite";
 
 import { catalogExercises } from "@/constants/exercises";
 import { schema } from "@/database/schema";
-import { BodyWeightLog, Exercise, MuscleStrengthConfig, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { BodyWeightLog, Exercise, ExerciseScorePoint, MuscleStrengthConfig, SocialData, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 type Database = SQLite.SQLiteDatabase;
@@ -258,6 +258,35 @@ export async function updateConfigWeight(id: number, weightFactor: number) {
 export async function updateUnitSystem(unitSystem: UnitSystem) {
   const db = await getDatabase();
   await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["unit_system", unitSystem]);
+}
+
+export async function loadSocialData(): Promise<SocialData> {
+  return {
+    friends: [],
+    invites: [],
+    leaderboard: [],
+    notice: "Friend leaderboards need the Supabase-powered web app so scores can sync between accounts."
+  };
+}
+
+export async function createFriendInvite(): Promise<string> {
+  throw new Error("Friend invites need the Supabase-powered web app.");
+}
+
+export async function acceptFriendInvite(_token: string): Promise<void> {
+  throw new Error("Friend invites need the Supabase-powered web app.");
+}
+
+export async function revokeFriendInvite(_inviteId: string): Promise<void> {
+  throw new Error("Friend invites need the Supabase-powered web app.");
+}
+
+export async function removeFriend(_friendId: string): Promise<void> {
+  throw new Error("Friend management needs the Supabase-powered web app.");
+}
+
+export async function syncScoreSnapshots(_points: ExerciseScorePoint[]): Promise<void> {
+  return;
 }
 
 async function setCurrentUser(db: Database, userId: number) {
