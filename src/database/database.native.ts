@@ -16,6 +16,7 @@ async function getDatabase() {
     await ensureBodyWeightLogSchema(database);
     await removeLegacySeedData(database);
     await ensureExerciseCatalog(database);
+    await ensureCatalogAdditions(database);
   }
   return database;
 }
@@ -93,6 +94,26 @@ async function ensureExerciseCatalog(db: Database) {
   }
 
   await db.execAsync("PRAGMA user_version = 2");
+}
+
+async function ensureCatalogAdditions(db: Database) {
+  const version = await db.getFirstAsync<{ user_version: number }>("PRAGMA user_version");
+  if ((version?.user_version ?? 0) >= 3) return;
+
+  const timestamp = new Date().toISOString();
+  for (const exercise of catalogExercises) {
+    const existing = await db.getFirstAsync<{ id: number }>("SELECT id FROM exercises WHERE name = ?", [exercise.name]);
+    if (existing) {
+      await db.runAsync("UPDATE exercises SET primary_muscle = ?, secondary_muscle = ? WHERE id = ?", [exercise.primary_muscle, exercise.secondary_muscle ?? null, existing.id]);
+    } else {
+      await db.runAsync(
+        "INSERT INTO exercises (name, primary_muscle, secondary_muscle, is_strength_exercise, created_at) VALUES (?, ?, ?, 0, ?)",
+        [exercise.name, exercise.primary_muscle, exercise.secondary_muscle ?? null, timestamp]
+      );
+    }
+  }
+
+  await db.execAsync("PRAGMA user_version = 3");
 }
 
 export async function loadAllData() {

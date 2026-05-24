@@ -464,15 +464,33 @@ function normalizeBodyWeightLogs(logs: BodyWeightLog[]) {
 }
 
 function normalizeCatalog(existing: Exercise[]) {
-  if (exercisesAreCatalog(existing)) {
-    return existing.map((exercise) => ({ ...exercise, is_strength_exercise: 0 }));
-  }
-  return catalogExerciseRows(now());
+  if (!exercisesAreCatalog(existing)) return catalogExerciseRows(now());
+
+  let nextId = existing.reduce((max, exercise) => Math.max(max, exercise.id), 0);
+  const existingByName = new Map(existing.map((exercise) => [exercise.name, exercise]));
+
+  return catalogExerciseRows(now()).map((catalogExercise) => {
+    const existingExercise = existingByName.get(catalogExercise.name);
+    if (existingExercise) {
+      return {
+        ...existingExercise,
+        primary_muscle: catalogExercise.primary_muscle,
+        secondary_muscle: catalogExercise.secondary_muscle,
+        is_strength_exercise: 0
+      };
+    }
+
+    nextId += 1;
+    return {
+      ...catalogExercise,
+      id: nextId
+    };
+  });
 }
 
 function exercisesAreCatalog(exercises: Exercise[]) {
   const catalogNames = new Set(catalogExerciseRows("").map((exercise) => exercise.name));
-  return exercises.length === catalogNames.size && exercises.every((exercise) => catalogNames.has(exercise.name));
+  return exercises.every((exercise) => catalogNames.has(exercise.name));
 }
 
 function withPreferenceFlags(exercises: Exercise[], preferences: UserExercisePreference[], userId: number | string | null) {
