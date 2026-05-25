@@ -36,5 +36,5 @@ export function daysAgoIso(days: number) {
 
 export function formatShortDate(value: string) {
   const date = new Date(`${value}T00:00:00`);
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }

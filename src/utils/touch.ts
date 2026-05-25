@@ -20,6 +20,5 @@ export function pressableFeedback<T extends ViewStyle>(
 }
 
 const defaultPressedStyle: ViewStyle = {
-  opacity: 0.82,
-  transform: [{ scale: 0.98 }]
+  opacity: 0.82
 };

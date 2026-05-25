@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Pressable, StyleSheet, TextInput, useWindowDimensions, View } from "react-native";
-import { Pencil, Plus, Save, Trash2, X } from "lucide-react-native";
+import { ActivityIndicator, Pressable, StyleSheet, TextInput, useWindowDimensions, View } from "react-native";
+import { Check, Pencil, Plus, Save, Trash2, X } from "lucide-react-native";
 
 import { DatePickerField } from "@/components/DatePickerField";
 import { LineGraph } from "@/components/LineGraph";
@@ -14,6 +14,16 @@ import { palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { bodyWeightDisplayUnit, bodyWeightFromStorageUnit, formatBodyWeight, formatBodyWeightInput } from "@/utils/units";
 
+type BodyweightRange = "week" | "month" | "year" | "all";
+type SaveState = "idle" | "saving" | "saved";
+
+const ranges: Array<{ key: BodyweightRange; label: string }> = [
+  { key: "week", label: "Week" },
+  { key: "month", label: "Month" },
+  { key: "year", label: "Year" },
+  { key: "all", label: "All" }
+];
+
 export function BodyweightScreen() {
   const { width } = useWindowDimensions();
   const logs = useFitnessStore((state) => state.bodyWeightLogs);
@@ -23,23 +33,37 @@ export function BodyweightScreen() {
   const [editing, setEditing] = useState<BodyWeightLog | null>(null);
   const [loggedDate, setLoggedDate] = useState(todayIso());
   const [weight, setWeight] = useState("");
+  const [range, setRange] = useState<BodyweightRange>("month");
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [deletingId, setDeletingId] = useState<number | null>(null);
   const latest = logs[0];
   const isCompact = width < 430;
   const sortedLogs = [...logs].sort((a, b) => a.logged_at.localeCompare(b.logged_at) || a.created_at.localeCompare(b.created_at));
-  const graphPoints = sortedLogs.map((log) => ({
-    key: String(log.id),
-    label: formatShortDate(log.logged_at.slice(0, 10)),
-    value: displayWeight(log.weight),
-    details: [log.logged_at.slice(0, 10)]
-  }));
+  const filteredLogs = filterLogsByRange(sortedLogs, range);
+  const graphPoints = range === "year" || range === "all"
+    ? buildMonthlyAveragePoints(filteredLogs)
+    : filteredLogs.map((log) => ({
+        key: String(log.id),
+        label: formatShortDate(log.logged_at.slice(0, 10)),
+        value: displayWeight(log.weight),
+        details: [log.logged_at.slice(0, 10)]
+      }));
 
   async function handleSave() {
-    if (editing) {
-      await updateBodyWeightLog({ id: editing.id, loggedDate, weight, unitSystem: bodyWeightDisplayUnit });
-    } else {
-      await saveBodyWeightLog({ loggedDate, weight, unitSystem: bodyWeightDisplayUnit });
+    if (saveState === "saving") return;
+    setSaveState("saving");
+    try {
+      if (editing) {
+        await updateBodyWeightLog({ id: editing.id, loggedDate, weight, unitSystem: bodyWeightDisplayUnit });
+      } else {
+        await saveBodyWeightLog({ loggedDate, weight, unitSystem: bodyWeightDisplayUnit });
+      }
+      clearForm();
+      showSaved(setSaveState);
+    } catch (error) {
+      setSaveState("idle");
+      throw error;
     }
-    clearForm();
   }
 
   function startEdit(log: BodyWeightLog) {
@@ -58,6 +82,16 @@ export function BodyweightScreen() {
     return bodyWeightFromStorageUnit(value);
   }
 
+  async function handleDelete(id: number) {
+    if (deletingId !== null) return;
+    setDeletingId(id);
+    try {
+      await deleteBodyWeightLog(id);
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <Screen>
       <View>
@@ -73,7 +107,14 @@ export function BodyweightScreen() {
           </View>
           <Body>{latest ? formatShortDate(latest.logged_at.slice(0, 10)) : "Bodyweight data required"}</Body>
         </View>
-        <LineGraph points={graphPoints} suffix={` ${bodyWeightDisplayUnit}`} emptyMessage="Add bodyweight entries to draw a trend." />
+        <View style={styles.chipRow}>
+          {ranges.map((item) => (
+            <Pressable key={item.key} onPress={() => setRange(item.key)} style={[styles.chip, range === item.key && styles.chipActive]}>
+              <Body style={[styles.chipText, range === item.key && styles.chipTextActive]}>{item.label}</Body>
+            </Pressable>
+          ))}
+        </View>
+        <LineGraph points={graphPoints} maxPoints={graphPoints.length || 1} suffix={` ${bodyWeightDisplayUnit}`} emptyMessage={`Bodyweight data required for this ${rangeLabel(range)}.`} />
       </Panel>
 
       <Panel>
@@ -93,9 +134,9 @@ export function BodyweightScreen() {
               <Body style={styles.unitBadgeText}>{bodyWeightDisplayUnit}</Body>
             </View>
           </View>
-          <Pressable hitSlop={touchHitSlop} style={pressableFeedback([styles.primaryButton, isCompact && styles.primaryButtonCompact])} onPress={handleSave}>
-            {editing ? <Save size={18} color={palette.surface} /> : <Plus size={18} color={palette.surface} />}
-            <Body style={styles.primaryButtonText}>{editing ? "Update" : "Add"}</Body>
+          <Pressable disabled={saveState === "saving"} hitSlop={touchHitSlop} style={pressableFeedback([styles.primaryButton, isCompact && styles.primaryButtonCompact])} onPress={handleSave}>
+            {saveState === "saving" ? <ActivityIndicator color={palette.surface} /> : saveState === "saved" ? <Check size={18} color={palette.surface} /> : editing ? <Save size={18} color={palette.surface} /> : <Plus size={18} color={palette.surface} />}
+            <Body style={styles.primaryButtonText}>{saveState === "saving" ? "Saving" : saveState === "saved" ? "Saved" : editing ? "Update" : "Add"}</Body>
           </Pressable>
         </View>
       </Panel>
@@ -112,8 +153,8 @@ export function BodyweightScreen() {
               <Pressable accessibilityLabel={`Edit bodyweight from ${log.logged_at.slice(0, 10)}`} hitSlop={touchHitSlop} onPress={() => startEdit(log)} style={pressableFeedback(styles.iconButton)}>
                 <Pencil size={17} color={palette.ink} />
               </Pressable>
-              <Pressable accessibilityLabel={`Delete bodyweight from ${log.logged_at.slice(0, 10)}`} hitSlop={touchHitSlop} onPress={() => void deleteBodyWeightLog(log.id)} style={pressableFeedback(styles.iconButton)}>
-                <Trash2 size={17} color={palette.danger} />
+              <Pressable disabled={deletingId === log.id} accessibilityLabel={`Delete bodyweight from ${log.logged_at.slice(0, 10)}`} hitSlop={touchHitSlop} onPress={() => void handleDelete(log.id)} style={pressableFeedback(styles.iconButton)}>
+                {deletingId === log.id ? <ActivityIndicator color={palette.danger} /> : <Trash2 size={17} color={palette.danger} />}
               </Pressable>
             </View>
           </View>
@@ -123,12 +164,88 @@ export function BodyweightScreen() {
   );
 }
 
+function filterLogsByRange(logs: BodyWeightLog[], range: BodyweightRange) {
+  if (range === "all") return logs;
+
+  const today = new Date(`${todayIso()}T00:00:00`);
+  const cutoff = new Date(today);
+  cutoff.setDate(today.getDate() - rangeDays(range) + 1);
+
+  return logs.filter((log) => {
+    const loggedDate = new Date(`${log.logged_at.slice(0, 10)}T00:00:00`);
+    return loggedDate >= cutoff && loggedDate <= today;
+  });
+}
+
+function rangeDays(range: Exclude<BodyweightRange, "all">) {
+  if (range === "week") return 7;
+  if (range === "month") return 30;
+  return 365;
+}
+
+function rangeLabel(range: BodyweightRange) {
+  if (range === "all") return "range";
+  return range;
+}
+
+function buildMonthlyAveragePoints(logs: BodyWeightLog[]) {
+  const buckets = logs.reduce<Map<string, BodyWeightLog[]>>((groups, log) => {
+    const key = log.logged_at.slice(0, 7);
+    groups.set(key, [...(groups.get(key) ?? []), log]);
+    return groups;
+  }, new Map());
+
+  return [...buckets.entries()].map(([month, monthLogs]) => {
+    const average = monthLogs.reduce((total, log) => total + log.weight, 0) / monthLogs.length;
+    return {
+      key: month,
+      label: formatMonthLabel(month),
+      value: bodyWeightFromStorageUnit(average),
+      details: [`${monthLogs.length} ${monthLogs.length === 1 ? "entry" : "entries"} averaged`]
+    };
+  });
+}
+
+function formatMonthLabel(month: string) {
+  const date = new Date(`${month}-01T00:00:00`);
+  return date.toLocaleDateString(undefined, { month: "short", year: "numeric" });
+}
+
+function showSaved(setState: (state: SaveState) => void) {
+  setState("saved");
+  setTimeout(() => setState("idle"), 900);
+}
+
 const styles = StyleSheet.create({
   summaryRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: spacing.md
+  },
+  chipRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm
+  },
+  chip: {
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    backgroundColor: palette.surface
+  },
+  chipActive: {
+    backgroundColor: palette.ink,
+    borderColor: palette.ink
+  },
+  chipText: {
+    color: palette.ink,
+    fontWeight: "800"
+  },
+  chipTextActive: {
+    color: palette.surface
   },
   inputRow: {
     flexDirection: "row",

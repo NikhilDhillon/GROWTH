@@ -2,6 +2,7 @@ import * as SQLite from "expo-sqlite";
 
 import { catalogExercises } from "@/constants/exercises";
 import { schema } from "@/database/schema";
+import { buildWorkoutFingerprint, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
 import { BodyWeightLog, Exercise, ExerciseScorePoint, MuscleStrengthConfig, SocialData, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
@@ -223,10 +224,78 @@ export async function logWorkout(input: { exerciseId: number; workoutDate: strin
   }
 }
 
+export async function importTrainingData(input: { bodyWeightLogs: ImportBodyWeightLog[]; workouts: ImportWorkoutLog[]; exerciseIdsToEnable: number[] }) {
+  const db = await getDatabase();
+  const currentUser = await db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1");
+  if (!currentUser) throw new Error("Please log in again.");
+
+  const timestamp = new Date().toISOString();
+  await db.withTransactionAsync(async () => {
+    for (const log of input.bodyWeightLogs) {
+      await db.runAsync("DELETE FROM body_weight_logs WHERE COALESCE(logged_date, substr(logged_at, 1, 10)) = ?", [log.loggedDate]);
+      await db.runAsync(
+        "INSERT INTO body_weight_logs (weight, unit, logged_at, logged_date, created_at) VALUES (?, ?, ?, ?, ?)",
+        [log.weight, log.unit, `${log.loggedDate}T12:00:00.000Z`, log.loggedDate, timestamp]
+      );
+    }
+
+    for (const exerciseId of input.exerciseIdsToEnable) {
+      await db.runAsync(
+        `
+        INSERT INTO user_exercise_preferences (user_id, exercise_id, enabled, created_at, updated_at)
+        VALUES (?, ?, 1, ?, ?)
+        ON CONFLICT(user_id, exercise_id)
+        DO UPDATE SET enabled = 1, updated_at = excluded.updated_at
+        `,
+        [currentUser.id, exerciseId, timestamp, timestamp]
+      );
+    }
+
+    const importedFingerprints = await getImportedWorkoutFingerprints(db);
+    const existingFingerprints = await getExistingWorkoutFingerprints(db);
+
+    for (const workout of input.workouts) {
+      if (importedFingerprints.has(workout.fingerprint) || existingFingerprints.has(workout.fingerprint)) continue;
+
+      const createdAt = `${workout.workoutDate}T12:00:00.000Z`;
+      const session = await db.runAsync("INSERT INTO workout_sessions (workout_date, notes, created_at) VALUES (?, ?, ?)", [workout.workoutDate, workout.notes, createdAt]);
+      for (const [index, set] of workout.sets.entries()) {
+        await db.runAsync(
+          "INSERT INTO workout_sets (session_id, exercise_id, set_number, reps, weight, rir, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+          [session.lastInsertRowId, workout.exerciseId, index + 1, set.reps, set.weight, null, createdAt]
+        );
+      }
+
+      importedFingerprints.add(workout.fingerprint);
+      existingFingerprints.add(workout.fingerprint);
+    }
+
+    if (input.workouts.length) {
+      await setImportedWorkoutFingerprints(db, importedFingerprints);
+    }
+  });
+}
+
 export async function deleteWorkoutSession(sessionId: number) {
   const db = await getDatabase();
   await db.runAsync("DELETE FROM workout_sets WHERE session_id = ?", [sessionId]);
   await db.runAsync("DELETE FROM workout_sessions WHERE id = ?", [sessionId]);
+}
+
+export async function updateWorkoutSession(input: { sessionId: number; exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number }[] }) {
+  const db = await getDatabase();
+  const timestamp = `${input.workoutDate}T12:00:00.000Z`;
+  await db.withTransactionAsync(async () => {
+    await db.runAsync("UPDATE workout_sessions SET workout_date = ?, notes = ?, created_at = ? WHERE id = ?", [input.workoutDate, input.notes, timestamp, input.sessionId]);
+    await db.runAsync("DELETE FROM workout_sets WHERE session_id = ?", [input.sessionId]);
+
+    for (const [index, set] of input.sets.entries()) {
+      await db.runAsync(
+        "INSERT INTO workout_sets (session_id, exercise_id, set_number, reps, weight, rir, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [input.sessionId, input.exerciseId, index + 1, set.reps, set.weight, null, timestamp]
+      );
+    }
+  });
 }
 
 export async function saveBodyWeightLog(input: { loggedDate: string; weight: number; unit: UnitSystem }) {
@@ -292,4 +361,49 @@ export async function syncScoreSnapshots(_points: ExerciseScorePoint[]): Promise
 async function setCurrentUser(db: Database, userId: number) {
   await db.runAsync("DELETE FROM auth_session");
   await db.runAsync("INSERT INTO auth_session (id, user_id, created_at) VALUES (1, ?, ?)", [userId, new Date().toISOString()]);
+}
+
+async function getImportedWorkoutFingerprints(db: Database) {
+  const setting = await db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["imported_workout_fingerprints"]);
+  if (!setting?.value) return new Set<string>();
+  try {
+    const parsed = JSON.parse(setting.value);
+    return new Set(Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+async function setImportedWorkoutFingerprints(db: Database, fingerprints: Set<string>) {
+  await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["imported_workout_fingerprints", JSON.stringify([...fingerprints])]);
+}
+
+async function getExistingWorkoutFingerprints(db: Database) {
+  const [exercises, sessions, sets] = await Promise.all([
+    db.getAllAsync<Exercise>("SELECT * FROM exercises"),
+    db.getAllAsync<WorkoutSession>("SELECT * FROM workout_sessions"),
+    db.getAllAsync<WorkoutSet>("SELECT * FROM workout_sets ORDER BY set_number ASC")
+  ]);
+  const exerciseById = new Map(exercises.map((exercise) => [exercise.id, exercise]));
+  const sessionById = new Map(sessions.map((session) => [session.id, session]));
+  const setsBySession = sets.reduce<Map<number, WorkoutSet[]>>((groups, set) => {
+    groups.set(set.session_id, [...(groups.get(set.session_id) ?? []), set]);
+    return groups;
+  }, new Map());
+
+  return new Set(
+    [...setsBySession.entries()].flatMap(([sessionId, sessionSets]) => {
+      const session = sessionById.get(sessionId);
+      const exercise = exerciseById.get(sessionSets[0]?.exercise_id);
+      if (!session || !exercise || !sessionSets.length) return [];
+      return [
+        buildWorkoutFingerprint({
+          workoutDate: session.workout_date,
+          exerciseName: exercise.name,
+          notes: session.notes ?? "",
+          sets: sessionSets.map((set) => ({ reps: set.reps, weight: set.weight }))
+        })
+      ];
+    })
+  );
 }
