@@ -37,16 +37,16 @@ export function BulkAnalyticsScreen() {
     : null;
   const absoluteTrend = analytics?.trend
     .filter((point) => point.absoluteStrength !== null)
-    .map((point) => ({ label: formatShortDate(point.date), value: point.absoluteStrength ?? 0 })) ?? [];
+    .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: point.absoluteStrength ?? 0 })) ?? [];
   const bodyweightTrend = analytics?.trend
     .filter((point) => point.bodyweight !== null)
-    .map((point) => ({ label: formatShortDate(point.date), value: bodyWeightFromStorageUnit(point.bodyweight ?? 0) })) ?? [];
+    .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: bodyWeightFromStorageUnit(point.bodyweight ?? 0) })) ?? [];
   const relativeTrend = analytics?.trend
     .filter((point) => point.relativeStrength !== null)
-    .map((point) => ({ label: formatShortDate(point.date), value: point.relativeStrength ?? 0 })) ?? [];
+    .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: point.relativeStrength ?? 0 })) ?? [];
   const efficiencyTrend = analytics?.trend
     .filter((point) => point.bulkEfficiency !== null)
-    .map((point) => ({ label: formatShortDate(point.date), value: point.bulkEfficiency ?? 0 })) ?? [];
+    .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: point.bulkEfficiency ?? 0 })) ?? [];
 
   return (
     <Screen>

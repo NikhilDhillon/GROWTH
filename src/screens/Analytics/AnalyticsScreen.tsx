@@ -49,14 +49,14 @@ export function AnalyticsScreen() {
   const rangedSelectedPoints = filterPointsByRange(selectedPoints, range);
   const rangedBodyWeightLogs = filterBodyWeightLogsByRange(bodyWeightLogs, range);
   const previousLogs = useMemo(() => buildPreviousLogs({ exerciseId: selected?.id, exercises, sessions, sets, points: selectedPoints, unitSystem }), [exercises, selected?.id, selectedPoints, sessions, sets, unitSystem]);
-  const weeklyExercisePoints = weeklyScoreAverages(selectedPoints).map((point) => ({ label: formatShortDate(point.date), value: point.score }));
-  const monthlyExercisePoints = monthlyScoreAverages(selectedPoints).map((point) => ({ label: point.date, value: point.score }));
+  const weeklyExercisePoints = weeklyScoreAverages(selectedPoints).map((point) => ({ date: point.date, label: formatShortDate(point.date), value: point.score }));
+  const monthlyExercisePoints = monthlyScoreAverages(selectedPoints).map((point) => ({ date: point.date, label: formatMonthLabel(point.date), value: point.score }));
   const bodyWeightByDate = new Map(bodyWeightLogs.map((log) => [log.logged_at.slice(0, 10), log]));
   const strengthPointByDate = new Map(selectedPoints.map((point) => [point.date, point]));
   const logByDate = new Map(previousLogs.map((log) => [log.date, log]));
   const weightPoints = buildBodyWeightGraphPoints(rangedBodyWeightLogs, range, strengthPointByDate, logByDate);
   const comparisonStrengthPoints = buildStrengthGraphPoints(rangedSelectedPoints, range, bodyWeightByDate, previousLogs);
-  const comparisonDates = [...new Set([...weightPoints.map((point) => point.key), ...comparisonStrengthPoints.map((point) => point.key)])].sort();
+  const comparisonDates = [...new Set([...weightPoints.map((point) => point.date), ...comparisonStrengthPoints.map((point) => point.date)])].sort();
   const progressGraphPoints = buildStrengthGraphPoints(rangedSelectedPoints, range, bodyWeightByDate, previousLogs);
   const prs = useMemo(() => detectPersonalRecords(selectedPoints), [selectedPoints]);
   const volume = weeklyVolume(sets, unitSystem).slice(-6);
@@ -194,7 +194,7 @@ function buildStrengthGraphPoints(points: ExerciseScorePoint[], range: ProgressR
     const weightLog = bodyWeightByDate.get(point.date);
     const workoutLog = previousLogs.find((item) => item.sessionId === point.sessionId);
     return {
-      key: point.date,
+      date: point.date,
       label: formatShortDate(point.date),
       value: point.score,
       details: [
@@ -215,7 +215,7 @@ function buildBodyWeightGraphPoints(logs: BodyWeightLog[], range: ProgressRange,
     const strengthPoint = strengthPointByDate.get(loggedDate);
     const workoutLog = logByDate.get(loggedDate);
     return {
-      key: loggedDate,
+      date: loggedDate,
       label: formatShortDate(loggedDate),
       value: bodyWeightFromStorageUnit(log.weight),
       details: [
@@ -234,7 +234,7 @@ function monthlyAveragePoints<T>(items: T[], getDate: (item: T) => string, getVa
   }, new Map());
 
   return [...buckets.entries()].map(([month, values]) => ({
-    key: month,
+    date: month,
     label: formatMonthLabel(month),
     value: values.reduce((total, value) => total + value, 0) / values.length,
     details: [`${label}: ${values.length} ${values.length === 1 ? "entry" : "entries"} averaged`]

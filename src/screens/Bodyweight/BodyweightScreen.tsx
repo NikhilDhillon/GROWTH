@@ -43,7 +43,7 @@ export function BodyweightScreen() {
   const graphPoints = range === "year" || range === "all"
     ? buildMonthlyAveragePoints(filteredLogs)
     : filteredLogs.map((log) => ({
-        key: String(log.id),
+        date: log.logged_at.slice(0, 10),
         label: formatShortDate(log.logged_at.slice(0, 10)),
         value: displayWeight(log.weight),
         details: [log.logged_at.slice(0, 10)]
@@ -198,7 +198,7 @@ function buildMonthlyAveragePoints(logs: BodyWeightLog[]) {
   return [...buckets.entries()].map(([month, monthLogs]) => {
     const average = monthLogs.reduce((total, log) => total + log.weight, 0) / monthLogs.length;
     return {
-      key: month,
+      date: month,
       label: formatMonthLabel(month),
       value: bodyWeightFromStorageUnit(average),
       details: [`${monthLogs.length} ${monthLogs.length === 1 ? "entry" : "entries"} averaged`]
