@@ -17,21 +17,24 @@ export function LineGraph({
   height = 180,
   suffix = "",
   emptyMessage = "Log more workouts to draw a trend.",
-  xLabels
+  xLabels,
+  maxPoints = 8
 }: {
   points: Point[];
   height?: number;
   suffix?: string;
   emptyMessage?: string;
   xLabels?: string[];
+  maxPoints?: number;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const width = 340;
   const padding = 28;
-  const domain = (xLabels?.length ? xLabels : points.map((point) => point.key ?? point.label)).slice(-8);
+  const pointLimit = Math.max(1, maxPoints);
+  const domain = (xLabels?.length ? xLabels : points.map((point) => point.key ?? point.label)).slice(-pointLimit);
   const recent = xLabels?.length
-    ? points.filter((point) => domain.includes(point.key ?? point.label)).slice(-8)
-    : points.slice(-8);
+    ? points.filter((point) => domain.includes(point.key ?? point.label)).slice(-pointLimit)
+    : points.slice(-pointLimit);
 
   if (!recent.length) {
     return (

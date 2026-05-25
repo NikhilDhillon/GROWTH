@@ -1,6 +1,7 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 import { catalogExerciseRows } from "@/constants/exercises";
+import { buildWorkoutFingerprint, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
 import { BodyWeightLog, Exercise, ExerciseScorePoint, Friend, FriendInvite, LeaderboardEntry, MuscleStrengthConfig, SocialData, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
@@ -19,6 +20,7 @@ type WebDatabase = {
   users: User[];
   currentUserId: number | null;
   unitSystem: UnitSystem;
+  importFingerprints: string[];
 };
 
 type ProfileRow = {
@@ -60,7 +62,7 @@ function now() {
 }
 
 function seedDatabase(): WebDatabase {
-  return { exercises: catalogExerciseRows(now()), sessions: [], sets: [], bodyWeightLogs: [], configs: [], exercisePreferences: [], users: [], currentUserId: null, unitSystem: "lb" };
+  return { exercises: catalogExerciseRows(now()), sessions: [], sets: [], bodyWeightLogs: [], configs: [], exercisePreferences: [], users: [], currentUserId: null, unitSystem: "lb", importFingerprints: [] };
 }
 
 function readDatabase(): WebDatabase {
@@ -78,7 +80,8 @@ function readDatabase(): WebDatabase {
       exercisePreferences: parsed.exercisePreferences ?? [],
       users: parsed.users ?? [],
       currentUserId: parsed.currentUserId ?? null,
-      unitSystem
+      unitSystem,
+      importFingerprints: Array.isArray(parsed.importFingerprints) ? parsed.importFingerprints.filter((value): value is string => typeof value === "string") : []
     };
   }
   const seeded = seedDatabase();
@@ -327,6 +330,150 @@ export async function logWorkout(input: { exerciseId: number; workoutDate: strin
   writeDatabase(data);
 }
 
+export async function importTrainingData(input: { bodyWeightLogs: ImportBodyWeightLog[]; workouts: ImportWorkoutLog[]; exerciseIdsToEnable: number[] }) {
+  if (supabase) {
+    const user = await requireCloudUser(supabase);
+    if (!user) throw new Error("Please log in again.");
+    const timestamp = now();
+
+    if (input.bodyWeightLogs.length) {
+      const bodyWeightResult = await supabase.from("body_weight_logs").upsert(
+        input.bodyWeightLogs.map((log) => ({
+          user_id: user.id,
+          logged_date: log.loggedDate,
+          weight: log.weight,
+          created_at: `${log.loggedDate}T12:00:00.000Z`
+        })),
+        { onConflict: "user_id,logged_date" }
+      );
+      if (bodyWeightResult.error && isMissingBodyWeightTableError(bodyWeightResult.error)) {
+        throw new Error("Body weight logging needs the Supabase schema update for body_weight_logs.");
+      }
+      throwIfSupabaseError(bodyWeightResult.error);
+    }
+
+    if (input.exerciseIdsToEnable.length) {
+      const preferenceResult = await supabase.from("user_exercise_preferences").upsert(
+        input.exerciseIdsToEnable.map((exerciseId) => ({
+          user_id: user.id,
+          exercise_id: exerciseId,
+          enabled: 1,
+          updated_at: timestamp
+        })),
+        { onConflict: "user_id,exercise_id" }
+      );
+      throwIfSupabaseError(preferenceResult.error);
+    }
+
+    const [importedFingerprints, existingFingerprints] = await Promise.all([
+      getCloudImportedWorkoutFingerprints(supabase),
+      getCloudExistingWorkoutFingerprints(supabase)
+    ]);
+
+    for (const workout of input.workouts) {
+      if (importedFingerprints.has(workout.fingerprint) || existingFingerprints.has(workout.fingerprint)) continue;
+
+      const createdAt = `${workout.workoutDate}T12:00:00.000Z`;
+      const sessionResult = await supabase
+        .from("workout_sessions")
+        .insert({ user_id: user.id, workout_date: workout.workoutDate, notes: workout.notes, created_at: createdAt })
+        .select("id")
+        .single<{ id: number }>();
+      throwIfSupabaseError(sessionResult.error);
+      if (!sessionResult.data) throw new Error("Could not import workout session.");
+
+      const setsResult = await supabase.from("workout_sets").insert(
+        workout.sets.map((set, index) => ({
+          user_id: user.id,
+          session_id: sessionResult.data.id,
+          exercise_id: workout.exerciseId,
+          set_number: index + 1,
+          reps: set.reps,
+          weight: set.weight,
+          rir: null,
+          created_at: createdAt
+        }))
+      );
+      throwIfSupabaseError(setsResult.error);
+      importedFingerprints.add(workout.fingerprint);
+      existingFingerprints.add(workout.fingerprint);
+    }
+
+    if (input.workouts.length) {
+      await setCloudImportedWorkoutFingerprints(supabase, importedFingerprints);
+    }
+    return;
+  }
+
+  const data = readDatabase();
+  if (!data.currentUserId) throw new Error("Please log in again.");
+
+  const timestamp = now();
+  const bodyWeightByDate = new Map(normalizeBodyWeightLogs(data.bodyWeightLogs).map((log) => [log.logged_date ?? log.logged_at.slice(0, 10), log]));
+  for (const log of input.bodyWeightLogs) {
+    bodyWeightByDate.set(log.loggedDate, {
+      id: bodyWeightByDate.get(log.loggedDate)?.id ?? Math.max(0, ...[...bodyWeightByDate.values()].map((item) => item.id)) + 1,
+      weight: log.weight,
+      unit: log.unit,
+      logged_at: `${log.loggedDate}T12:00:00.000Z`,
+      logged_date: log.loggedDate,
+      created_at: timestamp
+    });
+  }
+  data.bodyWeightLogs = [...bodyWeightByDate.values()];
+
+  for (const exerciseId of input.exerciseIdsToEnable) {
+    const existing = data.exercisePreferences.find((preference) => preference.user_id === data.currentUserId && preference.exercise_id === exerciseId);
+    if (existing) {
+      existing.enabled = 1;
+      existing.updated_at = timestamp;
+    } else {
+      data.exercisePreferences.push({
+        user_id: data.currentUserId,
+        exercise_id: exerciseId,
+        enabled: 1,
+        created_at: timestamp,
+        updated_at: timestamp
+      });
+    }
+  }
+
+  const importedFingerprints = new Set(data.importFingerprints);
+  const existingFingerprints = getExistingWorkoutFingerprints(data.exercises, data.sessions, data.sets);
+
+  for (const workout of input.workouts) {
+    if (importedFingerprints.has(workout.fingerprint) || existingFingerprints.has(workout.fingerprint)) continue;
+
+    const sessionId = Math.max(0, ...data.sessions.map((session) => session.id)) + 1;
+    const createdAt = `${workout.workoutDate}T12:00:00.000Z`;
+    data.sessions.push({
+      id: sessionId,
+      workout_date: workout.workoutDate,
+      notes: workout.notes,
+      created_at: createdAt
+    });
+
+    for (const [index, set] of workout.sets.entries()) {
+      data.sets.push({
+        id: Math.max(0, ...data.sets.map((item) => item.id)) + 1,
+        session_id: sessionId,
+        exercise_id: workout.exerciseId,
+        set_number: index + 1,
+        reps: set.reps,
+        weight: set.weight,
+        rir: null,
+        created_at: createdAt
+      });
+    }
+
+    importedFingerprints.add(workout.fingerprint);
+    existingFingerprints.add(workout.fingerprint);
+  }
+
+  data.importFingerprints = [...importedFingerprints];
+  writeDatabase(data);
+}
+
 export async function deleteWorkoutSession(sessionId: number) {
   if (supabase) {
     await requireCloudUser(supabase);
@@ -412,6 +559,62 @@ export async function deleteBodyWeightLog(id: number) {
 
   const data = readDatabase();
   data.bodyWeightLogs = data.bodyWeightLogs.filter((log) => log.id !== id);
+  writeDatabase(data);
+}
+
+export async function updateWorkoutSession(input: { sessionId: number; exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number }[] }) {
+  const timestamp = `${input.workoutDate}T12:00:00.000Z`;
+
+  if (supabase) {
+    await requireCloudUser(supabase);
+    const sessionResult = await supabase
+      .from("workout_sessions")
+      .update({ workout_date: input.workoutDate, notes: input.notes, created_at: timestamp })
+      .eq("id", input.sessionId);
+    throwIfSupabaseError(sessionResult.error);
+
+    const deleteResult = await supabase.from("workout_sets").delete().eq("session_id", input.sessionId);
+    throwIfSupabaseError(deleteResult.error);
+
+    const setRows = input.sets.map((set, index) => ({
+      session_id: input.sessionId,
+      exercise_id: input.exerciseId,
+      set_number: index + 1,
+      reps: set.reps,
+      weight: set.weight,
+      rir: null,
+      created_at: timestamp
+    }));
+    const setsResult = await supabase.from("workout_sets").insert(setRows);
+    throwIfSupabaseError(setsResult.error);
+    return;
+  }
+
+  const data = readDatabase();
+  data.sessions = data.sessions.map((session) =>
+    session.id === input.sessionId
+      ? {
+          ...session,
+          workout_date: input.workoutDate,
+          notes: input.notes,
+          created_at: timestamp
+        }
+      : session
+  );
+  data.sets = data.sets.filter((set) => set.session_id !== input.sessionId);
+  for (const [index, set] of input.sets.entries()) {
+    data.sets.push({
+      id: Math.max(0, ...data.sets.map((item) => item.id)) + 1,
+      session_id: input.sessionId,
+      exercise_id: input.exerciseId,
+      set_number: index + 1,
+      reps: set.reps,
+      weight: set.weight,
+      rir: null,
+      created_at: timestamp
+    });
+  }
+
   writeDatabase(data);
 }
 
@@ -684,6 +887,73 @@ function normalizeBodyWeightLogs(logs: BodyWeightLog[]) {
       logged_date: loggedDate
     };
   });
+}
+
+async function getCloudImportedWorkoutFingerprints(client: SupabaseClient) {
+  const result = await client.from("app_settings").select("value").eq("key", "imported_workout_fingerprints").maybeSingle<{ value: string }>();
+  throwIfSupabaseError(result.error);
+  return parseFingerprintSetting(result.data?.value);
+}
+
+async function setCloudImportedWorkoutFingerprints(client: SupabaseClient, fingerprints: Set<string>) {
+  const user = await requireCloudUser(client);
+  if (!user) throw new Error("Please log in again.");
+  const result = await client
+    .from("app_settings")
+    .upsert({ user_id: user.id, key: "imported_workout_fingerprints", value: JSON.stringify([...fingerprints]), updated_at: now() }, { onConflict: "user_id,key" });
+  throwIfSupabaseError(result.error);
+}
+
+async function getCloudExistingWorkoutFingerprints(client: SupabaseClient) {
+  const [exercisesResult, sessionsResult, setsResult] = await Promise.all([
+    client.from("exercises").select("*"),
+    client.from("workout_sessions").select("*"),
+    client.from("workout_sets").select("*").order("set_number")
+  ]);
+  throwIfSupabaseError(exercisesResult.error);
+  throwIfSupabaseError(sessionsResult.error);
+  throwIfSupabaseError(setsResult.error);
+  return getExistingWorkoutFingerprints(
+    (exercisesResult.data ?? []) as Exercise[],
+    (sessionsResult.data ?? []) as WorkoutSession[],
+    (setsResult.data ?? []) as WorkoutSet[]
+  );
+}
+
+function getExistingWorkoutFingerprints(exercises: Exercise[], sessions: WorkoutSession[], sets: WorkoutSet[]) {
+  const exerciseById = new Map(exercises.map((exercise) => [exercise.id, exercise]));
+  const sessionById = new Map(sessions.map((session) => [session.id, session]));
+  const setsBySession = sets.reduce<Map<number, WorkoutSet[]>>((groups, set) => {
+    groups.set(set.session_id, [...(groups.get(set.session_id) ?? []), set]);
+    return groups;
+  }, new Map());
+
+  return new Set(
+    [...setsBySession.entries()].flatMap(([sessionId, sessionSets]) => {
+      const session = sessionById.get(sessionId);
+      const exercise = exerciseById.get(sessionSets[0]?.exercise_id);
+      if (!session || !exercise || !sessionSets.length) return [];
+      const orderedSets = [...sessionSets].sort((a, b) => a.set_number - b.set_number);
+      return [
+        buildWorkoutFingerprint({
+          workoutDate: session.workout_date,
+          exerciseName: exercise.name,
+          notes: session.notes ?? "",
+          sets: orderedSets.map((set) => ({ reps: set.reps, weight: set.weight }))
+        })
+      ];
+    })
+  );
+}
+
+function parseFingerprintSetting(value: string | undefined | null) {
+  if (!value) return new Set<string>();
+  try {
+    const parsed = JSON.parse(value);
+    return new Set(Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : []);
+  } catch {
+    return new Set<string>();
+  }
 }
 
 function normalizeCatalog(existing: Exercise[]) {

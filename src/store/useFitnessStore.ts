@@ -1,7 +1,8 @@
 import { create } from "zustand";
 
 import { buildExerciseScorePoints, buildMuscleScorePoints, summarizeMuscles } from "@/services/strength/strengthService";
-import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, requestPasswordReset, revokeFriendInvite as revokeStoredFriendInvite, saveBodyWeightLog as saveStoredBodyWeightLog, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateUnitSystem } from "@/database/database";
+import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, requestPasswordReset, revokeFriendInvite as revokeStoredFriendInvite, saveBodyWeightLog as saveStoredBodyWeightLog, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateUnitSystem, updateWorkoutSession } from "@/database/database";
+import { ParsedImportData } from "@/services/import/importService";
 import { BodyWeightLog, Exercise, ExerciseScorePoint, LoggedSetDraft, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, SocialData, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { todayIso } from "@/utils/date";
 import { bodyWeightDisplayUnit, bodyWeightToStorageUnit, weightToStorageUnit } from "@/utils/units";
@@ -38,10 +39,12 @@ type FitnessState = {
   clearAuthError: () => void;
   setExerciseEnabled: (exerciseId: number, enabled: boolean) => Promise<void>;
   saveWorkout: (input: { exerciseId: number; workoutDate: string; notes: string; sets: LoggedSetDraft[] }) => Promise<void>;
+  updateWorkoutLog: (input: { sessionId: number; exerciseId: number; workoutDate: string; notes: string; sets: LoggedSetDraft[] }) => Promise<void>;
   deleteWorkoutLog: (sessionId: number) => Promise<void>;
   saveBodyWeightLog: (input: { loggedDate: string; weight: string; unitSystem?: UnitSystem }) => Promise<void>;
   updateBodyWeightLog: (input: { id: number; loggedDate: string; weight: string; unitSystem?: UnitSystem }) => Promise<void>;
   deleteBodyWeightLog: (id: number) => Promise<void>;
+  importTrainingData: (input: ParsedImportData) => Promise<void>;
   setUnitSystem: (unitSystem: UnitSystem) => Promise<void>;
   setConfigWeight: (id: number, weightFactor: number) => Promise<void>;
 };
@@ -192,8 +195,21 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   },
   clearAuthError: () => set({ authError: null, authNotice: null }),
   setExerciseEnabled: async (exerciseId, enabled) => {
-    await setStoredExerciseEnabled(exerciseId, enabled);
-    await get().hydrate();
+    const previous = get();
+    const exercises = previous.exercises.map((exercise) => (exercise.id === exerciseId ? { ...exercise, is_strength_exercise: enabled ? 1 : 0 } : exercise));
+    const derived = derive(exercises, previous.sessions, previous.sets, previous.configs);
+    set({ exercises, ...derived });
+
+    try {
+      await setStoredExerciseEnabled(exerciseId, enabled);
+    } catch (error) {
+      const rollbackDerived = derive(previous.exercises, previous.sessions, previous.sets, previous.configs);
+      set({
+        exercises: previous.exercises,
+        ...rollbackDerived,
+        authError: error instanceof Error ? error.message : "Could not update exercise selection."
+      });
+    }
   },
   saveWorkout: async (input) => {
     const unitSystem = get().unitSystem;
@@ -204,6 +220,17 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
 
     if (!sets.length) return;
     await logWorkout({ exerciseId: input.exerciseId, workoutDate, notes: input.notes, sets });
+    await get().hydrate();
+  },
+  updateWorkoutLog: async (input) => {
+    const unitSystem = get().unitSystem;
+    const sets = input.sets
+      .map((set) => ({ reps: Number(set.reps), weight: weightToStorageUnit(Number(set.weight), unitSystem) }))
+      .filter((set) => Number.isFinite(set.reps) && Number.isFinite(set.weight) && set.reps > 0 && set.weight >= 0);
+    const workoutDate = /^\d{4}-\d{2}-\d{2}$/.test(input.workoutDate) ? input.workoutDate : todayIso();
+
+    if (!sets.length) return;
+    await updateWorkoutSession({ sessionId: input.sessionId, exerciseId: input.exerciseId, workoutDate, notes: input.notes, sets });
     await get().hydrate();
   },
   deleteWorkoutLog: async (sessionId) => {
@@ -230,6 +257,10 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   },
   deleteBodyWeightLog: async (id) => {
     await deleteStoredBodyWeightLog(id);
+    await get().hydrate();
+  },
+  importTrainingData: async (input) => {
+    await importStoredTrainingData(input);
     await get().hydrate();
   },
   setUnitSystem: async (unitSystem) => {

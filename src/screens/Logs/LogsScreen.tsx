@@ -1,16 +1,29 @@
 import { useMemo, useState } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
-import { ChevronDown, ChevronRight, Trash2 } from "lucide-react-native";
+import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from "react-native";
+import { Check, ChevronDown, ChevronRight, Pencil, Plus, Save, Trash2, X } from "lucide-react-native";
 
+import { DatePickerField } from "@/components/DatePickerField";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { Exercise, MuscleGroup } from "@/types";
+import { Exercise, LoggedSetDraft, MuscleGroup, WorkoutSession } from "@/types";
 import { formatShortDate } from "@/utils/date";
 import { buildPreviousLogs } from "@/utils/logs";
 import { muscles, palette, spacing } from "@/utils/theme";
-import { formatBodyWeight } from "@/utils/units";
+import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
+import { formatBodyWeight, formatWeightInput } from "@/utils/units";
+
+type EditingWorkout = {
+  sessionId: number;
+  exerciseId: number;
+  workoutDate: string;
+  notes: string;
+  sets: LoggedSetDraft[];
+};
+
+const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
+type SaveState = "idle" | "saving" | "saved";
 
 export function LogsScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
@@ -20,12 +33,73 @@ export function LogsScreen() {
   const points = useFitnessStore((state) => state.exercisePoints);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const deleteWorkoutLog = useFitnessStore((state) => state.deleteWorkoutLog);
+  const updateWorkoutLog = useFitnessStore((state) => state.updateWorkoutLog);
   const deleteBodyWeightLog = useFitnessStore((state) => state.deleteBodyWeightLog);
   const logs = buildPreviousLogs({ exercises, sessions, sets, points, unitSystem });
   const groupedLogs = useMemo(() => groupLogsByMuscle(logs, exercises), [exercises, logs]);
   const [bodyWeightCollapsed, setBodyWeightCollapsed] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [collapsedMuscles, setCollapsedMuscles] = useState<Record<string, boolean>>({});
+  const [editingWorkout, setEditingWorkout] = useState<EditingWorkout | null>(null);
+  const [updateSaveState, setUpdateSaveState] = useState<SaveState>("idle");
+  const [deletingWorkoutId, setDeletingWorkoutId] = useState<number | null>(null);
+  const [deletingBodyWeightId, setDeletingBodyWeightId] = useState<number | null>(null);
+
+  function startEditWorkout(log: ReturnType<typeof buildPreviousLogs>[number]) {
+    const session = sessions.find((item) => item.id === log.sessionId);
+    const sessionSets = sets
+      .filter((set) => set.session_id === log.sessionId)
+      .sort((a, b) => a.set_number - b.set_number)
+      .map((set) => ({ reps: String(set.reps), weight: formatWeightInput(set.weight, unitSystem) }));
+    setUpdateSaveState("idle");
+    setEditingWorkout({
+      sessionId: log.sessionId,
+      exerciseId: log.exerciseId,
+      workoutDate: session?.workout_date ?? log.date,
+      notes: session?.notes ?? "",
+      sets: sessionSets.length ? sessionSets : [emptySet()]
+    });
+  }
+
+  function clearEditWorkout() {
+    setEditingWorkout(null);
+  }
+
+  async function handleUpdateWorkout() {
+    if (!editingWorkout || updateSaveState === "saving") return;
+    setUpdateSaveState("saving");
+    try {
+      await updateWorkoutLog(editingWorkout);
+      setUpdateSaveState("saved");
+      setTimeout(() => {
+        clearEditWorkout();
+        setUpdateSaveState("idle");
+      }, 900);
+    } catch (error) {
+      setUpdateSaveState("idle");
+      throw error;
+    }
+  }
+
+  async function handleDeleteWorkout(sessionId: number) {
+    if (deletingWorkoutId !== null) return;
+    setDeletingWorkoutId(sessionId);
+    try {
+      await deleteWorkoutLog(sessionId);
+    } finally {
+      setDeletingWorkoutId(null);
+    }
+  }
+
+  async function handleDeleteBodyWeight(id: number) {
+    if (deletingBodyWeightId !== null) return;
+    setDeletingBodyWeightId(id);
+    try {
+      await deleteBodyWeightLog(id);
+    } finally {
+      setDeletingBodyWeightId(null);
+    }
+  }
 
   return (
     <Screen>
@@ -54,8 +128,8 @@ export function LogsScreen() {
                   <Body style={styles.dateText}>{formatShortDate(log.logged_at.slice(0, 10))}</Body>
                   <Body>{formatBodyWeight(log.weight)}</Body>
                 </View>
-                <Pressable accessibilityLabel={`Delete body weight log from ${log.logged_at.slice(0, 10)}`} onPress={() => void deleteBodyWeightLog(log.id)} style={styles.deleteButton}>
-                  <Trash2 size={16} color={palette.danger} />
+                <Pressable disabled={deletingBodyWeightId === log.id} accessibilityLabel={`Delete body weight log from ${log.logged_at.slice(0, 10)}`} onPress={() => void handleDeleteBodyWeight(log.id)} style={styles.deleteButton}>
+                  {deletingBodyWeightId === log.id ? <ActivityIndicator color={palette.danger} /> : <Trash2 size={16} color={palette.danger} />}
                 </Pressable>
               </View>
             </View>
@@ -100,19 +174,83 @@ export function LogsScreen() {
                       <Body style={styles.countText}>{group.logs.length} logs</Body>
                     </Pressable>
 
-                    {!isCollapsed ? group.logs.map((log) => (
+                    {!isCollapsed ? group.logs.map((log) => {
+                      const isEditing = editingWorkout?.sessionId === log.sessionId;
+                      return (
                       <View key={log.sessionId} style={styles.historyRow}>
-                        <View style={styles.historyHeader}>
-                          <View style={styles.historyText}>
-                            <Body style={styles.dateText}>{formatShortDate(log.date)} · {log.score ? `${log.score.toFixed(1)} pts` : "No score"}</Body>
-                            <Body>{log.sets.join("  |  ")}</Body>
+                        {isEditing && editingWorkout ? (
+                          <View style={styles.editForm}>
+                            <View style={styles.summaryRow}>
+                              <SectionTitle>Edit log</SectionTitle>
+                              <Pressable accessibilityLabel="Cancel workout edit" hitSlop={touchHitSlop} onPress={clearEditWorkout} style={pressableFeedback(styles.iconButton)}>
+                                <X size={17} color={palette.ink} />
+                              </Pressable>
+                            </View>
+                            <DatePickerField value={editingWorkout.workoutDate} onChange={(workoutDate) => setEditingWorkout((current) => current ? { ...current, workoutDate } : current)} />
+                            {editingWorkout.sets.map((set, index) => (
+                              <View key={index} style={styles.setRow}>
+                                <Label style={styles.setNumber}>{index + 1}</Label>
+                                <TextInput
+                                  style={[styles.input, styles.setInput]}
+                                  value={set.weight}
+                                  onChangeText={(weight) => updateEditingSet(index, "weight", weight)}
+                                  keyboardType="decimal-pad"
+                                  inputMode="decimal"
+                                  placeholder={unitSystem}
+                                />
+                                <TextInput
+                                  style={[styles.input, styles.setInput]}
+                                  value={set.reps}
+                                  onChangeText={(reps) => updateEditingSet(index, "reps", reps)}
+                                  keyboardType="number-pad"
+                                  inputMode="numeric"
+                                  placeholder="reps"
+                                />
+                                <Pressable
+                                  accessibilityLabel="Remove set"
+                                  hitSlop={touchHitSlop}
+                                  onPress={() => setEditingWorkout((current) => current ? { ...current, sets: current.sets.filter((_, itemIndex) => itemIndex !== index) } : current)}
+                                  style={pressableFeedback([styles.iconButton, styles.removeButton])}
+                                >
+                                  <Trash2 size={16} color={palette.danger} />
+                                </Pressable>
+                              </View>
+                            ))}
+                            <Pressable hitSlop={touchHitSlop} onPress={() => setEditingWorkout((current) => current ? { ...current, sets: [...current.sets, emptySet()] } : current)} style={pressableFeedback(styles.secondaryButton)}>
+                              <Plus size={17} color={palette.ink} />
+                              <Body style={styles.secondaryButtonText}>Add set</Body>
+                            </Pressable>
+                            <TextInput
+                              style={[styles.input, styles.notes]}
+                              value={editingWorkout.notes}
+                              onChangeText={(notes) => setEditingWorkout((current) => current ? { ...current, notes } : current)}
+                              multiline
+                              placeholder="Notes"
+                            />
+                            <Pressable disabled={updateSaveState === "saving"} hitSlop={touchHitSlop} onPress={() => void handleUpdateWorkout()} style={pressableFeedback(styles.primaryButton)}>
+                              {updateSaveState === "saving" ? <ActivityIndicator color={palette.surface} /> : updateSaveState === "saved" ? <Check size={18} color={palette.surface} /> : <Save size={18} color={palette.surface} />}
+                              <Body style={styles.primaryButtonText}>{updateSaveState === "saving" ? "Saving" : updateSaveState === "saved" ? "Updated" : "Save changes"}</Body>
+                            </Pressable>
                           </View>
-                          <Pressable accessibilityLabel={`Delete workout log from ${log.date}`} onPress={() => void deleteWorkoutLog(log.sessionId)} style={styles.deleteButton}>
-                            <Trash2 size={16} color={palette.danger} />
-                          </Pressable>
-                        </View>
+                        ) : (
+                          <View style={styles.historyHeader}>
+                            <View style={styles.historyText}>
+                              <Body style={styles.dateText}>{formatShortDate(log.date)} · {log.score ? `${log.score.toFixed(1)} pts` : "No score"}</Body>
+                              <Body>{log.sets.join("  |  ")}</Body>
+                            </View>
+                            <View style={styles.actions}>
+                              <Pressable accessibilityLabel={`Edit workout log from ${log.date}`} onPress={() => startEditWorkout(log)} style={styles.deleteButton}>
+                                <Pencil size={16} color={palette.ink} />
+                              </Pressable>
+                              <Pressable disabled={deletingWorkoutId === log.sessionId} accessibilityLabel={`Delete workout log from ${log.date}`} onPress={() => void handleDeleteWorkout(log.sessionId)} style={styles.deleteButton}>
+                                {deletingWorkoutId === log.sessionId ? <ActivityIndicator color={palette.danger} /> : <Trash2 size={16} color={palette.danger} />}
+                              </Pressable>
+                            </View>
+                          </View>
+                        )}
                       </View>
-                    )) : null}
+                      );
+                    }) : null}
                   </View>
                 );
               }) : null}
@@ -124,6 +262,17 @@ export function LogsScreen() {
       </Panel>
     </Screen>
   );
+
+  function updateEditingSet(index: number, field: keyof LoggedSetDraft, value: string) {
+    setEditingWorkout((current) =>
+      current
+        ? {
+            ...current,
+            sets: current.sets.map((set, itemIndex) => (itemIndex === index ? { ...set, [field]: value } : set))
+          }
+        : current
+    );
+  }
 }
 
 function groupLogsByMuscle(logs: ReturnType<typeof buildPreviousLogs>, exercises: Exercise[]) {
@@ -215,6 +364,10 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2
   },
+  actions: {
+    flexDirection: "row",
+    gap: spacing.sm
+  },
   dateText: {
     fontWeight: "800"
   },
@@ -226,5 +379,93 @@ const styles = StyleSheet.create({
     borderColor: palette.border,
     alignItems: "center",
     justifyContent: "center"
+  },
+  editForm: {
+    gap: spacing.md
+  },
+  summaryRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.md
+  },
+  setRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    width: "100%",
+    minWidth: 0
+  },
+  setNumber: {
+    width: 18,
+    textAlign: "center",
+    flexShrink: 0
+  },
+  input: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    color: palette.ink,
+    fontSize: 16,
+    fontWeight: "700"
+  },
+  setInput: {
+    flexBasis: 0,
+    paddingHorizontal: spacing.sm
+  },
+  notes: {
+    minHeight: 72,
+    textAlignVertical: "top",
+    paddingTop: spacing.md
+  },
+  iconButton: {
+    width: 42,
+    height: 42,
+    flexShrink: 0,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.surface,
+    ...fastTouchStyle
+  },
+  removeButton: {
+    width: 40,
+    height: 40
+  },
+  secondaryButton: {
+    minHeight: 44,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    ...fastTouchStyle
+  },
+  secondaryButtonText: {
+    color: palette.ink,
+    fontWeight: "800"
+  },
+  primaryButton: {
+    minHeight: 48,
+    borderRadius: 8,
+    backgroundColor: palette.ink,
+    alignItems: "center",
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    ...fastTouchStyle
+  },
+  primaryButtonText: {
+    color: palette.surface,
+    fontWeight: "900"
   }
 });

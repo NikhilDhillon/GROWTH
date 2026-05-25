@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, StyleSheet, TextInput, View } from "react-native";
-import { Copy, Plus, Save, Trash2 } from "lucide-react-native";
+import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from "react-native";
+import { Check, Copy, Plus, Save, Trash2 } from "lucide-react-native";
 
 import { DatePickerField } from "@/components/DatePickerField";
 import { Panel } from "@/components/Panel";
@@ -15,6 +15,7 @@ import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { bodyWeightDisplayUnit, formatWeightInput, weightToStorageUnit } from "@/utils/units";
 
 const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
+type SaveState = "idle" | "saving" | "saved";
 
 export function WorkoutScreen() {
   const allExercises = useFitnessStore((state) => state.exercises);
@@ -30,6 +31,8 @@ export function WorkoutScreen() {
   const [weightDraft, setWeightDraft] = useState("");
   const [workoutDate, setWorkoutDate] = useState(todayIso());
   const [notes, setNotes] = useState("");
+  const [workoutSaveState, setWorkoutSaveState] = useState<SaveState>("idle");
+  const [weightSaveState, setWeightSaveState] = useState<SaveState>("idle");
 
   useEffect(() => {
     if (selectedKind !== "exercise") return;
@@ -65,15 +68,30 @@ export function WorkoutScreen() {
   }, [draftSets, unitSystem]);
 
   async function handleSave() {
-    if (!selectedExercise) return;
-    await saveWorkout({ exerciseId: selectedExercise.id, workoutDate, notes, sets: draftSets });
-    setDraftSets([emptySet(), emptySet(), emptySet()]);
-    setNotes("");
+    if (!selectedExercise || workoutSaveState === "saving") return;
+    setWorkoutSaveState("saving");
+    try {
+      await saveWorkout({ exerciseId: selectedExercise.id, workoutDate, notes, sets: draftSets });
+      setDraftSets([emptySet(), emptySet(), emptySet()]);
+      setNotes("");
+      showSaved(setWorkoutSaveState);
+    } catch (error) {
+      setWorkoutSaveState("idle");
+      throw error;
+    }
   }
 
   async function handleSaveWeight() {
-    await saveBodyWeightLog({ loggedDate: workoutDate, weight: weightDraft, unitSystem: bodyWeightDisplayUnit });
-    setWeightDraft("");
+    if (weightSaveState === "saving") return;
+    setWeightSaveState("saving");
+    try {
+      await saveBodyWeightLog({ loggedDate: workoutDate, weight: weightDraft, unitSystem: bodyWeightDisplayUnit });
+      setWeightDraft("");
+      showSaved(setWeightSaveState);
+    } catch (error) {
+      setWeightSaveState("idle");
+      throw error;
+    }
   }
 
   function duplicatePrevious() {
@@ -151,9 +169,9 @@ export function WorkoutScreen() {
               <Body style={styles.unitBadgeText}>{bodyWeightDisplayUnit}</Body>
             </View>
           </View>
-          <Pressable hitSlop={touchHitSlop} style={pressableFeedback(styles.primaryButton)} onPress={handleSaveWeight}>
-            <Save size={19} color={palette.surface} />
-            <Body style={styles.primaryButtonText}>Save weight</Body>
+          <Pressable disabled={weightSaveState === "saving"} hitSlop={touchHitSlop} style={pressableFeedback(styles.primaryButton)} onPress={handleSaveWeight}>
+            {weightSaveState === "saving" ? <ActivityIndicator color={palette.surface} /> : weightSaveState === "saved" ? <Check size={19} color={palette.surface} /> : <Save size={19} color={palette.surface} />}
+            <Body style={styles.primaryButtonText}>{weightSaveState === "saving" ? "Saving" : weightSaveState === "saved" ? "Added" : "Save weight"}</Body>
           </Pressable>
         </Panel>
       ) : !exercises.length ? (
@@ -191,9 +209,9 @@ export function WorkoutScreen() {
 
         <TextInput style={[styles.input, styles.notes]} value={notes} onChangeText={setNotes} multiline placeholder="Notes" />
 
-        <Pressable hitSlop={touchHitSlop} style={pressableFeedback(styles.primaryButton)} onPress={handleSave}>
-          <Save size={19} color={palette.surface} />
-          <Body style={styles.primaryButtonText}>Save workout</Body>
+        <Pressable disabled={workoutSaveState === "saving"} hitSlop={touchHitSlop} style={pressableFeedback(styles.primaryButton)} onPress={handleSave}>
+          {workoutSaveState === "saving" ? <ActivityIndicator color={palette.surface} /> : workoutSaveState === "saved" ? <Check size={19} color={palette.surface} /> : <Save size={19} color={palette.surface} />}
+          <Body style={styles.primaryButtonText}>{workoutSaveState === "saving" ? "Saving" : workoutSaveState === "saved" ? "Added" : "Save workout"}</Body>
         </Pressable>
       </Panel>
       )}
@@ -203,6 +221,11 @@ export function WorkoutScreen() {
   function updateSet(index: number, field: keyof LoggedSetDraft, value: string) {
     setDraftSets((current) => current.map((set, itemIndex) => (itemIndex === index ? { ...set, [field]: value } : set)));
   }
+}
+
+function showSaved(setState: (state: SaveState) => void) {
+  setState("saved");
+  setTimeout(() => setState("idle"), 900);
 }
 
 const styles = StyleSheet.create({
