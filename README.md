@@ -9,9 +9,9 @@ The app focuses on individual strength-exercise progression, not just workout lo
 - Log exercises, sets, reps, weight, and notes
 - Register and log in with Supabase Auth
 - Calculate estimated 1RM with `weight x (1 + reps / 30)`
-- Score each set with rep-quality multipliers
-- Apply diminishing set-importance weights
-- Normalize by square root of set count to prevent inflated high-set scores
+- Score eligible failure-set sessions using best e1RM, failure-set volume, and fatigue resistance
+- Calculate Performance Points as `100 x (0.45 strength + 0.35 volume + 0.20 resistance)` normalized against the prior best-strength session
+- Rank friend exercise leaderboards using best estimated 1RM
 - Mark selected exercises as strength exercises
 - Show graphs and PRs for each strength exercise
 

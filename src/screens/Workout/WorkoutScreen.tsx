@@ -6,7 +6,7 @@ import { DatePickerField } from "@/components/DatePickerField";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
-import { calculateExerciseScore } from "@/services/strength/strengthService";
+import { calculateSessionPerformance, findStrengthReference } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { LoggedSetDraft, MuscleGroup } from "@/types";
 import { todayIso } from "@/utils/date";
@@ -20,6 +20,7 @@ type SaveState = "idle" | "saving" | "saved";
 export function WorkoutScreen() {
   const allExercises = useFitnessStore((state) => state.exercises);
   const sets = useFitnessStore((state) => state.sets);
+  const exercisePoints = useFitnessStore((state) => state.exercisePoints);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
   const saveBodyWeightLog = useFitnessStore((state) => state.saveBodyWeightLog);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
@@ -33,6 +34,7 @@ export function WorkoutScreen() {
   const [notes, setNotes] = useState("");
   const [workoutSaveState, setWorkoutSaveState] = useState<SaveState>("idle");
   const [weightSaveState, setWeightSaveState] = useState<SaveState>("idle");
+  const [workoutError, setWorkoutError] = useState<string | null>(null);
 
   useEffect(() => {
     if (selectedKind !== "exercise") return;
@@ -58,18 +60,23 @@ export function WorkoutScreen() {
     return matching.filter((set) => set.created_at.slice(0, 10) === lastDate);
   }, [selectedExercise, sets]);
 
-  const projectedScore = useMemo(() => {
-    return calculateExerciseScore(
+  const projectedPerformance = useMemo(() => {
+    const reference = selectedExercise
+      ? findStrengthReference(exercisePoints.filter((point) => point.exerciseId === selectedExercise.id && point.date <= workoutDate))
+      : undefined;
+    return calculateSessionPerformance(
       draftSets
         .map((set, index) => ({ reps: Number(set.reps), weight: Number(set.weight), set_number: index + 1 }))
         .map((set) => ({ ...set, weight: weightToStorageUnit(set.weight, unitSystem) }))
-        .filter((set) => set.reps > 0 && set.weight >= 0)
+        .filter((set) => set.reps > 0 || set.weight > 0),
+      reference
     );
-  }, [draftSets, unitSystem]);
+  }, [draftSets, exercisePoints, selectedExercise, unitSystem, workoutDate]);
 
   async function handleSave() {
     if (!selectedExercise || workoutSaveState === "saving") return;
     setWorkoutSaveState("saving");
+    setWorkoutError(null);
     try {
       await saveWorkout({ exerciseId: selectedExercise.id, workoutDate, notes, sets: draftSets });
       setDraftSets([emptySet(), emptySet(), emptySet()]);
@@ -77,7 +84,7 @@ export function WorkoutScreen() {
       showSaved(setWorkoutSaveState);
     } catch (error) {
       setWorkoutSaveState("idle");
-      throw error;
+      setWorkoutError(error instanceof Error ? error.message : "Could not save scored workout.");
     }
   }
 
@@ -184,7 +191,7 @@ export function WorkoutScreen() {
         <View style={styles.rowBetween}>
           <View>
             <SectionTitle>Working sets</SectionTitle>
-            <Body>Projected score: {projectedScore ? projectedScore.toFixed(1) : "..."}</Body>
+            <Body>Projected Performance Points: {projectedPerformance ? projectedPerformance.performancePoints.toFixed(1) : "..."}</Body>
           </View>
           <Pressable accessibilityLabel="Duplicate previous workout" hitSlop={touchHitSlop} onPress={duplicatePrevious} style={pressableFeedback(styles.iconButton)}>
             <Copy size={18} color={palette.ink} />
@@ -208,6 +215,12 @@ export function WorkoutScreen() {
         </Pressable>
 
         <TextInput style={[styles.input, styles.notes]} value={notes} onChangeText={setNotes} multiline placeholder="Notes" />
+        {projectedPerformance ? (
+          <Body>
+            e1RM {projectedPerformance.estimated1RM.toFixed(1)} | Volume {projectedPerformance.failureVolume.toFixed(1)} | Resistance {(projectedPerformance.fatigueResistance * 100).toFixed(0)}%
+          </Body>
+        ) : null}
+        {workoutError ? <Body style={styles.errorText}>{workoutError}</Body> : null}
 
         <Pressable disabled={workoutSaveState === "saving"} hitSlop={touchHitSlop} style={pressableFeedback(styles.primaryButton)} onPress={handleSave}>
           {workoutSaveState === "saving" ? <ActivityIndicator color={palette.surface} /> : workoutSaveState === "saved" ? <Check size={19} color={palette.surface} /> : <Save size={19} color={palette.surface} />}
@@ -387,5 +400,9 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: palette.surface,
     fontWeight: "900"
+  },
+  errorText: {
+    color: palette.danger,
+    fontWeight: "800"
   }
 });

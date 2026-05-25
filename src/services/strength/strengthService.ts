@@ -1,62 +1,70 @@
 import { Exercise, ExerciseScorePoint, MuscleGroup, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, TrendStatus, WorkoutSession, WorkoutSet } from "@/types";
 import { muscles } from "@/utils/theme";
 
+const strengthWeight = 0.45;
+const volumeWeight = 0.35;
+const resistanceWeight = 0.2;
+
+type ScoreableSet = Pick<WorkoutSet, "weight" | "reps" | "set_number">;
+type PerformanceReference = Pick<ExerciseScorePoint, "estimated1RM" | "failureVolume" | "fatigueResistance">;
+
+export type SessionPerformance = {
+  performancePoints: number;
+  estimated1RM: number;
+  failureVolume: number;
+  fatigueResistance: number;
+  normalizedStrength: number;
+  normalizedVolume: number;
+  normalizedResistance: number;
+};
+
 export function calculateEstimated1RM(weight: number, reps: number) {
   return weight * (1 + reps / 30);
 }
 
-export function getRepQualityMultiplier(reps: number) {
-  if (reps <= 5) return 1;
-  if (reps <= 8) return 0.985;
-  if (reps <= 12) return 0.965;
-  return 0.945;
+export function calculateSessionPerformance(sets: ScoreableSet[], reference?: PerformanceReference): SessionPerformance | null {
+  const orderedSets = [...sets].sort((a, b) => a.set_number - b.set_number);
+  if (orderedSets.length < 2 || orderedSets.some((set) => !isScoreableSet(set))) return null;
+
+  const estimated1RMs = orderedSets.map((set) => calculateEstimated1RM(set.weight, set.reps));
+  const estimated1RM = Math.max(...estimated1RMs);
+  const failureVolume = orderedSets.reduce((total, set) => total + set.weight * set.reps, 0);
+  const fatigueResistance = Math.min(1, estimated1RMs.at(-1)! / estimated1RMs[0]);
+  const normalizedStrength = reference ? estimated1RM / reference.estimated1RM : 1;
+  const normalizedVolume = reference ? failureVolume / reference.failureVolume : 1;
+  const normalizedResistance = reference ? fatigueResistance / reference.fatigueResistance : 1;
+  const performancePoints = 100 * (
+    strengthWeight * normalizedStrength +
+    volumeWeight * normalizedVolume +
+    resistanceWeight * normalizedResistance
+  );
+
+  return {
+    performancePoints,
+    estimated1RM,
+    failureVolume,
+    fatigueResistance,
+    normalizedStrength,
+    normalizedVolume,
+    normalizedResistance
+  };
 }
 
-export function getSetImportanceWeight(setNumber: number) {
-  const weights = [1, 0.95, 0.91, 0.88, 0.85];
-  if (setNumber <= weights.length) return weights[Math.max(setNumber, 1) - 1];
-  return Math.max(0.25, 0.85 - (setNumber - 5) * 0.03);
-}
-
-export function calculateSetScore(input: { weight: number; reps: number }) {
-  return calculateEstimated1RM(input.weight, input.reps) * getRepQualityMultiplier(input.reps);
-}
-
-export function calculateWeightedContribution(input: { weight: number; reps: number; setNumber: number }) {
-  return calculateSetScore(input) * getSetImportanceWeight(input.setNumber);
-}
-
-export function calculateExerciseScore(sets: Pick<WorkoutSet, "weight" | "reps" | "set_number">[]) {
-  const orderedSets = [...sets]
-    .sort((a, b) => a.set_number - b.set_number)
-    .filter((set) => set.reps > 0 && set.weight >= 0);
-
-  if (!orderedSets.length) return 0;
-
-  const weightedSetScore = orderedSets.reduce((total, set, index) => {
-    const setNumber = set.set_number || index + 1;
-    return total + calculateWeightedContribution({ weight: set.weight, reps: set.reps, setNumber });
-  }, 0);
-
-  return weightedSetScore / Math.sqrt(orderedSets.length);
-}
-
-export function calculateNormalizedExerciseScore(currentScore: number, baselineScore: number) {
-  if (baselineScore <= 0) return 1;
-  return currentScore / baselineScore;
-}
-
-export function calculateMuscleStrengthScore(scores: { normalizedScore: number; weightFactor: number }[]) {
-  const usableScores = scores.filter((score) => score.weightFactor > 0);
-  if (!usableScores.length) return 0;
-  const totalWeight = usableScores.reduce((total, score) => total + score.weightFactor, 0);
-  return usableScores.reduce((total, score) => total + score.normalizedScore * score.weightFactor, 0) / totalWeight;
+export function calculateExerciseScore(sets: ScoreableSet[]) {
+  return calculateSessionPerformance(sets)?.performancePoints ?? 0;
 }
 
 export function calculateTrendDirection(percentChange: number): TrendStatus {
   if (percentChange > 2) return "Increasing";
   if (percentChange < -2) return "Decreasing";
   return "Stable";
+}
+
+export function findStrengthReference(points: ExerciseScorePoint[]) {
+  return points.reduce<ExerciseScorePoint | undefined>((best, point) => {
+    if (!best || compareReference(point, best) > 0) return point;
+    return best;
+  }, undefined);
 }
 
 export function buildExerciseScorePoints(exercises: Exercise[], sessions: WorkoutSession[], sets: WorkoutSet[]) {
@@ -68,45 +76,45 @@ export function buildExerciseScorePoints(exercises: Exercise[], sessions: Workou
     byExerciseSession.set(key, [...(byExerciseSession.get(key) ?? []), set]);
   }
 
-  return [...byExerciseSession.entries()]
+  const sessionsToScore = [...byExerciseSession.entries()]
     .map(([key, groupedSets]) => {
       const [exerciseIdRaw, sessionIdRaw] = key.split(":");
       const exerciseId = Number(exerciseIdRaw);
       const sessionId = Number(sessionIdRaw);
       const session = sessionById.get(sessionId);
-      const date = session?.workout_date ?? groupedSets[0]?.created_at.slice(0, 10) ?? "";
-      const exercise = exercises.find((item) => item.id === exerciseId);
-      const topSet = Math.max(...groupedSets.map((set) => calculateEstimated1RM(set.weight, set.reps)));
-
       return {
         exerciseId,
         sessionId,
-        exerciseName: exercise?.name ?? "Exercise",
-        date,
-        score: calculateExerciseScore(groupedSets),
-        volume: groupedSets.reduce((total, set) => total + set.weight * set.reps, 0),
-        topSet
+        exerciseName: exercises.find((item) => item.id === exerciseId)?.name ?? "Exercise",
+        date: session?.workout_date ?? groupedSets[0]?.created_at.slice(0, 10) ?? "",
+        sets: groupedSets
       };
     })
     .sort((a, b) => a.date.localeCompare(b.date) || a.sessionId - b.sessionId);
-}
 
-export function baselineForExercise(points: ExerciseScorePoint[], exerciseId: number, currentDate: string) {
-  const current = new Date(`${currentDate}T00:00:00`).getTime();
-  const windowStart = current - 30 * 24 * 60 * 60 * 1000;
-  const candidates = points.filter((point) => {
-    const time = new Date(`${point.date}T00:00:00`).getTime();
-    return point.exerciseId === exerciseId && time < current && time >= windowStart;
-  });
+  const output: ExerciseScorePoint[] = [];
+  for (const session of sessionsToScore) {
+    const reference = findStrengthReference(output.filter((point) => point.exerciseId === session.exerciseId));
+    const metrics = calculateSessionPerformance(session.sets, reference);
+    if (!metrics) continue;
+    output.push({
+      exerciseId: session.exerciseId,
+      sessionId: session.sessionId,
+      exerciseName: session.exerciseName,
+      date: session.date,
+      ...metrics,
+      score: metrics.performancePoints,
+      volume: metrics.failureVolume,
+      topSet: metrics.estimated1RM
+    });
+  }
 
-  const fallback = points.filter((point) => point.exerciseId === exerciseId && point.date < currentDate);
-  const selected = candidates.length ? candidates : fallback;
-  if (!selected.length) return points.find((point) => point.exerciseId === exerciseId)?.score ?? 1;
-  return selected.reduce((total, point) => total + point.score, 0) / selected.length;
+  return output;
 }
 
 export function buildMuscleScorePoints(exercises: Exercise[], configs: MuscleStrengthConfig[], exercisePoints: ExerciseScorePoint[]) {
   const dates = [...new Set(exercisePoints.map((point) => point.date))].sort();
+  const orderedPoints = [...exercisePoints].sort((a, b) => a.date.localeCompare(b.date) || a.sessionId - b.sessionId);
   const output: MuscleScorePoint[] = [];
 
   for (const muscle of muscles) {
@@ -120,21 +128,17 @@ export function buildMuscleScorePoints(exercises: Exercise[], configs: MuscleStr
     for (const date of dates) {
       const weightedScores = scoringInputs
         .map((input) => {
-          const point = exercisePoints.find((item) => item.exerciseId === input.exerciseId && item.date === date);
-          const exercise = exercises.find((item) => item.id === input.exerciseId);
-          if (!point || !exercise) return null;
-          const baseline = baselineForExercise(exercisePoints, input.exerciseId, date);
-          return {
-            normalizedScore: calculateNormalizedExerciseScore(point.score, baseline),
-            weight: input.weightFactor
-          };
+          const point = orderedPoints
+            .filter((item) => item.exerciseId === input.exerciseId && item.date <= date)
+            .at(-1);
+          if (!point || input.weightFactor <= 0) return null;
+          return { score: point.performancePoints, weight: input.weightFactor };
         })
-        .filter((item): item is { normalizedScore: number; weight: number } => Boolean(item));
+        .filter((item): item is { score: number; weight: number } => Boolean(item));
 
       if (weightedScores.length) {
-        const score = calculateMuscleStrengthScore(
-          weightedScores.map((item) => ({ normalizedScore: item.normalizedScore, weightFactor: item.weight }))
-        );
+        const totalWeight = weightedScores.reduce((total, point) => total + point.weight, 0);
+        const score = weightedScores.reduce((total, point) => total + point.score * point.weight, 0) / totalWeight;
         output.push({ muscle: muscle as MuscleGroup, date, score });
       }
     }
@@ -163,7 +167,7 @@ export function summarizeMuscles(exercises: Exercise[], configs: MuscleStrengthC
 
     return {
       muscle,
-      score: current || 1,
+      score: current,
       percentChange,
       trend: calculateTrendDirection(percentChange),
       contributors: contributors.length ? contributors : fallbackContributors
@@ -171,9 +175,22 @@ export function summarizeMuscles(exercises: Exercise[], configs: MuscleStrengthC
   });
 }
 
+function isScoreableSet(set: ScoreableSet) {
+  return Number.isFinite(set.weight) && set.weight > 0 &&
+    Number.isInteger(set.reps) && set.reps >= 1 && set.reps <= 10;
+}
+
+function compareReference(a: ExerciseScorePoint, b: ExerciseScorePoint) {
+  return a.estimated1RM - b.estimated1RM ||
+    a.failureVolume - b.failureVolume ||
+    a.fatigueResistance - b.fatigueResistance ||
+    a.date.localeCompare(b.date) ||
+    a.sessionId - b.sessionId;
+}
+
 function averageTail(points: MuscleScorePoint[], count: number) {
   const selected = points.slice(-count);
-  if (!selected.length) return 1;
+  if (!selected.length) return 0;
   return selected.reduce((total, point) => total + point.score, 0) / selected.length;
 }
 

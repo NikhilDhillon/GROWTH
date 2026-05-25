@@ -64,7 +64,7 @@ export function AnalyticsScreen() {
   return (
     <Screen>
       <View>
-        <Label>Individual strength exercise graphs</Label>
+        <Label>Individual exercise performance graphs</Label>
         <Title>Progress</Title>
       </View>
 
@@ -113,7 +113,7 @@ export function AnalyticsScreen() {
           <SectionTitle>{selected.name} vs body weight</SectionTitle>
           <Label>Body weight</Label>
           <LineGraph points={weightPoints} suffix={` ${bodyWeightDisplayUnit}`} height={150} emptyMessage="Log body weight to draw a trend." xLabels={comparisonDates} />
-          <Label>Strength score</Label>
+          <Label>Performance Points</Label>
           <LineGraph points={comparisonStrengthPoints} suffix=" pts" height={150} xLabels={comparisonDates} />
         </Panel>
       ) : null}
@@ -129,8 +129,8 @@ export function AnalyticsScreen() {
               <SectionTitle>{prs.bestStrength ? Math.round(prs.bestStrength.score) : "--"}</SectionTitle>
             </View>
           </View>
-          <LineGraph points={progressGraphPoints} maxPoints={progressGraphPoints.length || 1} suffix=" pts" emptyMessage={`Strength data required for this ${rangeLabel(range)}.`} />
-          <Body>Best strength score rewards top-end load, repeatability, and sustainable set quality with diminishing returns.</Body>
+          <LineGraph points={progressGraphPoints} maxPoints={progressGraphPoints.length || 1} suffix=" pts" emptyMessage={`Performance Points data required for this ${rangeLabel(range)}.`} />
+          <Body>Performance Points combine best e1RM, failure-set volume, and resistance across failure sets.</Body>
         </Panel>
       ) : null}
 
@@ -219,7 +219,7 @@ function buildBodyWeightGraphPoints(logs: BodyWeightLog[], range: ProgressRange,
       label: formatShortDate(loggedDate),
       value: bodyWeightFromStorageUnit(log.weight),
       details: [
-        strengthPoint ? `Score ${strengthPoint.score.toFixed(1)} pts` : "No lift logged",
+        strengthPoint ? `Performance ${strengthPoint.performancePoints.toFixed(1)} pts | e1RM ${strengthPoint.estimated1RM.toFixed(1)}` : "No eligible lift logged",
         ...(workoutLog?.sets ?? [])
       ]
     };

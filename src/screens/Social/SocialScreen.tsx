@@ -55,7 +55,7 @@ export function SocialScreen() {
   const selectedExercise = exercises.find((exercise) => exercise.id === selectedExerciseId);
   const selectedEntries = socialData.leaderboard
     .filter((entry) => entry.exercise_id === selectedExerciseId)
-    .sort((a, b) => b.best_score - a.best_score || a.name.localeCompare(b.name));
+    .sort((a, b) => b.best_estimated_1rm - a.best_estimated_1rm || a.name.localeCompare(b.name));
   const acceptedFriends = socialData.friends.filter((friend) => friend.status === "accepted");
   const pendingFriends = socialData.friends.filter((friend) => friend.status === "pending");
   const inviteValue = lastInviteUrl ?? socialData.invites[0]?.invite_url ?? "";
@@ -123,7 +123,7 @@ export function SocialScreen() {
             <View style={styles.panelHeader}>
               <View>
                 <SectionTitle>Exercise</SectionTitle>
-                <Body>{acceptedFriends.length ? `${acceptedFriends.length} friends connected` : "Invite friends to compare PR scores."}</Body>
+                <Body>{acceptedFriends.length ? `${acceptedFriends.length} friends connected` : "Invite friends to compare best e1RM results."}</Body>
               </View>
               <Pressable accessibilityRole="button" onPress={() => void loadSocial()} style={pressableFeedback(styles.iconButton)}>
                 {socialLoading ? <ActivityIndicator color={palette.ink} /> : <RefreshCw size={18} color={palette.ink} />}
@@ -139,7 +139,7 @@ export function SocialScreen() {
                   </Pressable>
                 );
               })}
-              {!availableExerciseIds.length ? <Body>Log a scored workout or invite friends to start a leaderboard.</Body> : null}
+              {!availableExerciseIds.length ? <Body>Log an eligible workout or invite friends to start a leaderboard.</Body> : null}
             </View>
           </Panel>
 
@@ -154,7 +154,7 @@ export function SocialScreen() {
             {selectedEntries.length ? selectedEntries.map((entry, index) => (
               <LeaderboardRow key={`${entry.user_id}-${entry.exercise_id}`} entry={entry} rank={index + 1} isCurrentUser={String(entry.user_id) === String(currentUser?.id)} />
             )) : (
-              <Body>No scores for this exercise yet.</Body>
+              <Body>No estimated 1RM results for this exercise yet.</Body>
             )}
           </Panel>
         </>
@@ -166,7 +166,7 @@ export function SocialScreen() {
             <View style={styles.panelHeader}>
               <View>
                 <SectionTitle>Friends</SectionTitle>
-                <Body>{acceptedFriends.length ? "Accepted friends can appear on your score leaderboards." : "No friends yet."}</Body>
+                <Body>{acceptedFriends.length ? "Accepted friends can appear on your e1RM leaderboards." : "No friends yet."}</Body>
               </View>
               <Users size={22} color={palette.accent} />
             </View>
@@ -282,7 +282,7 @@ function LeaderboardRow({ entry, rank, isCurrentUser }: { entry: LeaderboardEntr
         <Body style={styles.friendName}>{isCurrentUser ? "You" : entry.name}</Body>
         <Body>{formatShortDate(entry.achieved_at)}</Body>
       </View>
-      <SectionTitle>{Math.round(entry.best_score)}</SectionTitle>
+      <SectionTitle>{Math.round(entry.best_estimated_1rm)} e1RM</SectionTitle>
     </View>
   );
 }

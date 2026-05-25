@@ -8,6 +8,7 @@ export type PreviousLog = {
   exerciseName: string;
   sets: string[];
   score: number;
+  point?: ExerciseScorePoint;
 };
 
 export function buildPreviousLogs(input: { exerciseId?: number; exercises: Exercise[]; sessions: WorkoutSession[]; sets: WorkoutSet[]; points: ExerciseScorePoint[]; unitSystem: UnitSystem }) {
@@ -28,10 +29,14 @@ export function buildPreviousLogs(input: { exerciseId?: number; exercises: Exerc
     }, {});
 
   return Object.values(groupedSets)
-    .map((log): PreviousLog => ({
-      ...log,
-      exerciseName: input.exercises.find((exercise) => exercise.id === log.exerciseId)?.name ?? "Exercise",
-      score: input.points.find((point) => point.sessionId === log.sessionId)?.score ?? 0
-    }))
+    .map((log): PreviousLog => {
+      const point = input.points.find((item) => item.sessionId === log.sessionId);
+      return {
+        ...log,
+        exerciseName: input.exercises.find((exercise) => exercise.id === log.exerciseId)?.name ?? "Exercise",
+        score: point?.performancePoints ?? 0,
+        point
+      };
+    })
     .sort((a, b) => b.date.localeCompare(a.date) || b.sessionId - a.sessionId);
 }

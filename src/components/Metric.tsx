@@ -18,7 +18,7 @@ export function MuscleMetric({ summary }: { summary: MuscleSummary }) {
           <Body style={{ color, fontWeight: "800" }}>{summary.percentChange >= 0 ? "+" : ""}{summary.percentChange.toFixed(1)}%</Body>
         </View>
       </View>
-      <SectionTitle>{Math.round(summary.score * 100)} score</SectionTitle>
+      <SectionTitle>{summary.score ? `${Math.round(summary.score)} pts` : "--"}</SectionTitle>
       <Body numberOfLines={1}>{summary.contributors.join(", ") || "No configured exercises"}</Body>
     </View>
   );

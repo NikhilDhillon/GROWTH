@@ -118,8 +118,8 @@ export function SettingsScreen() {
       </Panel>
 
       <Panel>
-        <SectionTitle>Strength formula</SectionTitle>
-        <Body>Each set starts with estimated 1RM and rep quality, then later sets receive diminishing importance. The total is divided by the square root of set count.</Body>
+        <SectionTitle>Performance Points formula</SectionTitle>
+        <Body>Eligible sessions use two or more externally loaded sets of 1 to 10 reps. Points combine best estimated 1RM (45%), failure-set volume (35%), and fatigue resistance (20%) against the exercise's prior best-strength session.</Body>
       </Panel>
 
       <Panel>

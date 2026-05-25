@@ -219,7 +219,7 @@ export async function logWorkout(input: { exerciseId: number; workoutDate: strin
   for (const [index, set] of input.sets.entries()) {
     await db.runAsync(
       "INSERT INTO workout_sets (session_id, exercise_id, set_number, reps, weight, rir, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [session.lastInsertRowId, input.exerciseId, index + 1, set.reps, set.weight, null, timestamp]
+      [session.lastInsertRowId, input.exerciseId, index + 1, set.reps, set.weight, 0, timestamp]
     );
   }
 }
@@ -262,7 +262,7 @@ export async function importTrainingData(input: { bodyWeightLogs: ImportBodyWeig
       for (const [index, set] of workout.sets.entries()) {
         await db.runAsync(
           "INSERT INTO workout_sets (session_id, exercise_id, set_number, reps, weight, rir, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-          [session.lastInsertRowId, workout.exerciseId, index + 1, set.reps, set.weight, null, createdAt]
+          [session.lastInsertRowId, workout.exerciseId, index + 1, set.reps, set.weight, 0, createdAt]
         );
       }
 
@@ -292,7 +292,7 @@ export async function updateWorkoutSession(input: { sessionId: number; exerciseI
     for (const [index, set] of input.sets.entries()) {
       await db.runAsync(
         "INSERT INTO workout_sets (session_id, exercise_id, set_number, reps, weight, rir, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [input.sessionId, input.exerciseId, index + 1, set.reps, set.weight, null, timestamp]
+        [input.sessionId, input.exerciseId, index + 1, set.reps, set.weight, 0, timestamp]
       );
     }
   });

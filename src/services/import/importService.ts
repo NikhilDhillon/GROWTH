@@ -135,16 +135,26 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
               errors.push(`${setPrefix} must be an object.`);
               return [];
             }
-            if (setEntry.rir !== undefined) {
-              warnings.push(`${setPrefix}.rir was ignored. RIR is not imported in v1.`);
-            }
             const reps = readPositiveInteger(setEntry.reps, `${setPrefix}.reps`, errors);
             const weight = readNonNegativeNumber(setEntry.weight, `${setPrefix}.weight`, errors);
             if (reps === null || weight === null) return [];
+            if (reps > 10) {
+              errors.push(`${setPrefix}.reps must be between 1 and 10 for Performance Points.`);
+              return [];
+            }
+            if (weight <= 0) {
+              errors.push(`${setPrefix}.weight must include external load for Performance Points.`);
+              return [];
+            }
             return [{ reps, weight: weightToStorageUnit(weight, workoutUnit) }];
           });
 
-          if (!date || !exercise || !sets.length) return;
+          if (!date || !exercise || sets.length < 2) {
+            if (date && exercise && sets.length === 1) {
+              errors.push(`${exercisePrefix}.sets must include at least two loaded sets for Performance Points.`);
+            }
+            return;
+          }
 
           exerciseIdsToEnable.add(exercise.id);
           workouts.push({

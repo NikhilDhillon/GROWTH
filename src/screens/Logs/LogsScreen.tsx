@@ -42,6 +42,7 @@ export function LogsScreen() {
   const [collapsedMuscles, setCollapsedMuscles] = useState<Record<string, boolean>>({});
   const [editingWorkout, setEditingWorkout] = useState<EditingWorkout | null>(null);
   const [updateSaveState, setUpdateSaveState] = useState<SaveState>("idle");
+  const [updateError, setUpdateError] = useState<string | null>(null);
   const [deletingWorkoutId, setDeletingWorkoutId] = useState<number | null>(null);
   const [deletingBodyWeightId, setDeletingBodyWeightId] = useState<number | null>(null);
 
@@ -52,6 +53,7 @@ export function LogsScreen() {
       .sort((a, b) => a.set_number - b.set_number)
       .map((set) => ({ reps: String(set.reps), weight: formatWeightInput(set.weight, unitSystem) }));
     setUpdateSaveState("idle");
+    setUpdateError(null);
     setEditingWorkout({
       sessionId: log.sessionId,
       exerciseId: log.exerciseId,
@@ -68,6 +70,7 @@ export function LogsScreen() {
   async function handleUpdateWorkout() {
     if (!editingWorkout || updateSaveState === "saving") return;
     setUpdateSaveState("saving");
+    setUpdateError(null);
     try {
       await updateWorkoutLog(editingWorkout);
       setUpdateSaveState("saved");
@@ -77,7 +80,7 @@ export function LogsScreen() {
       }, 900);
     } catch (error) {
       setUpdateSaveState("idle");
-      throw error;
+      setUpdateError(error instanceof Error ? error.message : "Could not update scored workout.");
     }
   }
 
@@ -227,6 +230,7 @@ export function LogsScreen() {
                               multiline
                               placeholder="Notes"
                             />
+                            {updateError ? <Body style={styles.errorText}>{updateError}</Body> : null}
                             <Pressable disabled={updateSaveState === "saving"} hitSlop={touchHitSlop} onPress={() => void handleUpdateWorkout()} style={pressableFeedback(styles.primaryButton)}>
                               {updateSaveState === "saving" ? <ActivityIndicator color={palette.surface} /> : updateSaveState === "saved" ? <Check size={18} color={palette.surface} /> : <Save size={18} color={palette.surface} />}
                               <Body style={styles.primaryButtonText}>{updateSaveState === "saving" ? "Saving" : updateSaveState === "saved" ? "Updated" : "Save changes"}</Body>
@@ -235,8 +239,9 @@ export function LogsScreen() {
                         ) : (
                           <View style={styles.historyHeader}>
                             <View style={styles.historyText}>
-                              <Body style={styles.dateText}>{formatShortDate(log.date)} · {log.score ? `${log.score.toFixed(1)} pts` : "No score"}</Body>
+                              <Body style={styles.dateText}>{formatShortDate(log.date)} · {log.score ? `${log.score.toFixed(1)} Performance Points` : "Not eligible for points"}</Body>
                               <Body>{log.sets.join("  |  ")}</Body>
+                              {log.point ? <Body>e1RM {log.point.estimated1RM.toFixed(1)} | Volume {log.point.failureVolume.toFixed(1)} | Resistance {(log.point.fatigueResistance * 100).toFixed(0)}%</Body> : null}
                             </View>
                             <View style={styles.actions}>
                               <Pressable accessibilityLabel={`Edit workout log from ${log.date}`} onPress={() => startEditWorkout(log)} style={styles.deleteButton}>
@@ -467,5 +472,9 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     color: palette.surface,
     fontWeight: "900"
+  },
+  errorText: {
+    color: palette.danger,
+    fontWeight: "800"
   }
 });

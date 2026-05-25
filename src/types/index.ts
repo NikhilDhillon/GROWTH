@@ -78,7 +78,7 @@ export type LeaderboardEntry = {
   name: string;
   exercise_id: number;
   exercise_name: string;
-  best_score: number;
+  best_estimated_1rm: number;
   achieved_at: string;
 };
 
@@ -106,6 +106,13 @@ export type ExerciseScorePoint = {
   sessionId: number;
   exerciseName: string;
   date: string;
+  performancePoints: number;
+  estimated1RM: number;
+  failureVolume: number;
+  fatigueResistance: number;
+  normalizedStrength: number;
+  normalizedVolume: number;
+  normalizedResistance: number;
   score: number;
   volume: number;
   topSet: number;

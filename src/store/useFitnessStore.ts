@@ -213,23 +213,17 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   },
   saveWorkout: async (input) => {
     const unitSystem = get().unitSystem;
-    const sets = input.sets
-      .map((set) => ({ reps: Number(set.reps), weight: weightToStorageUnit(Number(set.weight), unitSystem) }))
-      .filter((set) => Number.isFinite(set.reps) && Number.isFinite(set.weight) && set.reps > 0 && set.weight >= 0);
+    const sets = parseScoredSets(input.sets, unitSystem);
     const workoutDate = /^\d{4}-\d{2}-\d{2}$/.test(input.workoutDate) ? input.workoutDate : todayIso();
 
-    if (!sets.length) return;
     await logWorkout({ exerciseId: input.exerciseId, workoutDate, notes: input.notes, sets });
     await get().hydrate();
   },
   updateWorkoutLog: async (input) => {
     const unitSystem = get().unitSystem;
-    const sets = input.sets
-      .map((set) => ({ reps: Number(set.reps), weight: weightToStorageUnit(Number(set.weight), unitSystem) }))
-      .filter((set) => Number.isFinite(set.reps) && Number.isFinite(set.weight) && set.reps > 0 && set.weight >= 0);
+    const sets = parseScoredSets(input.sets, unitSystem);
     const workoutDate = /^\d{4}-\d{2}-\d{2}$/.test(input.workoutDate) ? input.workoutDate : todayIso();
 
-    if (!sets.length) return;
     await updateWorkoutSession({ sessionId: input.sessionId, exerciseId: input.exerciseId, workoutDate, notes: input.notes, sets });
     await get().hydrate();
   },
@@ -275,4 +269,24 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
 
 function parseWeightInput(value: string) {
   return Number(value.trim().replace(",", "."));
+}
+
+function parseScoredSets(sets: LoggedSetDraft[], unitSystem: UnitSystem) {
+  const enteredSets = sets.filter((set) => set.reps.trim() || set.weight.trim());
+  const parsed = enteredSets.map((set) => ({
+    reps: Number(set.reps),
+    weight: weightToStorageUnit(Number(set.weight), unitSystem)
+  }));
+
+  if (parsed.length < 2) {
+    throw new Error("Performance Points require at least two loaded sets.");
+  }
+  if (parsed.some((set) => !Number.isInteger(set.reps) || set.reps < 1 || set.reps > 10)) {
+    throw new Error("Performance Points require 1 to 10 reps per set.");
+  }
+  if (parsed.some((set) => !Number.isFinite(set.weight) || set.weight <= 0)) {
+    throw new Error("Performance Points require external weight on every set.");
+  }
+
+  return parsed;
 }

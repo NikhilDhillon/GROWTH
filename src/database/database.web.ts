@@ -296,7 +296,7 @@ export async function logWorkout(input: { exerciseId: number; workoutDate: strin
       set_number: index + 1,
       reps: set.reps,
       weight: set.weight,
-      rir: null,
+      rir: 0,
       created_at: timestamp
     }));
     const setsResult = await supabase.from("workout_sets").insert(setRows);
@@ -322,7 +322,7 @@ export async function logWorkout(input: { exerciseId: number; workoutDate: strin
       set_number: index + 1,
       reps: set.reps,
       weight: set.weight,
-      rir: null,
+      rir: 0,
       created_at: timestamp
     });
   }
@@ -390,7 +390,7 @@ export async function importTrainingData(input: { bodyWeightLogs: ImportBodyWeig
           set_number: index + 1,
           reps: set.reps,
           weight: set.weight,
-          rir: null,
+          rir: 0,
           created_at: createdAt
         }))
       );
@@ -461,7 +461,7 @@ export async function importTrainingData(input: { bodyWeightLogs: ImportBodyWeig
         set_number: index + 1,
         reps: set.reps,
         weight: set.weight,
-        rir: null,
+        rir: 0,
         created_at: createdAt
       });
     }
@@ -582,7 +582,7 @@ export async function updateWorkoutSession(input: { sessionId: number; exerciseI
       set_number: index + 1,
       reps: set.reps,
       weight: set.weight,
-      rir: null,
+      rir: 0,
       created_at: timestamp
     }));
     const setsResult = await supabase.from("workout_sets").insert(setRows);
@@ -610,7 +610,7 @@ export async function updateWorkoutSession(input: { sessionId: number; exerciseI
       set_number: index + 1,
       reps: set.reps,
       weight: set.weight,
-      rir: null,
+      rir: 0,
       created_at: timestamp
     });
   }
@@ -707,7 +707,7 @@ export async function loadSocialData(): Promise<SocialData> {
       name: snapshot.user_id === user.id ? profileDisplayName(currentProfile, "You") : profileDisplayName(profile, "Friend"),
       exercise_id: snapshot.exercise_id,
       exercise_name: snapshot.exercise_name,
-      best_score: Number(snapshot.best_score),
+      best_estimated_1rm: Number(snapshot.best_score),
       achieved_at: snapshot.achieved_at
     };
   });
@@ -775,7 +775,7 @@ export async function syncScoreSnapshots(points: ExerciseScorePoint[]) {
   const bestByExercise = new Map<number, ExerciseScorePoint>();
   for (const point of points) {
     const existing = bestByExercise.get(point.exerciseId);
-    if (!existing || point.score > existing.score || (point.score === existing.score && point.date > existing.date)) {
+    if (!existing || point.estimated1RM > existing.estimated1RM || (point.estimated1RM === existing.estimated1RM && point.date > existing.date)) {
       bestByExercise.set(point.exerciseId, point);
     }
   }
@@ -784,17 +784,21 @@ export async function syncScoreSnapshots(points: ExerciseScorePoint[]) {
     user_id: user.id,
     exercise_id: point.exerciseId,
     exercise_name: point.exerciseName,
-    best_score: point.score,
+    best_score: point.estimated1RM,
     achieved_at: point.date,
     updated_at: now()
   }));
 
-  if (!rows.length) return;
-  const result = await supabase
+  const deleteResult = await supabase
     .from("leaderboard_score_snapshots")
-    .upsert(rows, { onConflict: "user_id,exercise_id" });
-  if (result.error && isMissingSocialTableError(result.error)) return;
-  throwIfSupabaseError(result.error);
+    .delete()
+    .eq("user_id", user.id);
+  if (deleteResult.error && isMissingSocialTableError(deleteResult.error)) return;
+  throwIfSupabaseError(deleteResult.error);
+  if (!rows.length) return;
+  const insertResult = await supabase.from("leaderboard_score_snapshots").insert(rows);
+  if (insertResult.error && isMissingSocialTableError(insertResult.error)) return;
+  throwIfSupabaseError(insertResult.error);
 }
 
 async function requireCloudUser(client: SupabaseClient, throwOnMissing = true) {
