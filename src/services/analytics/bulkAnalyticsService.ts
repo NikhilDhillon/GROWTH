@@ -134,25 +134,31 @@ export function calculateBulkAnalytics(input: BulkAnalyticsInput): BulkAnalytics
 
 export function generateBulkInsight(analytics: Pick<BulkAnalyticsResult, "previousStrength" | "currentStrength" | "previousBodyweight" | "currentBodyweight" | "strengthChangePercent" | "bodyweightChangePercent" | "bulkEfficiency">) {
   if (analytics.previousBodyweight === null || analytics.currentBodyweight === null) return "Bodyweight data required.";
-  if (analytics.previousStrength === null || analytics.currentStrength === null) return "Strength data required for this scope.";
+  if (analytics.previousStrength === null || analytics.currentStrength === null) return "Performance Points data required for this scope.";
   const bw = analytics.bodyweightChangePercent ?? 0;
   const strength = analytics.strengthChangePercent ?? 0;
   if (Math.abs(bw) < nearZeroPercent) {
-    if (strength > 0.5) return "Recomposition signal. Strength is improving without meaningful weight gain.";
+    if (strength > 0.5) return "Recomposition signal. Performance Points are improving without meaningful weight gain.";
     return "Bodyweight change too small to calculate bulk efficiency.";
   }
-  if (bw > 0 && strength < -0.5) return "Poor bulk signal. You are gaining weight without performance improvement.";
-  if (bw > 0 && Math.abs(strength) <= 0.5) return "Low Efficiency. Bodyweight is rising faster than strength.";
-  if (bw > 0 && strength > bw) return "Excellent lean bulk efficiency. You are gaining useful performance without excessive weight gain.";
-  if (bw > 0 && strength > 0) return "Productive bulk. Strength is increasing alongside bodyweight.";
-  if (bw < 0 && strength > 0) return "Excellent Recomposition. Strength is improving while bodyweight is decreasing.";
-  if (bw < 0 && strength < 0) return "Both bodyweight and strength are down. Review recovery, calories, and training load.";
-  return "Bodyweight is rising faster than strength. Consider reducing surplus or improving training quality.";
+  if (bw > 0 && strength < -0.5) return "Poor bulk signal. You are gaining weight without Performance Points improvement.";
+  if (bw > 0 && Math.abs(strength) <= 0.5) return "Low Efficiency. Bodyweight is rising faster than Performance Points.";
+  if (bw > 0 && strength > bw) return "Excellent lean bulk efficiency. Performance Points are increasing faster than bodyweight.";
+  if (bw > 0 && strength > 0) return "Productive bulk. Performance Points are increasing alongside bodyweight.";
+  if (bw < 0 && strength > 0) return "Excellent Recomposition. Performance Points are improving while bodyweight is decreasing.";
+  if (bw < 0 && strength < 0) return "Both bodyweight and Performance Points are down. Review recovery, calories, and training load.";
+  return "Bodyweight is rising faster than Performance Points. Consider reducing surplus or improving training quality.";
 }
 
 export function calculateBulkTrend(input: BulkAnalyticsInput) {
   const strengthPoints = getStrengthPoints(input);
-  const dates = [...new Set([...strengthPoints.map((point) => point.date), ...normalizeLogs(input.bodyWeightLogs).map((log) => log.logged_at.slice(0, 10))])].sort();
+  const allDates = [...new Set([...strengthPoints.map((point) => point.date), ...normalizeLogs(input.bodyWeightLogs).map((log) => log.logged_at.slice(0, 10))])].sort();
+  const trendEndDate = input.endDate ?? todayIso();
+  const selectedPeriod = getComparisonPeriods(input.range, trendEndDate, input);
+  const dates = input.range === "all"
+    ? allDates
+    : allDates.filter((date) => isWithin(date, selectedPeriod.currentStart, selectedPeriod.currentEnd));
+
   return dates.map((date) => {
     const bodyweight = getClosestBodyweightForDate(date, input.bodyWeightLogs)?.weight ?? null;
     const point = strengthPoints.filter((item) => item.date <= date).at(-1);

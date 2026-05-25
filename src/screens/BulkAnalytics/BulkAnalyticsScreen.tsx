@@ -51,7 +51,7 @@ export function BulkAnalyticsScreen() {
   return (
     <Screen>
       <View>
-        <Label>Was the weight gain useful?</Label>
+        <Label>Did performance rise with body weight?</Label>
         <Title>Bulk Analytics</Title>
       </View>
 
@@ -98,26 +98,26 @@ export function BulkAnalyticsScreen() {
 
       <View style={styles.cardGrid}>
         <MetricCard title="Bodyweight" value={bodyweightDelta === null ? "--" : `${bodyweightDelta >= 0 ? "+" : ""}${bodyweightDelta.toFixed(1)} ${bodyWeightDisplayUnit}`} detail={rangeLabel(range)} />
-        <MetricCard title="Absolute Strength" value={formatPercent(analytics?.strengthChangePercent)} detail={analytics?.currentStrength ? `${analytics.currentStrength.toFixed(1)} pts avg` : "Strength data required"} />
-        <MetricCard title="Relative Strength" value={formatPercent(analytics?.relativeStrengthChangePercent)} detail={analytics?.relativeStrength ? `${analytics.relativeStrength.toFixed(3)} current` : "Bodyweight data required"} />
-        <MetricCard title="Bulk Efficiency" value={analytics?.bulkEfficiency === null || analytics?.bulkEfficiency === undefined ? "--" : analytics.bulkEfficiency.toFixed(2)} detail={`Status: ${analytics?.status ?? "Bodyweight data required"}`} />
+        <MetricCard title="Performance Points" value={formatPercent(analytics?.strengthChangePercent)} detail={analytics?.currentStrength ? `${analytics.currentStrength.toFixed(1)} pts avg` : "Performance data required"} />
+        <MetricCard title="Points per Bodyweight" value={formatPercent(analytics?.relativeStrengthChangePercent)} detail={analytics?.relativeStrength ? `${analytics.relativeStrength.toFixed(3)} current` : "Bodyweight data required"} />
+        <MetricCard title="Performance Gain Efficiency" value={analytics?.bulkEfficiency === null || analytics?.bulkEfficiency === undefined ? "--" : analytics.bulkEfficiency.toFixed(2)} detail={`Status: ${analytics?.status ?? "Bodyweight data required"}`} />
       </View>
 
       <Panel>
         <SectionTitle>Insight</SectionTitle>
-        <Body>{analytics?.insight ?? "Bodyweight and strength data required."}</Body>
+        <Body>{analytics?.insight ?? "Bodyweight and performance data required."}</Body>
       </Panel>
 
       <Panel>
         <SectionTitle>Trends</SectionTitle>
         <Label>Bodyweight</Label>
-        <LineGraph points={bodyweightTrend} suffix={` ${bodyWeightDisplayUnit}`} height={150} emptyMessage="Bodyweight data required." />
-        <Label>Absolute strength</Label>
-        <LineGraph points={absoluteTrend} suffix=" pts" height={150} emptyMessage="Strength data required." />
-        <Label>Relative strength</Label>
-        <LineGraph points={relativeTrend} height={150} emptyMessage="Bodyweight data required." />
-        <Label>Bulk efficiency</Label>
-        <LineGraph points={efficiencyTrend} height={150} emptyMessage="Bodyweight change too small to calculate bulk efficiency." />
+        <LineGraph points={bodyweightTrend} maxPoints={bodyweightTrend.length || 1} suffix={` ${bodyWeightDisplayUnit}`} height={150} emptyMessage="Bodyweight data required." />
+        <Label>Performance Points</Label>
+        <LineGraph points={absoluteTrend} maxPoints={absoluteTrend.length || 1} suffix=" pts" height={150} emptyMessage="Performance data required." />
+        <Label>Points per Bodyweight</Label>
+        <LineGraph points={relativeTrend} maxPoints={relativeTrend.length || 1} height={150} emptyMessage="Bodyweight data required." />
+        <Label>Performance gain efficiency</Label>
+        <LineGraph points={efficiencyTrend} maxPoints={efficiencyTrend.length || 1} height={150} emptyMessage="Bodyweight change too small to calculate bulk efficiency." />
       </Panel>
     </Screen>
   );
