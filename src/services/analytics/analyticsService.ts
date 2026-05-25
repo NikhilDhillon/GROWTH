@@ -1,13 +1,54 @@
 import { ExerciseScorePoint, WorkoutSet } from "@/types";
+import { todayIso } from "@/utils/date";
 import { weightFromStorageUnit } from "@/utils/units";
 import { UnitSystem } from "@/types";
 
 export function detectPersonalRecords(points: ExerciseScorePoint[]) {
-  const bestStrength = maxBy(points, (point) => point.score);
+  const bestPerformance = maxBy(points, (point) => point.score);
   const bestVolume = maxBy(points, (point) => point.volume);
   const bestTopSet = maxBy(points, (point) => point.topSet);
 
-  return { bestStrength, bestVolume, bestTopSet };
+  return { bestPerformance, bestVolume, bestTopSet };
+}
+
+export type ProgressComparisonRange = "week" | "month" | "year";
+
+export type PerformancePeriodComparison = {
+  range: ProgressComparisonRange;
+  currentStart: string;
+  currentEnd: string;
+  previousStart: string;
+  previousEnd: string;
+  currentAverage: number | null;
+  previousAverage: number | null;
+  changePercent: number | null;
+};
+
+export function comparePerformancePeriods(
+  points: Pick<ExerciseScorePoint, "date" | "score">[],
+  range: ProgressComparisonRange,
+  endDate = todayIso()
+): PerformancePeriodComparison {
+  const days = rangeDays(range);
+  const currentStart = addDays(endDate, -(days - 1));
+  const previousEnd = addDays(currentStart, -1);
+  const previousStart = addDays(previousEnd, -(days - 1));
+  const currentAverage = averageScores(points, currentStart, endDate);
+  const previousAverage = averageScores(points, previousStart, previousEnd);
+  const changePercent = previousAverage !== null && previousAverage !== 0 && currentAverage !== null
+    ? ((currentAverage - previousAverage) / previousAverage) * 100
+    : null;
+
+  return {
+    range,
+    currentStart,
+    currentEnd: endDate,
+    previousStart,
+    previousEnd,
+    currentAverage,
+    previousAverage,
+    changePercent
+  };
 }
 
 export function weeklyVolume(sets: WorkoutSet[], unitSystem: UnitSystem = "lb") {
@@ -52,6 +93,24 @@ function weekStartIso(value: string) {
   const weekStart = new Date(date);
   weekStart.setDate(date.getDate() - date.getDay());
   return weekStart.toISOString().slice(0, 10);
+}
+
+function averageScores(points: Pick<ExerciseScorePoint, "date" | "score">[], startDate: string, endDate: string) {
+  const selected = points.filter((point) => point.date >= startDate && point.date <= endDate);
+  if (!selected.length) return null;
+  return selected.reduce((total, point) => total + point.score, 0) / selected.length;
+}
+
+function rangeDays(range: ProgressComparisonRange) {
+  if (range === "week") return 7;
+  if (range === "month") return 30;
+  return 365;
+}
+
+function addDays(date: string, days: number) {
+  const value = new Date(`${date}T00:00:00`);
+  value.setDate(value.getDate() + days);
+  return value.toISOString().slice(0, 10);
 }
 
 function maxBy<T>(items: T[], score: (item: T) => number) {

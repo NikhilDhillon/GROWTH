@@ -5,7 +5,7 @@ import { LineGraph } from "@/components/LineGraph";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
-import { detectPersonalRecords, monthlyScoreAverages, weeklyScoreAverages, weeklyVolume } from "@/services/analytics/analyticsService";
+import { comparePerformancePeriods, detectPersonalRecords, monthlyScoreAverages, weeklyScoreAverages, weeklyVolume } from "@/services/analytics/analyticsService";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { BodyWeightLog, ExerciseScorePoint } from "@/types";
 import { formatShortDate, todayIso } from "@/utils/date";
@@ -16,9 +16,10 @@ import { bodyWeightDisplayUnit, bodyWeightFromStorageUnit, formatBodyWeight } fr
 type ProgressRange = "week" | "month" | "year" | "all";
 
 const ranges: Array<{ key: ProgressRange; label: string }> = [
-  { key: "month", label: "Monthly" },
-  { key: "year", label: "Yearly" },
-  { key: "all", label: "All" }
+  { key: "week", label: "Week" },
+  { key: "month", label: "Month" },
+  { key: "year", label: "Year" },
+  { key: "all", label: "All Time" }
 ];
 
 export function AnalyticsScreen() {
@@ -59,6 +60,7 @@ export function AnalyticsScreen() {
   const comparisonDates = [...new Set([...weightPoints.map((point) => point.date), ...comparisonStrengthPoints.map((point) => point.date)])].sort();
   const progressGraphPoints = buildStrengthGraphPoints(rangedSelectedPoints, range, bodyWeightByDate, previousLogs);
   const prs = useMemo(() => detectPersonalRecords(selectedPoints), [selectedPoints]);
+  const periodComparison = range === "all" ? null : comparePerformancePeriods(selectedPoints, range);
   const volume = weeklyVolume(sets, unitSystem).slice(-6);
 
   return (
@@ -124,13 +126,22 @@ export function AnalyticsScreen() {
             <View>
               <Label>{selected.primary_muscle}</Label>
               <SectionTitle>{selected.name}</SectionTitle>
+              <Body>
+                {periodComparison
+                  ? `${formatPoints(periodComparison.currentAverage)} current vs ${formatPoints(periodComparison.previousAverage)} prior`
+                  : `${formatPoints(prs.bestPerformance?.score ?? null)} all-time peak`}
+              </Body>
             </View>
             <View style={styles.bigScore}>
-              <SectionTitle>{prs.bestStrength ? Math.round(prs.bestStrength.score) : "--"}</SectionTitle>
+              <SectionTitle>{periodComparison ? formatPercentChange(periodComparison.changePercent) : formatPoints(prs.bestPerformance?.score ?? null)}</SectionTitle>
             </View>
           </View>
           <LineGraph points={progressGraphPoints} maxPoints={progressGraphPoints.length || 1} suffix=" pts" emptyMessage={`Performance Points data required for this ${rangeLabel(range)}.`} />
-          <Body>Performance Points combine best e1RM, failure-set volume, and resistance across failure sets.</Body>
+          <Body>
+            {periodComparison
+              ? `Progress compares the current ${periodWindowLabel(range)} average with the preceding ${periodWindowLabel(range)} average.`
+              : "All Time shows the peak Performance Points session. Points combine best e1RM, failure-set volume, and resistance."}
+          </Body>
         </Panel>
       ) : null}
 
@@ -266,8 +277,23 @@ function rangeDays(range: Exclude<ProgressRange, "all">) {
 }
 
 function rangeLabel(range: ProgressRange) {
-  if (range === "all") return "range";
+  if (range === "all") return "all-time range";
   return range;
+}
+
+function periodWindowLabel(range: ProgressRange) {
+  if (range === "week") return "7 days";
+  if (range === "month") return "30 days";
+  return range === "year" ? "365 days" : "all time";
+}
+
+function formatPoints(value: number | null | undefined) {
+  return Number.isFinite(value) ? `${Number(value).toFixed(1)} pts` : "--";
+}
+
+function formatPercentChange(value: number | null | undefined) {
+  if (!Number.isFinite(value)) return "--";
+  return `${Number(value) >= 0 ? "+" : ""}${Number(value).toFixed(1)}%`;
 }
 
 function formatMonthLabel(month: string) {
@@ -336,12 +362,13 @@ const styles = StyleSheet.create({
     gap: spacing.lg
   },
   bigScore: {
-    width: 68,
+    minWidth: 88,
     height: 68,
     borderRadius: 8,
     backgroundColor: palette.accentSoft,
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
+    paddingHorizontal: spacing.sm
   },
   bars: {
     minHeight: 160,
