@@ -5,21 +5,22 @@ export type CatalogExercise = {
   primary_muscle: MuscleGroup;
   secondary_muscle?: MuscleGroup | null;
   loadType?: ExerciseLoadType;
+  supportsBarbellCalculator?: boolean;
 };
 
 export type ExerciseLoadType = "external" | "bodyweight_plus_load" | "bodyweight_minus_assistance";
 
 export const catalogExercises: CatalogExercise[] = [
-  { name: "Barbell Bench Press", primary_muscle: "Chest" },
-  { name: "Incline Barbell Bench Press", primary_muscle: "Chest" },
+  { name: "Barbell Bench Press", primary_muscle: "Chest", supportsBarbellCalculator: true },
+  { name: "Incline Barbell Bench Press", primary_muscle: "Chest", supportsBarbellCalculator: true },
   { name: "Dumbbell Bench Press", primary_muscle: "Chest" },
   { name: "Incline Dumbbell Press", primary_muscle: "Chest" },
   { name: "Machine Chest Press", primary_muscle: "Chest" },
   { name: "Weighted Dip", primary_muscle: "Chest", secondary_muscle: "Triceps", loadType: "bodyweight_plus_load" },
   { name: "Cable Fly", primary_muscle: "Chest" },
-  { name: "Pin Press", primary_muscle: "Chest", secondary_muscle: "Triceps" },
-  { name: "Conventional Deadlift", primary_muscle: "Back", secondary_muscle: "Legs" },
-  { name: "Barbell Row", primary_muscle: "Back" },
+  { name: "Pin Press", primary_muscle: "Chest", secondary_muscle: "Triceps", supportsBarbellCalculator: true },
+  { name: "Conventional Deadlift", primary_muscle: "Back", secondary_muscle: "Legs", supportsBarbellCalculator: true },
+  { name: "Barbell Row", primary_muscle: "Back", supportsBarbellCalculator: true },
   { name: "Dumbbell Row", primary_muscle: "Back" },
   { name: "Pull-Up", primary_muscle: "Back", secondary_muscle: "Biceps", loadType: "bodyweight_plus_load" },
   { name: "Chin-Up", primary_muscle: "Back", secondary_muscle: "Biceps", loadType: "bodyweight_plus_load" },
@@ -31,22 +32,22 @@ export const catalogExercises: CatalogExercise[] = [
   { name: "Lateral Raise", primary_muscle: "Shoulders" },
   { name: "Rear Delt Fly", primary_muscle: "Shoulders" },
   { name: "Face Pull", primary_muscle: "Shoulders", secondary_muscle: "Back" },
-  { name: "Barbell Curl", primary_muscle: "Biceps" },
+  { name: "Barbell Curl", primary_muscle: "Biceps", supportsBarbellCalculator: true },
   { name: "Dumbbell Curl", primary_muscle: "Biceps" },
   { name: "Incline Dumbbell Curl", primary_muscle: "Biceps" },
   { name: "Hammer Curl", primary_muscle: "Biceps" },
   { name: "Preacher Curl", primary_muscle: "Biceps" },
   { name: "Cable Curl", primary_muscle: "Biceps" },
-  { name: "Close-Grip Bench Press", primary_muscle: "Triceps", secondary_muscle: "Chest" },
+  { name: "Close-Grip Bench Press", primary_muscle: "Triceps", secondary_muscle: "Chest", supportsBarbellCalculator: true },
   { name: "Skull Crusher", primary_muscle: "Triceps" },
   { name: "Cable Pushdown", primary_muscle: "Triceps" },
   { name: "Overhead Triceps Extension", primary_muscle: "Triceps" },
   { name: "Assisted Dip", primary_muscle: "Triceps", secondary_muscle: "Chest", loadType: "bodyweight_minus_assistance" },
-  { name: "Tricep Pin Press", primary_muscle: "Triceps", secondary_muscle: "Chest" },
-  { name: "Back Squat", primary_muscle: "Legs" },
-  { name: "Front Squat", primary_muscle: "Legs" },
+  { name: "Tricep Pin Press", primary_muscle: "Triceps", secondary_muscle: "Chest", supportsBarbellCalculator: true },
+  { name: "Back Squat", primary_muscle: "Legs", supportsBarbellCalculator: true },
+  { name: "Front Squat", primary_muscle: "Legs", supportsBarbellCalculator: true },
   { name: "Leg Press", primary_muscle: "Legs" },
-  { name: "Romanian Deadlift", primary_muscle: "Legs", secondary_muscle: "Back" },
+  { name: "Romanian Deadlift", primary_muscle: "Legs", secondary_muscle: "Back", supportsBarbellCalculator: true },
   { name: "Hip Thrust", primary_muscle: "Legs" },
   { name: "Bulgarian Split Squat", primary_muscle: "Legs" },
   { name: "Walking Lunge", primary_muscle: "Legs" },
@@ -64,6 +65,10 @@ export const catalogExercises: CatalogExercise[] = [
 
 export function getExerciseLoadType(exerciseName: string): ExerciseLoadType {
   return catalogExercises.find((exercise) => exercise.name === exerciseName)?.loadType ?? "external";
+}
+
+export function supportsBarbellCalculator(exerciseName: string) {
+  return catalogExercises.find((exercise) => exercise.name === exerciseName)?.supportsBarbellCalculator ?? false;
 }
 
 export function catalogExerciseRows(createdAt: string) {

@@ -6,7 +6,7 @@ import { DatePickerField } from "@/components/DatePickerField";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
-import { ExerciseLoadType, getExerciseLoadType } from "@/constants/exercises";
+import { ExerciseLoadType, getExerciseLoadType, supportsBarbellCalculator } from "@/constants/exercises";
 import { getClosestBodyweightForDate } from "@/services/analytics/bulkAnalyticsService";
 import { calculateSessionPerformance, findStrengthReference } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
@@ -17,6 +17,10 @@ import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { bodyWeightDisplayUnit, formatBodyWeight, formatWeightInput, weightToStorageUnit } from "@/utils/units";
 
 const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
+const plateWeights = [45, 35, 25, 10, 5] as const;
+type PlateWeight = typeof plateWeights[number];
+type PlateCounts = Record<PlateWeight, number>;
+const emptyPlateCounts = (): PlateCounts => ({ 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 });
 type SaveState = "idle" | "saving" | "saved";
 
 export function WorkoutScreen() {
@@ -32,6 +36,8 @@ export function WorkoutScreen() {
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleGroup>(exercises[0]?.primary_muscle ?? "Chest");
   const [exerciseId, setExerciseId] = useState<number | null>(exercises[0]?.id ?? null);
   const [draftSets, setDraftSets] = useState<LoggedSetDraft[]>([emptySet(), emptySet(), emptySet()]);
+  const [barWeight, setBarWeight] = useState("45");
+  const [plateCounts, setPlateCounts] = useState<PlateCounts>(emptyPlateCounts());
   const [weightDraft, setWeightDraft] = useState("");
   const [workoutDate, setWorkoutDate] = useState(todayIso());
   const [notes, setNotes] = useState("");
@@ -57,7 +63,9 @@ export function WorkoutScreen() {
   const visibleExercises = exercisesByMuscle[selectedMuscle] ?? [];
   const selectedExercise = selectedKind === "exercise" ? visibleExercises.find((exercise) => exercise.id === exerciseId) ?? visibleExercises[0] ?? null : null;
   const selectedLoadType = getExerciseLoadType(selectedExercise?.name ?? "");
+  const showBarbellCalculator = supportsBarbellCalculator(selectedExercise?.name ?? "");
   const selectedBodyWeight = selectedLoadType === "external" ? null : getClosestBodyweightForDate(workoutDate, bodyWeightLogs);
+  const loadedBarWeight = calculateLoadedBarWeight(barWeight, plateCounts);
   const previousSets = useMemo(() => {
     if (!selectedExercise) return [];
     const matching = sets.filter((set) => set.exercise_id === selectedExercise.id);
@@ -110,6 +118,28 @@ export function WorkoutScreen() {
   function duplicatePrevious() {
     if (!previousSets.length) return;
     setDraftSets(previousSets.map((set) => ({ reps: String(set.reps), weight: formatWeightInput(set.weight, unitSystem) })));
+  }
+
+  function changePlateCount(plate: PlateWeight, increment: number) {
+    const nextCounts = { ...plateCounts, [plate]: Math.max(0, plateCounts[plate] + increment) };
+    setPlateCounts(nextCounts);
+    applyLoadedBarWeight(calculateLoadedBarWeight(barWeight, nextCounts));
+  }
+
+  function updateBarWeight(value: string) {
+    setBarWeight(value);
+    applyLoadedBarWeight(calculateLoadedBarWeight(value, plateCounts));
+  }
+
+  function applyLoadedBarWeight(weightInPounds: number) {
+    const weight = formatWeightInput(weightInPounds, unitSystem);
+    setDraftSets((current) => current.map((set) => ({ ...set, weight })));
+  }
+
+  function resetLoadedBar() {
+    setBarWeight("45");
+    setPlateCounts(emptyPlateCounts());
+    applyLoadedBarWeight(45);
   }
 
   return (
@@ -206,6 +236,60 @@ export function WorkoutScreen() {
 
         {selectedLoadType !== "external" ? <Body style={styles.loadHint}>{loadInstruction(selectedLoadType, selectedBodyWeight?.weight)}</Body> : null}
 
+        {showBarbellCalculator ? (
+          <View style={styles.barCalculator}>
+            <View style={styles.rowBetween}>
+              <View>
+                <Label>Plate calculator</Label>
+                <Body>Total load: {loadedBarWeight.toFixed(1).replace(".0", "")} lb</Body>
+              </View>
+              <Pressable hitSlop={touchHitSlop} onPress={resetLoadedBar} style={pressableFeedback(styles.resetButton)}>
+                <Body style={styles.buttonText}>Reset</Body>
+              </Pressable>
+            </View>
+            <View style={styles.barWeightRow}>
+              <Label style={styles.barWeightLabel}>Bar</Label>
+              <TextInput
+                style={[styles.input, styles.barWeightInput]}
+                value={barWeight}
+                onChangeText={updateBarWeight}
+                keyboardType="decimal-pad"
+                inputMode="decimal"
+                placeholder="45"
+              />
+              <Body>lb</Body>
+            </View>
+            <View style={styles.loadedBar}>
+              <View style={styles.plateStack}>
+                {plateWeights.flatMap((plate) => Array.from({ length: plateCounts[plate] }, (_, index) => <View key={`left-${plate}-${index}`} style={[styles.plate, plateStyle(plate)]} />))}
+              </View>
+              <View style={styles.barSleeve} />
+              <View style={styles.barShaft} />
+              <View style={styles.barSleeve} />
+              <View style={[styles.plateStack, styles.rightPlateStack]}>
+                {plateWeights.flatMap((plate) => Array.from({ length: plateCounts[plate] }, (_, index) => <View key={`right-${plate}-${index}`} style={[styles.plate, plateStyle(plate)]} />))}
+              </View>
+            </View>
+            <View style={styles.plateControls}>
+              {plateWeights.map((plate) => (
+                <View key={plate} style={styles.plateControl}>
+                  <Body style={styles.plateText}>{plate}</Body>
+                  <View style={styles.countControls}>
+                    <Pressable hitSlop={touchHitSlop} onPress={() => changePlateCount(plate, -1)} style={pressableFeedback(styles.countButton)}>
+                      <Body style={styles.buttonText}>-</Body>
+                    </Pressable>
+                    <Body style={styles.countText}>{plateCounts[plate]}</Body>
+                    <Pressable hitSlop={touchHitSlop} onPress={() => changePlateCount(plate, 1)} style={pressableFeedback(styles.countButton)}>
+                      <Body style={styles.buttonText}>+</Body>
+                    </Pressable>
+                  </View>
+                </View>
+              ))}
+            </View>
+            <Body style={styles.loadHint}>Counts are plates per side. Changing the load fills all sets with {formatWeightInput(loadedBarWeight, unitSystem)} {unitSystem}.</Body>
+          </View>
+        ) : null}
+
         {draftSets.map((set, index) => (
           <View key={index} style={styles.setRow}>
             <Label style={styles.setNumber}>{index + 1}</Label>
@@ -259,6 +343,18 @@ function loadInstruction(loadType: ExerciseLoadType, bodyWeight?: number) {
   const basis = bodyWeight ? `Body weight ${formatBodyWeight(bodyWeight)} is included.` : "Log body weight to calculate Performance Points.";
   if (loadType === "bodyweight_plus_load") return `Enter added weight only; use 0 for bodyweight reps. ${basis}`;
   return `Enter assistance weight; use 0 for unassisted reps. ${basis}`;
+}
+
+function calculateLoadedBarWeight(barWeight: string, plateCounts: PlateCounts) {
+  const parsedBarWeight = Number(barWeight.trim().replace(",", "."));
+  const bar = Number.isFinite(parsedBarWeight) && parsedBarWeight >= 0 ? parsedBarWeight : 0;
+  return bar + plateWeights.reduce((total, plate) => total + plate * plateCounts[plate] * 2, 0);
+}
+
+function plateStyle(plate: PlateWeight) {
+  if (plate >= 35) return styles.largePlate;
+  if (plate >= 10) return styles.mediumPlate;
+  return styles.smallPlate;
 }
 
 const styles = StyleSheet.create({
@@ -373,6 +469,115 @@ const styles = StyleSheet.create({
   },
   loadHint: {
     color: palette.muted
+  },
+  barCalculator: {
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 8,
+    padding: spacing.md,
+    gap: spacing.sm,
+    backgroundColor: palette.surfaceAlt
+  },
+  resetButton: {
+    minHeight: 38,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 8,
+    justifyContent: "center",
+    backgroundColor: palette.surface,
+    ...fastTouchStyle
+  },
+  barWeightRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  barWeightLabel: {
+    width: 30
+  },
+  barWeightInput: {
+    maxWidth: 86,
+    flex: 0
+  },
+  loadedBar: {
+    minHeight: 46,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center"
+  },
+  barShaft: {
+    width: 84,
+    height: 6,
+    backgroundColor: palette.muted
+  },
+  barSleeve: {
+    width: 16,
+    height: 10,
+    backgroundColor: palette.ink
+  },
+  plateStack: {
+    minWidth: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 2
+  },
+  rightPlateStack: {
+    justifyContent: "flex-start"
+  },
+  plate: {
+    width: 7,
+    borderRadius: 2,
+    backgroundColor: palette.accent
+  },
+  largePlate: {
+    height: 40
+  },
+  mediumPlate: {
+    height: 30
+  },
+  smallPlate: {
+    height: 22
+  },
+  plateControls: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm
+  },
+  plateControl: {
+    flexGrow: 1,
+    minWidth: 94,
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 8,
+    padding: spacing.xs,
+    gap: spacing.xs,
+    alignItems: "center",
+    backgroundColor: palette.surface
+  },
+  plateText: {
+    fontWeight: "900"
+  },
+  countControls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm
+  },
+  countButton: {
+    width: 28,
+    height: 28,
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    ...fastTouchStyle
+  },
+  countText: {
+    minWidth: 12,
+    textAlign: "center",
+    fontWeight: "900"
   },
   notes: {
     minHeight: 72,
