@@ -24,6 +24,7 @@ export const catalogExercises: CatalogExercise[] = [
   { name: "Dumbbell Row", primary_muscle: "Back" },
   { name: "Pull-Up", primary_muscle: "Back", secondary_muscle: "Biceps", loadType: "bodyweight_plus_load" },
   { name: "Chin-Up", primary_muscle: "Back", secondary_muscle: "Biceps", loadType: "bodyweight_plus_load" },
+  { name: "Incline Lying Dumbbell Row", primary_muscle: "Back" },
   { name: "Lat Pulldown", primary_muscle: "Back" },
   { name: "Seated Cable Row", primary_muscle: "Back" },
   { name: "Overhead Press", primary_muscle: "Shoulders" },

@@ -300,6 +300,7 @@ insert into public.exercises (name, primary_muscle, secondary_muscle, is_strengt
   ('Conventional Deadlift', 'Back', 'Legs', 0),
   ('Barbell Row', 'Back', null, 0),
   ('Dumbbell Row', 'Back', null, 0),
+  ('Incline Lying Dumbbell Row', 'Back', null, 0),
   ('Pull-Up', 'Back', 'Biceps', 0),
   ('Chin-Up', 'Back', 'Biceps', 0),
   ('Lat Pulldown', 'Back', null, 0),
