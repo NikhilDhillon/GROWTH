@@ -1,8 +1,10 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
+import { normalizeActiveWorkout } from "@/constants/activeWorkout";
 import { catalogExerciseRows } from "@/constants/exercises";
+import { createDefaultTrainingSplit, normalizeTrainingSplit } from "@/constants/trainingSplit";
 import { buildWorkoutFingerprint, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
-import { BodyWeightLog, Exercise, ExerciseScorePoint, Friend, FriendInvite, LeaderboardEntry, MuscleStrengthConfig, SocialData, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyWeightLog, Exercise, ExerciseScorePoint, Friend, FriendInvite, LeaderboardEntry, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 const storageKey = "growth.preview.database.v2";
@@ -21,6 +23,8 @@ type WebDatabase = {
   currentUserId: number | null;
   unitSystem: UnitSystem;
   importFingerprints: string[];
+  trainingSplit: TrainingSplit;
+  activeWorkout: ActiveWorkout | null;
 };
 
 type ProfileRow = {
@@ -48,6 +52,15 @@ type FriendInviteRow = {
   created_at: string;
 };
 
+type SplitSyncRequestRow = {
+  id: string;
+  requester_id: string;
+  addressee_id: string;
+  status: "pending" | "accepted" | "declined";
+  created_at: string;
+  updated_at: string;
+};
+
 type ScoreSnapshotRow = {
   user_id: string;
   exercise_id: number;
@@ -57,12 +70,18 @@ type ScoreSnapshotRow = {
   updated_at: string;
 };
 
+type SharedTrainingSplitRow = {
+  split_days: TrainingSplitDay[];
+  updated_by_name: string | null;
+  updated_at: string;
+};
+
 function now() {
   return new Date().toISOString();
 }
 
 function seedDatabase(): WebDatabase {
-  return { exercises: catalogExerciseRows(now()), sessions: [], sets: [], bodyWeightLogs: [], configs: [], exercisePreferences: [], users: [], currentUserId: null, unitSystem: "lb", importFingerprints: [] };
+  return { exercises: catalogExerciseRows(now()), sessions: [], sets: [], bodyWeightLogs: [], configs: [], exercisePreferences: [], users: [], currentUserId: null, unitSystem: "lb", importFingerprints: [], trainingSplit: createDefaultTrainingSplit(), activeWorkout: null };
 }
 
 function readDatabase(): WebDatabase {
@@ -81,7 +100,9 @@ function readDatabase(): WebDatabase {
       users: parsed.users ?? [],
       currentUserId: parsed.currentUserId ?? null,
       unitSystem,
-      importFingerprints: Array.isArray(parsed.importFingerprints) ? parsed.importFingerprints.filter((value): value is string => typeof value === "string") : []
+      importFingerprints: Array.isArray(parsed.importFingerprints) ? parsed.importFingerprints.filter((value): value is string => typeof value === "string") : [],
+      trainingSplit: normalizeTrainingSplit(parsed.trainingSplit),
+      activeWorkout: normalizeActiveWorkout(parsed.activeWorkout)
     };
   }
   const seeded = seedDatabase();
@@ -105,17 +126,19 @@ export async function loadAllData() {
     bodyWeightLogs: normalizeBodyWeightLogs(data.bodyWeightLogs).sort((a, b) => b.logged_at.localeCompare(a.logged_at) || b.created_at.localeCompare(a.created_at)),
     configs: [...data.configs].sort((a, b) => a.muscle_group.localeCompare(b.muscle_group)),
     currentUser,
-    unitSystem: data.unitSystem
+    unitSystem: data.unitSystem,
+    trainingSplit: data.trainingSplit,
+    activeWorkout: data.activeWorkout
   };
 }
 
 async function loadCloudData(client: SupabaseClient) {
   const user = await requireCloudUser(client, false);
   if (!user) {
-    return { exercises: [], sessions: [], sets: [], bodyWeightLogs: [], configs: [], currentUser: null, unitSystem: "lb" as UnitSystem };
+    return { exercises: [], sessions: [], sets: [], bodyWeightLogs: [], configs: [], currentUser: null, unitSystem: "lb" as UnitSystem, trainingSplit: createDefaultTrainingSplit(), activeWorkout: null };
   }
 
-  const [profileResult, exercisesResult, preferencesResult, sessionsResult, setsResult, bodyWeightResult, configsResult, settingResult] = await Promise.all([
+  const [profileResult, exercisesResult, preferencesResult, sessionsResult, setsResult, bodyWeightResult, configsResult, settingResult, activeWorkoutResult] = await Promise.all([
     client.from("profiles").select("*").eq("id", user.id).maybeSingle<ProfileRow>(),
     client.from("exercises").select("*").order("name"),
     client.from("user_exercise_preferences").select("*").eq("user_id", user.id),
@@ -123,7 +146,8 @@ async function loadCloudData(client: SupabaseClient) {
     client.from("workout_sets").select("*").order("created_at").order("set_number"),
     client.from("body_weight_logs").select("*").order("logged_date", { ascending: false }).order("created_at", { ascending: false }),
     client.from("muscle_strength_config").select("*").order("muscle_group"),
-    client.from("app_settings").select("value").eq("key", "unit_system").maybeSingle<{ value: UnitSystem }>()
+    client.from("app_settings").select("value").eq("key", "unit_system").maybeSingle<{ value: UnitSystem }>(),
+    client.from("app_settings").select("value").eq("key", "active_workout").maybeSingle<{ value: string }>()
   ]);
 
   throwIfSupabaseError(profileResult.error);
@@ -136,8 +160,10 @@ async function loadCloudData(client: SupabaseClient) {
   }
   throwIfSupabaseError(configsResult.error);
   throwIfSupabaseError(settingResult.error);
+  throwIfSupabaseError(activeWorkoutResult.error);
 
   const preferences = (preferencesResult.data ?? []) as UserExercisePreference[];
+  const trainingSplit = await loadCloudTrainingSplit(client, user.id);
   return {
     exercises: withPreferenceFlags((exercisesResult.data ?? []) as Exercise[], preferences, user.id),
     sessions: (sessionsResult.data ?? []) as WorkoutSession[],
@@ -145,7 +171,9 @@ async function loadCloudData(client: SupabaseClient) {
     bodyWeightLogs: normalizeBodyWeightLogs(bodyWeightResult.error ? [] : (bodyWeightResult.data ?? []) as BodyWeightLog[]),
     configs: (configsResult.data ?? []) as MuscleStrengthConfig[],
     currentUser: cloudUserToAppUser(user, profileResult.data),
-    unitSystem: settingResult.data?.value === "kg" ? "kg" : "lb"
+    unitSystem: settingResult.data?.value === "kg" ? "kg" : "lb",
+    trainingSplit,
+    activeWorkout: normalizeActiveWorkout(activeWorkoutResult.data?.value ? JSON.parse(activeWorkoutResult.data.value) : null)
   };
 }
 
@@ -647,6 +675,47 @@ export async function updateUnitSystem(unitSystem: UnitSystem) {
   writeDatabase(data);
 }
 
+export async function updateTrainingSplit(days: TrainingSplitDay[]): Promise<TrainingSplit> {
+  if (supabase) {
+    await requireCloudUser(supabase);
+    const result = await supabase.rpc("save_shared_training_split", { split_days: days });
+    if (result.error && isMissingTrainingSplitError(result.error)) {
+      throw new Error("Shared training splits need the Supabase schema update before they can sync.");
+    }
+    throwIfSupabaseError(result.error);
+    const user = await requireCloudUser(supabase);
+    if (!user) throw new Error("Please log in again.");
+    return loadCloudTrainingSplit(supabase, user.id);
+  }
+
+  const data = readDatabase();
+  const currentUser = data.users.find((user) => user.id === data.currentUserId);
+  data.trainingSplit = normalizeTrainingSplit({ days, updated_at: now(), updated_by: currentUser?.name ?? "You" });
+  writeDatabase(data);
+  return data.trainingSplit;
+}
+
+export async function saveActiveWorkout(activeWorkout: ActiveWorkout | null) {
+  if (supabase) {
+    const user = await requireCloudUser(supabase);
+    if (!user) throw new Error("Please log in again.");
+    if (!activeWorkout) {
+      const result = await supabase.from("app_settings").delete().eq("user_id", user.id).eq("key", "active_workout");
+      throwIfSupabaseError(result.error);
+      return;
+    }
+    const result = await supabase
+      .from("app_settings")
+      .upsert({ user_id: user.id, key: "active_workout", value: JSON.stringify(activeWorkout) }, { onConflict: "user_id,key" });
+    throwIfSupabaseError(result.error);
+    return;
+  }
+
+  const data = readDatabase();
+  data.activeWorkout = activeWorkout;
+  writeDatabase(data);
+}
+
 export async function loadSocialData(): Promise<SocialData> {
   if (!supabase) return localSocialNotice();
 
@@ -666,27 +735,43 @@ export async function loadSocialData(): Promise<SocialData> {
   const friendships = (friendshipsResult.data ?? []) as FriendshipRow[];
   const friendIds = [...new Set(friendships.map((friendship) => otherFriendId(friendship, user.id)).filter(Boolean))];
   const profileIds = [...new Set([user.id, ...friendIds])];
-  const [profilesResult, invitesResult, snapshotsResult] = await Promise.all([
+  const [profilesResult, invitesResult, snapshotsResult, splitSyncResult] = await Promise.all([
     supabase.from("profiles").select("id,name,email,created_at").in("id", profileIds),
     supabase.from("friend_invites").select("*").eq("owner_id", user.id).is("accepted_by", null).order("created_at", { ascending: false }),
-    supabase.from("leaderboard_score_snapshots").select("*").order("best_score", { ascending: false })
+    supabase.from("leaderboard_score_snapshots").select("*").order("best_score", { ascending: false }),
+    supabase.from("split_sync_requests").select("*").order("updated_at", { ascending: false })
   ]);
 
   throwIfSupabaseError(profilesResult.error);
   throwIfSupabaseError(invitesResult.error);
   throwIfSupabaseError(snapshotsResult.error);
+  if (splitSyncResult.error && isMissingTrainingSplitError(splitSyncResult.error)) {
+    throw new Error("Shared training splits need the Supabase schema update before they can sync.");
+  }
+  throwIfSupabaseError(splitSyncResult.error);
 
   const profiles = new Map((profilesResult.data ?? []).map((profile) => [profile.id, profile as ProfileRow]));
+  const splitSyncRequests = (splitSyncResult.data ?? []) as SplitSyncRequestRow[];
   const currentProfile = profiles.get(user.id);
   const friends = friendships.map((friendship) => {
     const friendId = otherFriendId(friendship, user.id);
     const profile = profiles.get(friendId);
+    const splitSync = splitSyncRequests.find((request) => request.requester_id === friendId || request.addressee_id === friendId);
+    const splitSyncStatus = splitSync?.status === "accepted"
+      ? ("synced" as const)
+      : splitSync?.status === "pending" && splitSync.requester_id === user.id
+        ? ("sent" as const)
+        : splitSync?.status === "pending"
+          ? ("received" as const)
+          : ("none" as const);
     return {
       id: friendId,
       name: profileDisplayName(profile, "Friend"),
       email: profile?.email ?? null,
       status: friendship.status,
       direction: friendship.requester_id === user.id ? ("sent" as const) : ("received" as const),
+      split_sync_status: splitSyncStatus,
+      split_sync_request_id: splitSyncStatus === "none" ? null : splitSync?.id ?? null,
       created_at: friendship.created_at
     };
   });
@@ -764,6 +849,36 @@ export async function removeFriend(friendId: string) {
     .from("friendships")
     .delete()
     .or(`and(requester_id.eq.${user.id},addressee_id.eq.${friendId}),and(requester_id.eq.${friendId},addressee_id.eq.${user.id})`);
+  throwIfSupabaseError(result.error);
+}
+
+export async function requestSplitSync(friendId: string, days: TrainingSplitDay[]) {
+  if (!supabase) throw new Error("Split synchronization needs the Supabase-powered web app.");
+  await requireCloudUser(supabase);
+  const result = await supabase.rpc("request_split_sync", { friend_id: friendId, split_days: days });
+  if (result.error && isMissingTrainingSplitError(result.error)) {
+    throw new Error("Shared training splits need the Supabase schema update before they can sync.");
+  }
+  throwIfSupabaseError(result.error);
+}
+
+export async function respondSplitSync(requestId: string, accepted: boolean) {
+  if (!supabase) throw new Error("Split synchronization needs the Supabase-powered web app.");
+  await requireCloudUser(supabase);
+  const result = await supabase.rpc("respond_split_sync", { request_id: requestId, accept_request: accepted });
+  if (result.error && isMissingTrainingSplitError(result.error)) {
+    throw new Error("Shared training splits need the Supabase schema update before they can sync.");
+  }
+  throwIfSupabaseError(result.error);
+}
+
+export async function removeSplitSync(friendId: string) {
+  if (!supabase) throw new Error("Split synchronization needs the Supabase-powered web app.");
+  await requireCloudUser(supabase);
+  const result = await supabase.rpc("remove_split_sync", { friend_id: friendId });
+  if (result.error && isMissingTrainingSplitError(result.error)) {
+    throw new Error("Shared training splits need the Supabase schema update before they can sync.");
+  }
   throwIfSupabaseError(result.error);
 }
 
@@ -848,6 +963,35 @@ function isMissingSocialTableError(error: { message: string; code?: string } | n
       error.message.includes("accept_friend_invite")) &&
     (error.message.includes("schema cache") || error.message.includes("does not exist") || error.code === "PGRST205")
   );
+}
+
+function isMissingTrainingSplitError(error: { message: string; code?: string } | null) {
+  if (!error) return false;
+  return (
+    (error.message.includes("shared_training_splits") ||
+      error.message.includes("split_sync_requests") ||
+      error.message.includes("save_shared_training_split") ||
+      error.message.includes("request_split_sync") ||
+      error.message.includes("respond_split_sync") ||
+      error.message.includes("remove_split_sync")) &&
+    (error.message.includes("schema cache") || error.message.includes("does not exist") || error.code === "PGRST205")
+  );
+}
+
+async function loadCloudTrainingSplit(client: SupabaseClient, userId: string) {
+  const result = await client
+    .from("shared_training_splits")
+    .select("split_days,updated_by_name,updated_at")
+    .eq("user_id", userId)
+    .maybeSingle<SharedTrainingSplitRow>();
+  if (result.error && isMissingTrainingSplitError(result.error)) return createDefaultTrainingSplit();
+  throwIfSupabaseError(result.error);
+  if (!result.data) return createDefaultTrainingSplit();
+  return normalizeTrainingSplit({
+    days: result.data.split_days,
+    updated_by: result.data.updated_by_name,
+    updated_at: result.data.updated_at
+  });
 }
 
 function otherFriendId(friendship: FriendshipRow, currentUserId: string) {

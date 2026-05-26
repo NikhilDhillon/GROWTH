@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
-import { Check, FileUp, LogOut } from "lucide-react-native";
+import { Check, ChevronDown, ChevronUp, FileUp, LogOut } from "lucide-react-native";
 
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
@@ -48,6 +48,7 @@ export function SettingsScreen() {
   const [importError, setImportError] = useState<string | null>(null);
   const [selectedFileText, setSelectedFileText] = useState("");
   const [isImporting, setIsImporting] = useState(false);
+  const [showFormula, setShowFormula] = useState(false);
 
   function validateImport(text: string) {
     setImportError(null);
@@ -118,8 +119,20 @@ export function SettingsScreen() {
       </Panel>
 
       <Panel>
-        <SectionTitle>Performance Points formula</SectionTitle>
-        <Body>Eligible sessions use two or more externally loaded sets of 1 to 10 reps. Points combine best estimated 1RM (45%), failure-set volume (35%), and fatigue resistance (20%) against the exercise's prior best-strength session.</Body>
+        <Pressable accessibilityRole="button" onPress={() => setShowFormula((current) => !current)} style={styles.collapsibleHeader}>
+          <SectionTitle>Performance Points formula</SectionTitle>
+          {showFormula ? <ChevronUp size={20} color={palette.ink} /> : <ChevronDown size={20} color={palette.ink} />}
+        </Pressable>
+        {showFormula ? (
+          <View style={styles.formulaDetails}>
+            <Body>Eligible sessions use two or more loaded sets of 1 to 10 reps.</Body>
+            <Body>Estimated 1RM = weight x (1 + reps / 30)</Body>
+            <Body>Strength = best estimated 1RM; volume = sum(weight x reps)</Body>
+            <Body>Resistance = min(1, final set e1RM / first set e1RM)</Body>
+            <Body>Points = 100 x (0.45 normalized strength + 0.35 normalized volume + 0.20 normalized resistance)</Body>
+            <Body>Each session is normalized against the exercise's prior best-strength session.</Body>
+          </View>
+        ) : null}
       </Panel>
 
       <Panel>
@@ -169,6 +182,16 @@ export function SettingsScreen() {
 }
 
 const styles = StyleSheet.create({
+  collapsibleHeader: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md
+  },
+  formulaDetails: {
+    gap: spacing.sm
+  },
   logoutButton: {
     minHeight: 46,
     borderRadius: 8,

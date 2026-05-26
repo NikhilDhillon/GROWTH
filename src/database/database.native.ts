@@ -1,9 +1,11 @@
 import * as SQLite from "expo-sqlite";
 
+import { normalizeActiveWorkout } from "@/constants/activeWorkout";
 import { catalogExercises } from "@/constants/exercises";
+import { createDefaultTrainingSplit, normalizeTrainingSplit } from "@/constants/trainingSplit";
 import { schema } from "@/database/schema";
 import { buildWorkoutFingerprint, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
-import { BodyWeightLog, Exercise, ExerciseScorePoint, MuscleStrengthConfig, SocialData, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyWeightLog, Exercise, ExerciseScorePoint, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 type Database = SQLite.SQLiteDatabase;
@@ -99,7 +101,7 @@ async function ensureExerciseCatalog(db: Database) {
 
 async function ensureCatalogAdditions(db: Database) {
   const version = await db.getFirstAsync<{ user_version: number }>("PRAGMA user_version");
-  if ((version?.user_version ?? 0) >= 3) return;
+  if ((version?.user_version ?? 0) >= 4) return;
 
   const timestamp = new Date().toISOString();
   for (const exercise of catalogExercises) {
@@ -114,14 +116,16 @@ async function ensureCatalogAdditions(db: Database) {
     }
   }
 
-  await db.execAsync("PRAGMA user_version = 3");
+  await db.execAsync("PRAGMA user_version = 4");
 }
 
 export async function loadAllData() {
   const db = await getDatabase();
-  const [currentUser, unitSetting] = await Promise.all([
+  const [currentUser, unitSetting, trainingSplitSetting, activeWorkoutSetting] = await Promise.all([
     db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1"),
-    db.getFirstAsync<{ value: UnitSystem }>("SELECT value FROM app_settings WHERE key = ?", ["unit_system"])
+    db.getFirstAsync<{ value: UnitSystem }>("SELECT value FROM app_settings WHERE key = ?", ["unit_system"]),
+    db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["training_split"]),
+    db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["active_workout"])
   ]);
   const [exercises, sessions, sets, bodyWeightLogs, configs] = await Promise.all([
     db.getAllAsync<Exercise>(
@@ -148,7 +152,9 @@ export async function loadAllData() {
   ]);
 
   const unitSystem: UnitSystem = unitSetting?.value === "kg" ? "kg" : "lb";
-  return { exercises, sessions, sets, bodyWeightLogs, configs, currentUser: currentUser ?? null, unitSystem };
+  const trainingSplit = trainingSplitSetting?.value ? normalizeTrainingSplit(JSON.parse(trainingSplitSetting.value)) : createDefaultTrainingSplit();
+  const activeWorkout = normalizeActiveWorkout(activeWorkoutSetting?.value ? JSON.parse(activeWorkoutSetting.value) : null);
+  return { exercises, sessions, sets, bodyWeightLogs, configs, currentUser: currentUser ?? null, unitSystem, trainingSplit, activeWorkout };
 }
 
 export async function registerUser(input: { name: string; email: string; password: string }) {
@@ -329,6 +335,27 @@ export async function updateUnitSystem(unitSystem: UnitSystem) {
   await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["unit_system", unitSystem]);
 }
 
+export async function updateTrainingSplit(days: TrainingSplitDay[]): Promise<TrainingSplit> {
+  const db = await getDatabase();
+  const currentUser = await db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1");
+  const trainingSplit = normalizeTrainingSplit({
+    days,
+    updated_at: new Date().toISOString(),
+    updated_by: currentUser?.name ?? "You"
+  });
+  await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["training_split", JSON.stringify(trainingSplit)]);
+  return trainingSplit;
+}
+
+export async function saveActiveWorkout(activeWorkout: ActiveWorkout | null) {
+  const db = await getDatabase();
+  if (!activeWorkout) {
+    await db.runAsync("DELETE FROM app_settings WHERE key = ?", ["active_workout"]);
+    return;
+  }
+  await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["active_workout", JSON.stringify(activeWorkout)]);
+}
+
 export async function loadSocialData(): Promise<SocialData> {
   return {
     friends: [],
@@ -352,6 +379,18 @@ export async function revokeFriendInvite(_inviteId: string): Promise<void> {
 
 export async function removeFriend(_friendId: string): Promise<void> {
   throw new Error("Friend management needs the Supabase-powered web app.");
+}
+
+export async function requestSplitSync(_friendId: string, _days: TrainingSplitDay[]): Promise<void> {
+  throw new Error("Split synchronization needs the Supabase-powered web app.");
+}
+
+export async function respondSplitSync(_requestId: string, _accepted: boolean): Promise<void> {
+  throw new Error("Split synchronization needs the Supabase-powered web app.");
+}
+
+export async function removeSplitSync(_friendId: string): Promise<void> {
+  throw new Error("Split synchronization needs the Supabase-powered web app.");
 }
 
 export async function syncScoreSnapshots(_points: ExerciseScorePoint[]): Promise<void> {

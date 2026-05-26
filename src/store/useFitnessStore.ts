@@ -1,10 +1,11 @@
 import { create } from "zustand";
 
 import { getExerciseLoadType } from "@/constants/exercises";
+import { createDefaultTrainingSplit } from "@/constants/trainingSplit";
 import { buildExerciseScorePoints, buildMuscleScorePoints, summarizeMuscles } from "@/services/strength/strengthService";
-import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, requestPasswordReset, revokeFriendInvite as revokeStoredFriendInvite, saveBodyWeightLog as saveStoredBodyWeightLog, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateUnitSystem, updateWorkoutSession } from "@/database/database";
+import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, removeSplitSync as removeStoredSplitSync, requestPasswordReset, requestSplitSync as requestStoredSplitSync, respondSplitSync as respondStoredSplitSync, revokeFriendInvite as revokeStoredFriendInvite, saveActiveWorkout as saveStoredActiveWorkout, saveBodyWeightLog as saveStoredBodyWeightLog, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateTrainingSplit as updateStoredTrainingSplit, updateUnitSystem, updateWorkoutSession } from "@/database/database";
 import { ParsedImportData } from "@/services/import/importService";
-import { BodyWeightLog, Exercise, ExerciseScorePoint, LoggedSetDraft, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, SocialData, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyWeightLog, Exercise, ExerciseScorePoint, LoggedSetDraft, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { todayIso } from "@/utils/date";
 import { bodyWeightDisplayUnit, bodyWeightToStorageUnit, weightToStorageUnit } from "@/utils/units";
 
@@ -19,6 +20,8 @@ type FitnessState = {
   sets: WorkoutSet[];
   bodyWeightLogs: BodyWeightLog[];
   configs: MuscleStrengthConfig[];
+  trainingSplit: TrainingSplit;
+  activeWorkout: ActiveWorkout | null;
   exercisePoints: ExerciseScorePoint[];
   musclePoints: MuscleScorePoint[];
   muscleSummaries: MuscleSummary[];
@@ -32,6 +35,9 @@ type FitnessState = {
   acceptFriendInvite: (token: string) => Promise<void>;
   revokeFriendInvite: (inviteId: string) => Promise<void>;
   removeFriend: (friendId: string) => Promise<void>;
+  requestSplitSync: (friendId: string, days: TrainingSplitDay[]) => Promise<void>;
+  respondSplitSync: (requestId: string, accepted: boolean) => Promise<void>;
+  removeSplitSync: (friendId: string) => Promise<void>;
   login: (input: { email: string; password: string }) => Promise<void>;
   register: (input: { name: string; email: string; password: string }) => Promise<void>;
   resetPassword: (input: { email: string }) => Promise<void>;
@@ -47,6 +53,10 @@ type FitnessState = {
   deleteBodyWeightLog: (id: number) => Promise<void>;
   importTrainingData: (input: ParsedImportData) => Promise<void>;
   setUnitSystem: (unitSystem: UnitSystem) => Promise<void>;
+  saveTrainingSplit: (days: TrainingSplitDay[]) => Promise<void>;
+  startActiveWorkout: (activeWorkout: ActiveWorkout) => Promise<void>;
+  updateActiveWorkout: (activeWorkout: ActiveWorkout) => Promise<void>;
+  finishActiveWorkout: () => Promise<void>;
   setConfigWeight: (id: number, weightFactor: number) => Promise<void>;
 };
 
@@ -68,6 +78,8 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   sets: [],
   bodyWeightLogs: [],
   configs: [],
+  trainingSplit: createDefaultTrainingSplit(),
+  activeWorkout: null,
   exercisePoints: [],
   musclePoints: [],
   muscleSummaries: [],
@@ -94,6 +106,8 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
         sets: [],
         bodyWeightLogs: [],
         configs: [],
+        trainingSplit: createDefaultTrainingSplit(),
+        activeWorkout: null,
         exercisePoints: [],
         musclePoints: [],
         muscleSummaries: [],
@@ -154,6 +168,33 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
       await get().loadSocial();
     } catch (error) {
       set({ socialLoading: false, socialError: error instanceof Error ? error.message : "Could not remove friend." });
+    }
+  },
+  requestSplitSync: async (friendId, days) => {
+    set({ socialLoading: true, socialError: null });
+    try {
+      await requestStoredSplitSync(friendId, days);
+      await get().loadSocial();
+    } catch (error) {
+      set({ socialLoading: false, socialError: error instanceof Error ? error.message : "Could not request split synchronization." });
+    }
+  },
+  respondSplitSync: async (requestId, accepted) => {
+    set({ socialLoading: true, socialError: null });
+    try {
+      await respondStoredSplitSync(requestId, accepted);
+      await get().hydrate();
+    } catch (error) {
+      set({ socialLoading: false, socialError: error instanceof Error ? error.message : "Could not update split synchronization." });
+    }
+  },
+  removeSplitSync: async (friendId) => {
+    set({ socialLoading: true, socialError: null });
+    try {
+      await removeStoredSplitSync(friendId);
+      await get().loadSocial();
+    } catch (error) {
+      set({ socialLoading: false, socialError: error instanceof Error ? error.message : "Could not disconnect split synchronization." });
     }
   },
   login: async (input) => {
@@ -263,6 +304,22 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   setUnitSystem: async (unitSystem) => {
     await updateUnitSystem(unitSystem);
     set({ unitSystem });
+  },
+  saveTrainingSplit: async (days) => {
+    const trainingSplit = await updateStoredTrainingSplit(days);
+    set({ trainingSplit });
+  },
+  startActiveWorkout: async (activeWorkout) => {
+    set({ activeWorkout });
+    await saveStoredActiveWorkout(activeWorkout);
+  },
+  updateActiveWorkout: async (activeWorkout) => {
+    set({ activeWorkout });
+    await saveStoredActiveWorkout(activeWorkout);
+  },
+  finishActiveWorkout: async () => {
+    set({ activeWorkout: null });
+    await saveStoredActiveWorkout(null);
   },
   setConfigWeight: async (id, weightFactor) => {
     await updateConfigWeight(id, weightFactor);

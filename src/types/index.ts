@@ -1,4 +1,4 @@
-export type MuscleGroup = "Chest" | "Back" | "Shoulders" | "Biceps" | "Triceps" | "Legs" | "Core";
+export type MuscleGroup = "Chest" | "Back" | "Shoulders" | "Biceps" | "Triceps" | "Legs" | "Core" | "Forearms";
 
 export type TrendStatus = "Increasing" | "Stable" | "Decreasing";
 export type UnitSystem = "lb" | "kg";
@@ -61,6 +61,8 @@ export type Friend = {
   email?: string | null;
   status: "pending" | "accepted" | "declined";
   direction: "sent" | "received";
+  split_sync_status?: "none" | "sent" | "received" | "synced";
+  split_sync_request_id?: string | null;
   created_at: string;
 };
 
@@ -89,6 +91,20 @@ export type SocialData = {
   notice?: string | null;
 };
 
+export type SplitMuscle = "Chest" | "Triceps" | "Back" | "Biceps" | "Legs" | "Shoulders" | "Forearms" | "Abs";
+
+export type TrainingSplitDay = {
+  key: string;
+  label: string;
+  muscles: SplitMuscle[];
+};
+
+export type TrainingSplit = {
+  days: TrainingSplitDay[];
+  updated_at: string | null;
+  updated_by: string | null;
+};
+
 export type MuscleStrengthConfig = {
   id: number;
   muscle_group: MuscleGroup;
@@ -99,6 +115,44 @@ export type MuscleStrengthConfig = {
 export type LoggedSetDraft = {
   reps: string;
   weight: string;
+};
+
+export type ActiveWorkoutExerciseDraft = {
+  muscle: MuscleGroup | null;
+  exerciseId: number | null;
+  sets: LoggedSetDraft[];
+  notes: string;
+  barWeight: string;
+  plateCounts: Record<string, number>;
+};
+
+export type CompletedWorkoutExercise = {
+  exerciseId: number;
+  exerciseName: string;
+  muscle: MuscleGroup;
+  sets: LoggedSetDraft[];
+  completedAt: string;
+};
+
+export type ActiveWorkout = {
+  startedAt: string;
+  workoutDate: string;
+  todayDayKey: string;
+  sourceDayKey: string;
+  plannedMuscles: SplitMuscle[];
+  completedExercises: CompletedWorkoutExercise[];
+  currentExercise: ActiveWorkoutExerciseDraft;
+  pendingMuscle: MuscleGroup | null;
+  schedulePrompt: "off_plan" | "replace" | null;
+};
+
+export type WorkoutRecommendationRow = {
+  setNumber: number;
+  weight: number;
+  priorReps: number;
+  minimumReps: number;
+  maximumReps: number;
+  requiresLoadChange: boolean;
 };
 
 export type ExerciseScorePoint = {

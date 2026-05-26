@@ -23,6 +23,7 @@ import { LogsScreen } from "@/screens/Logs/LogsScreen";
 import { BodyweightScreen } from "@/screens/Bodyweight/BodyweightScreen";
 import { BulkAnalyticsScreen } from "@/screens/BulkAnalytics/BulkAnalyticsScreen";
 import { SocialScreen } from "@/screens/Social/SocialScreen";
+import { GuidedWorkoutScreen } from "@/screens/Workout/GuidedWorkoutScreen";
 
 type RootStackParamList = {
   Home: undefined;
@@ -34,9 +35,11 @@ type RootStackParamList = {
   Social: undefined;
   Logs: undefined;
   Settings: undefined;
+  ActiveWorkout: undefined;
 };
 
-type AppRouteName = keyof RootStackParamList;
+type AppRouteName = Exclude<keyof RootStackParamList, "ActiveWorkout">;
+type CurrentRouteName = keyof RootStackParamList;
 type NavIcon = ComponentType<{ color: string; size: number }>;
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -62,12 +65,12 @@ export default function App() {
   const acceptFriendInvite = useFitnessStore((state) => state.acceptFriendInvite);
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(() => isRecoveryUrl());
   const [pendingInviteToken, setPendingInviteToken] = useState(() => getInviteToken());
-  const [activeRouteName, setActiveRouteName] = useState<AppRouteName>("Home");
+  const [activeRouteName, setActiveRouteName] = useState<CurrentRouteName>("Home");
   const isLaptopWeb = Platform.OS === "web" && width >= 768;
 
   function updateActiveRoute() {
     const routeName = navigationRef.getCurrentRoute()?.name;
-    if (isAppRouteName(routeName)) {
+    if (isAppRouteName(routeName) || routeName === "ActiveWorkout") {
       setActiveRouteName(routeName);
     }
   }
@@ -172,7 +175,7 @@ export default function App() {
                 header: () =>
                   isLaptopWeb ? null : (
                     <AppHeader
-                      activeRouteName={route.name as AppRouteName}
+                      activeRouteName={isAppRouteName(route.name) ? route.name : "Log"}
                       currentUserName={displayName(currentUser.name, currentUser.email)}
                       onNavigate={(routeName) => navigation.navigate(routeName)}
                     />
@@ -182,6 +185,7 @@ export default function App() {
               {appRoutes.map((route) => (
                 <Stack.Screen key={route.name} name={route.name} component={route.component} />
               ))}
+              <Stack.Screen name="ActiveWorkout" component={GuidedWorkoutScreen} />
             </Stack.Navigator>
           </View>
         ) : (
@@ -304,7 +308,7 @@ function AppSidebar({
   activeRouteName,
   onNavigate
 }: {
-  activeRouteName: AppRouteName;
+  activeRouteName: CurrentRouteName;
   onNavigate: (routeName: AppRouteName) => void;
 }) {
   return (

@@ -101,6 +101,27 @@ create table if not exists public.leaderboard_score_snapshots (
   primary key (user_id, exercise_id)
 );
 
+create table if not exists public.shared_training_splits (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  split_days jsonb not null,
+  updated_by uuid references auth.users(id) on delete set null,
+  updated_by_name text not null,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.split_sync_requests (
+  id uuid primary key default gen_random_uuid(),
+  requester_id uuid not null references auth.users(id) on delete cascade,
+  addressee_id uuid not null references auth.users(id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'declined')),
+  user_low uuid generated always as (least(requester_id, addressee_id)) stored,
+  user_high uuid generated always as (greatest(requester_id, addressee_id)) stored,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  check (requester_id <> addressee_id),
+  unique (user_low, user_high)
+);
+
 alter table public.profiles enable row level security;
 alter table public.exercises enable row level security;
 alter table public.user_exercise_preferences enable row level security;
@@ -112,6 +133,8 @@ alter table public.app_settings enable row level security;
 alter table public.friendships enable row level security;
 alter table public.friend_invites enable row level security;
 alter table public.leaderboard_score_snapshots enable row level security;
+alter table public.shared_training_splits enable row level security;
+alter table public.split_sync_requests enable row level security;
 
 drop policy if exists "profiles are visible to their owner" on public.profiles;
 drop policy if exists "profiles can be inserted by their owner" on public.profiles;
@@ -132,6 +155,8 @@ drop policy if exists "friendships can be deleted by participants" on public.fri
 drop policy if exists "friend invites are owned by their user" on public.friend_invites;
 drop policy if exists "score snapshots are visible to friends" on public.leaderboard_score_snapshots;
 drop policy if exists "score snapshots are owned by their user" on public.leaderboard_score_snapshots;
+drop policy if exists "training splits are visible to their user" on public.shared_training_splits;
+drop policy if exists "split sync requests are visible to participants" on public.split_sync_requests;
 
 create policy "profiles are visible to their owner" on public.profiles
   for select using (auth.uid() = id);
@@ -209,6 +234,12 @@ create policy "score snapshots are visible to friends" on public.leaderboard_sco
 create policy "score snapshots are owned by their user" on public.leaderboard_score_snapshots
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
+create policy "training splits are visible to their user" on public.shared_training_splits
+  for select using (auth.uid() = user_id);
+
+create policy "split sync requests are visible to participants" on public.split_sync_requests
+  for select using (auth.uid() in (requester_id, addressee_id));
+
 drop index if exists exercises_user_id_idx;
 create unique index if not exists exercises_name_idx on public.exercises(name);
 create index if not exists user_exercise_preferences_user_id_idx on public.user_exercise_preferences(user_id);
@@ -223,6 +254,9 @@ create index if not exists friendships_addressee_id_idx on public.friendships(ad
 create index if not exists friend_invites_owner_id_idx on public.friend_invites(owner_id);
 create index if not exists friend_invites_token_idx on public.friend_invites(token);
 create index if not exists leaderboard_score_snapshots_exercise_score_idx on public.leaderboard_score_snapshots(exercise_id, best_score desc);
+create index if not exists shared_training_splits_updated_at_idx on public.shared_training_splits(updated_at desc);
+create index if not exists split_sync_requests_requester_id_idx on public.split_sync_requests(requester_id);
+create index if not exists split_sync_requests_addressee_id_idx on public.split_sync_requests(addressee_id);
 
 create or replace function public.profile_exists_for_email(lookup_email text)
 returns boolean
@@ -282,11 +316,179 @@ $$;
 
 grant execute on function public.accept_friend_invite(text) to authenticated;
 
+create or replace function public.request_split_sync(friend_id uuid, split_days jsonb)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  editing_user uuid := auth.uid();
+  editor_name text;
+begin
+  if editing_user is null then
+    raise exception 'Please log in again.';
+  end if;
+
+  if jsonb_typeof(split_days) <> 'array' then
+    raise exception 'Training split days must be an array.';
+  end if;
+
+  if not exists (
+    select 1
+    from public.friendships
+    where status = 'accepted'
+      and (
+        (requester_id = editing_user and addressee_id = friend_id)
+        or (addressee_id = editing_user and requester_id = friend_id)
+      )
+  ) then
+    raise exception 'Split synchronization can only be requested from an accepted friend.';
+  end if;
+
+  select coalesce(nullif(trim(name), ''), split_part(email, '@', 1), 'User')
+  into editor_name
+  from public.profiles
+  where id = editing_user;
+
+  insert into public.shared_training_splits (user_id, split_days, updated_by, updated_by_name, updated_at)
+  values (editing_user, split_days, editing_user, coalesce(editor_name, 'User'), now())
+  on conflict (user_id) do nothing;
+
+  insert into public.split_sync_requests (requester_id, addressee_id, status, updated_at)
+  values (editing_user, friend_id, 'pending', now())
+  on conflict (user_low, user_high)
+  do update set
+    requester_id = excluded.requester_id,
+    addressee_id = excluded.addressee_id,
+    status = 'pending',
+    updated_at = excluded.updated_at;
+end;
+$$;
+
+grant execute on function public.request_split_sync(uuid, jsonb) to authenticated;
+
+create or replace function public.respond_split_sync(request_id uuid, accept_request boolean)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  receiving_user uuid := auth.uid();
+  request_row public.split_sync_requests%rowtype;
+begin
+  if receiving_user is null then
+    raise exception 'Please log in again.';
+  end if;
+
+  select *
+  into request_row
+  from public.split_sync_requests
+  where id = request_id
+    and addressee_id = receiving_user
+    and status = 'pending';
+
+  if request_row.id is null then
+    raise exception 'This split synchronization request is not available.';
+  end if;
+
+  update public.split_sync_requests
+  set status = case when accept_request then 'accepted' else 'declined' end,
+      updated_at = now()
+  where id = request_id;
+
+  if accept_request then
+    insert into public.shared_training_splits (user_id, split_days, updated_by, updated_by_name, updated_at)
+    select receiving_user, split_days, updated_by, updated_by_name, updated_at
+    from public.shared_training_splits
+    where user_id = request_row.requester_id
+    on conflict (user_id)
+    do update set
+      split_days = excluded.split_days,
+      updated_by = excluded.updated_by,
+      updated_by_name = excluded.updated_by_name,
+      updated_at = excluded.updated_at;
+  end if;
+end;
+$$;
+
+grant execute on function public.respond_split_sync(uuid, boolean) to authenticated;
+
+create or replace function public.remove_split_sync(friend_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_user_id uuid := auth.uid();
+begin
+  if current_user_id is null then
+    raise exception 'Please log in again.';
+  end if;
+
+  delete from public.split_sync_requests
+  where (requester_id = current_user_id and addressee_id = friend_id)
+     or (addressee_id = current_user_id and requester_id = friend_id);
+end;
+$$;
+
+grant execute on function public.remove_split_sync(uuid) to authenticated;
+
+create or replace function public.save_shared_training_split(split_days jsonb)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  editing_user uuid := auth.uid();
+  editor_name text;
+begin
+  if editing_user is null then
+    raise exception 'Please log in again.';
+  end if;
+
+  if jsonb_typeof(split_days) <> 'array' then
+    raise exception 'Training split days must be an array.';
+  end if;
+
+  select coalesce(nullif(trim(name), ''), split_part(email, '@', 1), 'User')
+  into editor_name
+  from public.profiles
+  where id = editing_user;
+
+  insert into public.shared_training_splits (user_id, split_days, updated_by, updated_by_name, updated_at)
+  with recursive synchronized_users(user_id) as (
+    select editing_user
+    union
+    select case when request.requester_id = group_user.user_id then request.addressee_id else request.requester_id end
+    from synchronized_users group_user
+    join public.split_sync_requests request
+      on request.status = 'accepted'
+      and group_user.user_id in (request.requester_id, request.addressee_id)
+  )
+  select user_id, split_days, editing_user, coalesce(editor_name, 'User'), now()
+  from synchronized_users
+  on conflict (user_id)
+  do update set
+    split_days = excluded.split_days,
+    updated_by = excluded.updated_by,
+    updated_by_name = excluded.updated_by_name,
+    updated_at = excluded.updated_at;
+end;
+$$;
+
+grant execute on function public.save_shared_training_split(jsonb) to authenticated;
+
 grant select on public.exercises to authenticated;
 grant select, insert, update, delete on public.user_exercise_preferences to authenticated;
 grant select, insert, update, delete on public.friendships to authenticated;
 grant select, insert, update, delete on public.friend_invites to authenticated;
 grant select, insert, update, delete on public.leaderboard_score_snapshots to authenticated;
+grant select on public.shared_training_splits to authenticated;
+grant select on public.split_sync_requests to authenticated;
 
 insert into public.exercises (name, primary_muscle, secondary_muscle, is_strength_exercise) values
   ('Barbell Bench Press', 'Chest', null, 0),
@@ -338,7 +540,9 @@ insert into public.exercises (name, primary_muscle, secondary_muscle, is_strengt
   ('Hanging Leg Raise', 'Core', null, 0),
   ('Ab Wheel Rollout', 'Core', null, 0),
   ('Decline Sit-Up', 'Core', null, 0),
-  ('Pallof Press', 'Core', null, 0)
+  ('Pallof Press', 'Core', null, 0),
+  ('Wrist Curl', 'Forearms', null, 0),
+  ('Reverse Wrist Curl', 'Forearms', null, 0)
 on conflict (name) do update set
   primary_muscle = excluded.primary_muscle,
   secondary_muscle = excluded.secondary_muscle,

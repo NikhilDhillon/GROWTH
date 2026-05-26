@@ -60,7 +60,9 @@ export const catalogExercises: CatalogExercise[] = [
   { name: "Hanging Leg Raise", primary_muscle: "Core" },
   { name: "Ab Wheel Rollout", primary_muscle: "Core" },
   { name: "Decline Sit-Up", primary_muscle: "Core" },
-  { name: "Pallof Press", primary_muscle: "Core" }
+  { name: "Pallof Press", primary_muscle: "Core" },
+  { name: "Wrist Curl", primary_muscle: "Forearms" },
+  { name: "Reverse Wrist Curl", primary_muscle: "Forearms" }
 ];
 
 export function getExerciseLoadType(exerciseName: string): ExerciseLoadType {

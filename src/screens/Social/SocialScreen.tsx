@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from "react-native";
-import { Copy, Link, RefreshCw, Share2, Trash2, Trophy, UserPlus, Users } from "lucide-react-native";
+import { Check, Copy, Link, RefreshCw, Share2, Trash2, Trophy, UserPlus, Users, X } from "lucide-react-native";
 
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
@@ -31,6 +31,10 @@ export function SocialScreen() {
   const acceptFriendInvite = useFitnessStore((state) => state.acceptFriendInvite);
   const revokeFriendInvite = useFitnessStore((state) => state.revokeFriendInvite);
   const removeFriend = useFitnessStore((state) => state.removeFriend);
+  const trainingSplit = useFitnessStore((state) => state.trainingSplit);
+  const requestSplitSync = useFitnessStore((state) => state.requestSplitSync);
+  const respondSplitSync = useFitnessStore((state) => state.respondSplitSync);
+  const removeSplitSync = useFitnessStore((state) => state.removeSplitSync);
   const [tab, setTab] = useState<SocialTab>("leaderboard");
   const [selectedExerciseId, setSelectedExerciseId] = useState(0);
   const [inviteCode, setInviteCode] = useState("");
@@ -89,7 +93,7 @@ export function SocialScreen() {
   return (
     <Screen>
       <View>
-        <Label>Friends and exercise PRs</Label>
+        <Label>Friends, opt-in split sync and exercise PRs</Label>
         <Title>Social</Title>
       </View>
 
@@ -166,15 +170,56 @@ export function SocialScreen() {
             <View style={styles.panelHeader}>
               <View>
                 <SectionTitle>Friends</SectionTitle>
-                <Body>{acceptedFriends.length ? "Accepted friends can appear on your e1RM leaderboards." : "No friends yet."}</Body>
+                <Body>{acceptedFriends.length ? "Friends appear on leaderboards. Split schedules synchronize only after both people opt in." : "No friends yet."}</Body>
               </View>
               <Users size={22} color={palette.accent} />
             </View>
             {acceptedFriends.length ? acceptedFriends.map((friend) => (
               <View key={friend.id} style={styles.friendRow}>
-                <View>
+                <View style={styles.friendDetails}>
                   <Body style={styles.friendName}>{friend.name}</Body>
                   <Body>Friends since {formatShortDate(friend.created_at.slice(0, 10))}</Body>
+                  <Body>{splitSyncStatusText(friend.split_sync_status)}</Body>
+                  <View style={styles.actionRow}>
+                    {friend.split_sync_status === "none" || !friend.split_sync_status ? (
+                      <Pressable
+                        disabled={socialLoading}
+                        onPress={() => void requestSplitSync(friend.id, trainingSplit.days)}
+                        style={pressableFeedback(styles.secondaryButton)}
+                      >
+                        <Body style={styles.secondaryButtonText}>Request split sync</Body>
+                      </Pressable>
+                    ) : null}
+                    {friend.split_sync_status === "received" && friend.split_sync_request_id ? (
+                      <>
+                        <Pressable
+                          disabled={socialLoading}
+                          onPress={() => void respondSplitSync(friend.split_sync_request_id!, true)}
+                          style={pressableFeedback(styles.secondaryButton)}
+                        >
+                          <Check size={17} color={palette.ink} />
+                          <Body style={styles.secondaryButtonText}>Accept sync</Body>
+                        </Pressable>
+                        <Pressable
+                          disabled={socialLoading}
+                          onPress={() => void respondSplitSync(friend.split_sync_request_id!, false)}
+                          style={pressableFeedback(styles.secondaryButton)}
+                        >
+                          <X size={17} color={palette.ink} />
+                          <Body style={styles.secondaryButtonText}>Decline</Body>
+                        </Pressable>
+                      </>
+                    ) : null}
+                    {friend.split_sync_status === "sent" || friend.split_sync_status === "synced" ? (
+                      <Pressable
+                        disabled={socialLoading}
+                        onPress={() => void removeSplitSync(friend.id)}
+                        style={pressableFeedback(styles.secondaryButton)}
+                      >
+                        <Body style={styles.secondaryButtonText}>{friend.split_sync_status === "synced" ? "Stop syncing" : "Cancel request"}</Body>
+                      </Pressable>
+                    ) : null}
+                  </View>
                 </View>
                 <Pressable
                   accessibilityLabel={`Remove ${friend.name}`}
@@ -186,7 +231,7 @@ export function SocialScreen() {
                   <Trash2 size={18} color={palette.danger} />
                 </Pressable>
               </View>
-            )) : <Body>Create an invite and send it to someone you want on your leaderboard.</Body>}
+            )) : <Body>Create an invite to connect on leaderboards, then request split sync from the Friends list when needed.</Body>}
           </Panel>
 
           <Panel>
@@ -209,7 +254,7 @@ export function SocialScreen() {
             <View style={styles.panelHeader}>
               <View>
                 <SectionTitle>Invite link</SectionTitle>
-                <Body>One link connects one friend to your private leaderboards.</Body>
+                <Body>One link connects one friend to private leaderboards. Split sync is requested separately after connecting.</Body>
               </View>
               <UserPlus size={22} color={palette.accent} />
             </View>
@@ -287,6 +332,13 @@ function LeaderboardRow({ entry, rank, isCurrentUser }: { entry: LeaderboardEntr
   );
 }
 
+function splitSyncStatusText(status: "none" | "sent" | "received" | "synced" | undefined) {
+  if (status === "synced") return "Split schedule synchronized.";
+  if (status === "sent") return "Split synchronization request sent.";
+  if (status === "received") return "Requested to synchronize split schedules.";
+  return "Split schedule not synchronized.";
+}
+
 const styles = StyleSheet.create({
   segmentRow: {
     flexDirection: "row",
@@ -319,6 +371,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     gap: spacing.md
+  },
+  friendDetails: {
+    flex: 1,
+    gap: spacing.xs
   },
   chipRow: {
     flexDirection: "row",
