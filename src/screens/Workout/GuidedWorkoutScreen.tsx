@@ -8,11 +8,13 @@ import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { activePlannedExerciseMuscles, emptyActiveExercise, exerciseMuscleToSplitMuscle, splitMuscleToExerciseMuscle } from "@/constants/activeWorkout";
 import { ExerciseLoadType, getExerciseLoadType, supportsBarbellCalculator } from "@/constants/exercises";
+import { guidedCategoryLabels } from "@/constants/guidedWorkout";
 import { cloneTrainingSplitDays } from "@/constants/trainingSplit";
 import { getClosestBodyweightForDate } from "@/services/analytics/bulkAnalyticsService";
+import { buildGuidedRecommendation } from "@/services/guidedWorkout/guidedWorkoutService";
 import { calculateSessionPerformance, findStrengthReference } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { ActiveWorkout, LoggedSetDraft, MuscleGroup, SplitMuscle, TrainingSplitDay, WorkoutRecommendationRow } from "@/types";
+import { ActiveWorkout, LoggedSetDraft, MuscleGroup, SplitMuscle, TrainingSplitDay } from "@/types";
 import { muscles, palette, spacing } from "@/utils/theme";
 import { pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { formatBodyWeight, formatWeight, formatWeightInput, weightToStorageUnit } from "@/utils/units";
@@ -37,6 +39,7 @@ export function GuidedWorkoutScreen() {
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
   const trainingSplit = useFitnessStore((state) => state.trainingSplit);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
+  const guidedWorkoutPreferences = useFitnessStore((state) => state.guidedWorkoutPreferences);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
   const saveTrainingSplit = useFitnessStore((state) => state.saveTrainingSplit);
   const updateActiveWorkout = useFitnessStore((state) => state.updateActiveWorkout);
@@ -78,13 +81,19 @@ export function GuidedWorkoutScreen() {
     : [...plannedMuscles, ...(current.muscle && !plannedMuscles.includes(current.muscle) ? [current.muscle] : [])];
   const loadType = getExerciseLoadType(selectedExercise?.name ?? "");
   const selectedBodyWeight = loadType === "external" ? null : getClosestBodyweightForDate(workout.workoutDate, bodyWeightLogs);
-  const latestSets = selectedExercise ? findLatestSets(selectedExercise.id, sessions, sets) : [];
-  const increaseLoad = latestSets[0]?.reps >= 10 && latestSets[1]?.reps >= 8;
-  const recommendations = latestSets.map((set, index) => recommendationForSet(set.weight, set.reps, index + 1, increaseLoad));
+  const recommendation = selectedExercise ? buildGuidedRecommendation({
+    exercise: selectedExercise,
+    preferences: guidedWorkoutPreferences,
+    sessions,
+    sets,
+    workoutDate: workout.workoutDate,
+    draftWarmups: current.sets.map((set) => Boolean(set.isWarmup))
+  }) : null;
   const bestPerformance = selectedExercise ? findStrengthReference(exercisePoints.filter((point) => point.exerciseId === selectedExercise.id)) : undefined;
   const projectedPerformance = selectedExercise
     ? calculateSessionPerformance(
         current.sets
+          .filter((set) => !set.isWarmup)
           .map((set, index) => ({ reps: Number(set.reps), weight: weightToStorageUnit(Number(set.weight), unitSystem), set_number: index + 1 }))
           .filter((set) => set.reps > 0 || set.weight > 0),
         bestPerformance,
@@ -280,7 +289,7 @@ export function GuidedWorkoutScreen() {
             <SectionTitle>Exercise {index + 1}: {exercise.exerciseName}</SectionTitle>
             <ChevronRight size={18} color={palette.muted} />
           </View>
-          <Body>{exercise.sets.filter((set) => set.reps || set.weight).map((set) => `${set.weight} ${unitSystem} x ${set.reps}`).join(" | ")}</Body>
+          <Body>{exercise.sets.filter((set) => set.reps || set.weight).map((set) => `${set.isWarmup ? "Warm-up: " : ""}${set.weight} ${unitSystem} x ${set.reps}`).join(" | ")}</Body>
         </Panel>
       ))}
 
@@ -345,20 +354,37 @@ export function GuidedWorkoutScreen() {
           <View style={styles.summaryRow}>
             <View style={styles.flex}>
               <SectionTitle>{selectedExercise.name}</SectionTitle>
+              <Label>{recommendation ? guidedCategoryLabels[recommendation.category] : ""}</Label>
               <Body>{bestPerformance ? `Best e1RM ${formatWeight(bestPerformance.estimated1RM, unitSystem)} | ${bestPerformance.performancePoints.toFixed(1)} points` : "No best performance yet."}</Body>
             </View>
           </View>
 
           <View style={styles.guidance}>
-            <Label>Progressive overload target</Label>
-            <Body>Increase load after reaching 10 reps in set 1 and 8 reps in set 2.</Body>
-            {recommendations.length ? recommendations.map((row) => (
-              <Body key={row.setNumber}>
-                Set {row.setNumber}: {row.requiresLoadChange
-                  ? `${loadChangeInstruction(loadType)} from ${formatWeight(row.weight, unitSystem)} and aim for 8-10 reps.`
-                  : `${formatWeight(row.weight, unitSystem)} x ${row.minimumReps}-${row.maximumReps} reps.`}
-              </Body>
-            )) : <Body>We don't have data yet, but luckily we'll get it today.</Body>}
+            <Label>Guided target</Label>
+            {recommendation?.category === "unguided" ? (
+              <Body>No rep or load guidance for pull-ups and dips. Use your last session as reference.</Body>
+            ) : (
+              <>
+                {recommendation?.inactive ? <Body>More than {guidedWorkoutPreferences.inactivityDays} days since this exercise. Repeat conservatively; weight increases are paused today.</Body> : null}
+                {recommendation?.targets.map((row) => (
+                  <Body key={row.draftIndex}>
+                    {setRoleLabel(row.role, row.workingSetNumber)}: {row.increaseWeight && row.priorWeight !== undefined
+                      ? `${loadChangeInstruction(loadType)} from ${formatWeight(row.priorWeight, unitSystem)}. No prescribed reps for the first heavier attempt.`
+                      : row.priorWeight !== undefined
+                        ? `${formatWeight(row.priorWeight, unitSystem)} x ${row.targetReps} reps.`
+                        : `${row.targetReps} reps${row.role === "backoff" ? `, starting near ${guidedWorkoutPreferences.backoffPercentage}% of the top-set load` : ""}.`}
+                  </Body>
+                ))}
+                {!recommendation?.latest ? <Body>No previous working sets logged yet.</Body> : null}
+              </>
+            )}
+            {recommendation?.latest ? <Body>Last session ({recommendation.latest.date}): {formatSessionSets(recommendation.latest.sets, unitSystem)}</Body> : null}
+            {recommendation?.category === "top_set" ? (
+              <>
+                {recommendation.topSetBest ? <Body>Best top set ({recommendation.topSetBest.date}): {formatSessionSets(recommendation.topSetBest.sets.slice(0, 1), unitSystem)}</Body> : null}
+                {recommendation.backoffBest ? <Body>Best back-off block ({recommendation.backoffBest.date}): {formatSessionSets(recommendation.backoffBest.sets.slice(1), unitSystem)}</Body> : null}
+              </>
+            ) : recommendation?.best ? <Body>Best completed target ({recommendation.best.date}): {formatSessionSets(recommendation.best.sets, unitSystem)}</Body> : null}
           </View>
 
           {loadType !== "external" ? (
@@ -378,18 +404,21 @@ export function GuidedWorkoutScreen() {
             />
           ) : null}
 
-          <Label>Working sets</Label>
+          <Label>Sets</Label>
           {current.sets.map((set, index) => (
             <View key={index} style={styles.setRow}>
               <Label>{index + 1}</Label>
               <TextInput style={[styles.input, styles.setInput]} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} inputMode="decimal" placeholder={loadPlaceholder(loadType, unitSystem)} />
               <TextInput style={[styles.input, styles.setInput]} value={set.reps} onChangeText={(value) => updateSet(index, "reps", value)} inputMode="numeric" placeholder="reps" />
+              <Pressable onPress={() => updateDraft({ sets: current.sets.map((item, itemIndex) => itemIndex === index ? { ...item, isWarmup: !item.isWarmup } : item) })} style={pressableFeedback([styles.setKindButton, set.isWarmup && styles.setKindButtonActive])}>
+                <Body style={[styles.setKindText, set.isWarmup && styles.setKindTextActive]}>{set.isWarmup ? "Warm-up" : "Working"}</Body>
+              </Pressable>
               <Pressable onPress={() => updateDraft({ sets: current.sets.filter((_, itemIndex) => itemIndex !== index) })} style={pressableFeedback(styles.iconButton)}>
                 <Trash2 size={16} color={palette.danger} />
               </Pressable>
             </View>
           ))}
-          <Pressable onPress={() => updateDraft({ sets: [...current.sets, { weight: "", reps: "" }] })} style={pressableFeedback(styles.secondaryButton)}>
+          <Pressable onPress={() => updateDraft({ sets: [...current.sets, { weight: "", reps: "", isWarmup: false }] })} style={pressableFeedback(styles.secondaryButton)}>
             <Plus size={17} color={palette.ink} />
             <Body style={styles.buttonText}>Add set</Body>
           </Pressable>
@@ -430,7 +459,7 @@ export function GuidedWorkoutScreen() {
     </Screen>
   );
 
-  function updateSet(index: number, field: keyof LoggedSetDraft, value: string) {
+  function updateSet(index: number, field: "weight" | "reps", value: string) {
     updateDraft({ sets: current.sets.map((set, itemIndex) => itemIndex === index ? { ...set, [field]: value } : set) });
   }
 }
@@ -494,26 +523,6 @@ function BarCalculator({ barWeight, plateCounts, loadedBarWeight, unitSystem, on
   );
 }
 
-function recommendationForSet(weight: number, reps: number, setNumber: number, requiresLoadChange: boolean): WorkoutRecommendationRow {
-  return {
-    setNumber,
-    weight,
-    priorReps: reps,
-    minimumReps: Math.min(10, reps + 1),
-    maximumReps: Math.min(10, reps + 3),
-    requiresLoadChange
-  };
-}
-
-function findLatestSets(exerciseId: number, sessions: Array<{ id: number; workout_date: string; created_at: string }>, sets: Array<{ session_id: number; exercise_id: number; set_number: number; reps: number; weight: number }>) {
-  const relevantSessionIds = new Set(sets.filter((set) => set.exercise_id === exerciseId).map((set) => set.session_id));
-  const latest = sessions
-    .filter((session) => relevantSessionIds.has(session.id))
-    .sort((a, b) => a.workout_date.localeCompare(b.workout_date) || a.created_at.localeCompare(b.created_at) || a.id - b.id)
-    .at(-1);
-  return latest ? sets.filter((set) => set.exercise_id === exerciseId && set.session_id === latest.id).sort((a, b) => a.set_number - b.set_number) : [];
-}
-
 function calculateLoadedBarWeight(barWeight: string, counts: Record<string, number>) {
   const parsed = Number(barWeight.trim().replace(",", "."));
   const bar = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
@@ -548,6 +557,16 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Could not update the guided workout.";
 }
 
+function setRoleLabel(role: "working" | "top_set" | "backoff", number: number) {
+  if (role === "top_set") return "Top set";
+  if (role === "backoff") return `Back-off set ${number - 1}`;
+  return `Set ${number}`;
+}
+
+function formatSessionSets(sets: Array<{ weight: number; reps: number }>, unitSystem: "lb" | "kg") {
+  return sets.map((set) => `${formatWeight(set.weight, unitSystem)} x ${set.reps}`).join(" | ");
+}
+
 const styles = StyleSheet.create({
   titleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: spacing.md },
   flex: { flex: 1, gap: spacing.xs },
@@ -571,6 +590,10 @@ const styles = StyleSheet.create({
   setRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   input: { minHeight: 44, borderWidth: 1, borderColor: palette.border, borderRadius: 8, backgroundColor: palette.surface, paddingHorizontal: spacing.sm, color: palette.ink, fontSize: 16 },
   setInput: { flex: 1 },
+  setKindButton: { minHeight: 42, borderRadius: 8, borderWidth: 1, borderColor: palette.border, justifyContent: "center", paddingHorizontal: spacing.sm },
+  setKindButtonActive: { backgroundColor: palette.accentSoft, borderColor: palette.accent },
+  setKindText: { color: palette.ink, fontWeight: "800", fontSize: 12 },
+  setKindTextActive: { color: palette.accent },
   notes: { minHeight: 72, textAlignVertical: "top", paddingTop: spacing.sm },
   iconButton: { width: 42, height: 42, borderRadius: 8, borderWidth: 1, borderColor: palette.border, alignItems: "center", justifyContent: "center" },
   barCalculator: { backgroundColor: palette.surfaceAlt, borderRadius: 10, padding: spacing.md, gap: spacing.md },

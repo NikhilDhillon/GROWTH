@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS workout_sets (
   reps INTEGER,
   weight REAL,
   rir REAL,
+  is_warmup INTEGER NOT NULL DEFAULT 0,
   created_at TEXT
 );
 

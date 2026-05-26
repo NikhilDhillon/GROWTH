@@ -86,6 +86,7 @@ export function WorkoutScreen() {
       : undefined;
     return calculateSessionPerformance(
       draftSets
+        .filter((set) => !set.isWarmup)
         .map((set, index) => ({ reps: Number(set.reps), weight: Number(set.weight), set_number: index + 1 }))
         .map((set) => ({ ...set, weight: weightToStorageUnit(set.weight, unitSystem) }))
         .filter((set) => set.reps > 0 || set.weight > 0),
@@ -124,7 +125,7 @@ export function WorkoutScreen() {
 
   function duplicatePrevious() {
     if (!previousSets.length) return;
-    setDraftSets(previousSets.map((set) => ({ reps: String(set.reps), weight: formatWeightInput(set.weight, unitSystem) })));
+    setDraftSets(previousSets.map((set) => ({ reps: String(set.reps), weight: formatWeightInput(set.weight, unitSystem), isWarmup: Boolean(set.is_warmup) })));
   }
 
   function changePlateCount(plate: PlateWeight, increment: number) {
@@ -308,6 +309,9 @@ export function WorkoutScreen() {
             <Label style={styles.setNumber}>{index + 1}</Label>
             <TextInput style={[styles.input, styles.setInput]} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} keyboardType="decimal-pad" inputMode="decimal" placeholder={loadPlaceholder(selectedLoadType, unitSystem)} />
             <TextInput style={[styles.input, styles.setInput]} value={set.reps} onChangeText={(value) => updateSet(index, "reps", value)} keyboardType="number-pad" inputMode="numeric" placeholder="reps" />
+            <Pressable onPress={() => setDraftSets((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, isWarmup: !item.isWarmup } : item))} style={pressableFeedback([styles.kindButton, set.isWarmup && styles.kindButtonActive])}>
+              <Body style={[styles.kindText, set.isWarmup && styles.kindTextActive]}>{set.isWarmup ? "Warm-up" : "Working"}</Body>
+            </Pressable>
             <Pressable accessibilityLabel="Remove set" hitSlop={touchHitSlop} onPress={() => setDraftSets((current) => current.filter((_, itemIndex) => itemIndex !== index))} style={pressableFeedback([styles.iconButton, styles.removeButton])}>
               <Trash2 size={16} color={palette.danger} />
             </Pressable>
@@ -336,7 +340,7 @@ export function WorkoutScreen() {
     </Screen>
   );
 
-  function updateSet(index: number, field: keyof LoggedSetDraft, value: string) {
+  function updateSet(index: number, field: "weight" | "reps", value: string) {
     setDraftSets((current) => current.map((set, itemIndex) => (itemIndex === index ? { ...set, [field]: value } : set)));
   }
 }
@@ -473,6 +477,27 @@ const styles = StyleSheet.create({
   setInput: {
     flexBasis: 0,
     paddingHorizontal: spacing.sm
+  },
+  kindButton: {
+    minHeight: 40,
+    flexShrink: 0,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
+    justifyContent: "center",
+    paddingHorizontal: spacing.xs
+  },
+  kindButtonActive: {
+    backgroundColor: palette.accentSoft,
+    borderColor: palette.accent
+  },
+  kindText: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: "800"
+  },
+  kindTextActive: {
+    color: palette.accent
   },
   loadHint: {
     color: palette.muted

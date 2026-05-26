@@ -2,9 +2,10 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 import { normalizeActiveWorkout } from "@/constants/activeWorkout";
 import { catalogExerciseRows } from "@/constants/exercises";
+import { createDefaultGuidedWorkoutPreferences, normalizeGuidedWorkoutPreferences } from "@/constants/guidedWorkout";
 import { createDefaultTrainingSplit, normalizeTrainingSplit } from "@/constants/trainingSplit";
 import { buildWorkoutFingerprint, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
-import { ActiveWorkout, BodyWeightLog, Exercise, ExerciseScorePoint, Friend, FriendInvite, LeaderboardEntry, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyWeightLog, Exercise, ExerciseScorePoint, Friend, FriendInvite, GuidedWorkoutPreferences, LeaderboardEntry, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 const storageKey = "growth.preview.database.v2";
@@ -25,6 +26,7 @@ type WebDatabase = {
   importFingerprints: string[];
   trainingSplit: TrainingSplit;
   activeWorkout: ActiveWorkout | null;
+  guidedWorkoutPreferences: GuidedWorkoutPreferences;
 };
 
 type ProfileRow = {
@@ -81,7 +83,7 @@ function now() {
 }
 
 function seedDatabase(): WebDatabase {
-  return { exercises: catalogExerciseRows(now()), sessions: [], sets: [], bodyWeightLogs: [], configs: [], exercisePreferences: [], users: [], currentUserId: null, unitSystem: "lb", importFingerprints: [], trainingSplit: createDefaultTrainingSplit(), activeWorkout: null };
+  return { exercises: catalogExerciseRows(now()), sessions: [], sets: [], bodyWeightLogs: [], configs: [], exercisePreferences: [], users: [], currentUserId: null, unitSystem: "lb", importFingerprints: [], trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences() };
 }
 
 function readDatabase(): WebDatabase {
@@ -102,7 +104,8 @@ function readDatabase(): WebDatabase {
       unitSystem,
       importFingerprints: Array.isArray(parsed.importFingerprints) ? parsed.importFingerprints.filter((value): value is string => typeof value === "string") : [],
       trainingSplit: normalizeTrainingSplit(parsed.trainingSplit),
-      activeWorkout: normalizeActiveWorkout(parsed.activeWorkout)
+      activeWorkout: normalizeActiveWorkout(parsed.activeWorkout),
+      guidedWorkoutPreferences: normalizeGuidedWorkoutPreferences(parsed.guidedWorkoutPreferences)
     };
   }
   const seeded = seedDatabase();
@@ -128,17 +131,18 @@ export async function loadAllData() {
     currentUser,
     unitSystem: data.unitSystem,
     trainingSplit: data.trainingSplit,
-    activeWorkout: data.activeWorkout
+    activeWorkout: data.activeWorkout,
+    guidedWorkoutPreferences: data.guidedWorkoutPreferences
   };
 }
 
 async function loadCloudData(client: SupabaseClient) {
   const user = await requireCloudUser(client, false);
   if (!user) {
-    return { exercises: [], sessions: [], sets: [], bodyWeightLogs: [], configs: [], currentUser: null, unitSystem: "lb" as UnitSystem, trainingSplit: createDefaultTrainingSplit(), activeWorkout: null };
+    return { exercises: [], sessions: [], sets: [], bodyWeightLogs: [], configs: [], currentUser: null, unitSystem: "lb" as UnitSystem, trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences() };
   }
 
-  const [profileResult, exercisesResult, preferencesResult, sessionsResult, setsResult, bodyWeightResult, configsResult, settingResult, activeWorkoutResult] = await Promise.all([
+  const [profileResult, exercisesResult, preferencesResult, sessionsResult, setsResult, bodyWeightResult, configsResult, settingResult, activeWorkoutResult, guidedWorkoutResult] = await Promise.all([
     client.from("profiles").select("*").eq("id", user.id).maybeSingle<ProfileRow>(),
     client.from("exercises").select("*").order("name"),
     client.from("user_exercise_preferences").select("*").eq("user_id", user.id),
@@ -147,7 +151,8 @@ async function loadCloudData(client: SupabaseClient) {
     client.from("body_weight_logs").select("*").order("logged_date", { ascending: false }).order("created_at", { ascending: false }),
     client.from("muscle_strength_config").select("*").order("muscle_group"),
     client.from("app_settings").select("value").eq("key", "unit_system").maybeSingle<{ value: UnitSystem }>(),
-    client.from("app_settings").select("value").eq("key", "active_workout").maybeSingle<{ value: string }>()
+    client.from("app_settings").select("value").eq("key", "active_workout").maybeSingle<{ value: string }>(),
+    client.from("app_settings").select("value").eq("key", "guided_workout_preferences").maybeSingle<{ value: string }>()
   ]);
 
   throwIfSupabaseError(profileResult.error);
@@ -161,6 +166,7 @@ async function loadCloudData(client: SupabaseClient) {
   throwIfSupabaseError(configsResult.error);
   throwIfSupabaseError(settingResult.error);
   throwIfSupabaseError(activeWorkoutResult.error);
+  throwIfSupabaseError(guidedWorkoutResult.error);
 
   const preferences = (preferencesResult.data ?? []) as UserExercisePreference[];
   const trainingSplit = await loadCloudTrainingSplit(client, user.id);
@@ -173,7 +179,8 @@ async function loadCloudData(client: SupabaseClient) {
     currentUser: cloudUserToAppUser(user, profileResult.data),
     unitSystem: settingResult.data?.value === "kg" ? "kg" : "lb",
     trainingSplit,
-    activeWorkout: normalizeActiveWorkout(activeWorkoutResult.data?.value ? JSON.parse(activeWorkoutResult.data.value) : null)
+    activeWorkout: normalizeActiveWorkout(activeWorkoutResult.data?.value ? JSON.parse(activeWorkoutResult.data.value) : null),
+    guidedWorkoutPreferences: normalizeGuidedWorkoutPreferences(guidedWorkoutResult.data?.value ? JSON.parse(guidedWorkoutResult.data.value) : null)
   };
 }
 
@@ -306,7 +313,7 @@ export async function setExerciseEnabled(exerciseId: number, enabled: boolean) {
   writeDatabase(data);
 }
 
-export async function logWorkout(input: { exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number }[] }) {
+export async function logWorkout(input: { exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number; isWarmup?: boolean }[] }) {
   if (supabase) {
     await requireCloudUser(supabase);
     const timestamp = `${input.workoutDate}T12:00:00.000Z`;
@@ -325,6 +332,7 @@ export async function logWorkout(input: { exerciseId: number; workoutDate: strin
       reps: set.reps,
       weight: set.weight,
       rir: 0,
+      is_warmup: Boolean(set.isWarmup),
       created_at: timestamp
     }));
     const setsResult = await supabase.from("workout_sets").insert(setRows);
@@ -351,6 +359,7 @@ export async function logWorkout(input: { exerciseId: number; workoutDate: strin
       reps: set.reps,
       weight: set.weight,
       rir: 0,
+      is_warmup: Boolean(set.isWarmup),
       created_at: timestamp
     });
   }
@@ -590,7 +599,7 @@ export async function deleteBodyWeightLog(id: number) {
   writeDatabase(data);
 }
 
-export async function updateWorkoutSession(input: { sessionId: number; exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number }[] }) {
+export async function updateWorkoutSession(input: { sessionId: number; exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number; isWarmup?: boolean }[] }) {
   const timestamp = `${input.workoutDate}T12:00:00.000Z`;
 
   if (supabase) {
@@ -611,6 +620,7 @@ export async function updateWorkoutSession(input: { sessionId: number; exerciseI
       reps: set.reps,
       weight: set.weight,
       rir: 0,
+      is_warmup: Boolean(set.isWarmup),
       created_at: timestamp
     }));
     const setsResult = await supabase.from("workout_sets").insert(setRows);
@@ -639,6 +649,7 @@ export async function updateWorkoutSession(input: { sessionId: number; exerciseI
       reps: set.reps,
       weight: set.weight,
       rir: 0,
+      is_warmup: Boolean(set.isWarmup),
       created_at: timestamp
     });
   }
@@ -673,6 +684,23 @@ export async function updateUnitSystem(unitSystem: UnitSystem) {
   const data = readDatabase();
   data.unitSystem = unitSystem;
   writeDatabase(data);
+}
+
+export async function updateGuidedWorkoutPreferences(preferences: GuidedWorkoutPreferences) {
+  const normalized = normalizeGuidedWorkoutPreferences(preferences);
+  if (supabase) {
+    const user = await requireCloudUser(supabase);
+    if (!user) throw new Error("Please log in again.");
+    const result = await supabase
+      .from("app_settings")
+      .upsert({ user_id: user.id, key: "guided_workout_preferences", value: JSON.stringify(normalized) }, { onConflict: "user_id,key" });
+    throwIfSupabaseError(result.error);
+    return normalized;
+  }
+  const data = readDatabase();
+  data.guidedWorkoutPreferences = normalized;
+  writeDatabase(data);
+  return normalized;
 }
 
 export async function updateTrainingSplit(days: TrainingSplitDay[]): Promise<TrainingSplit> {

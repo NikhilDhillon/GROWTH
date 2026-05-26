@@ -25,7 +25,7 @@ export function buildPreviousLogs(input: { exerciseId?: number; exercises: Exerc
         ...groups,
         [key]: {
           ...existing,
-          sets: [...existing.sets, `${formatLoggedLoad(set.weight, getExerciseLoadType(exerciseById.get(set.exercise_id)?.name ?? ""), input.unitSystem)} x ${set.reps}`]
+          sets: [...existing.sets, `${set.is_warmup ? "Warm-up: " : ""}${formatLoggedLoad(set.weight, getExerciseLoadType(exerciseById.get(set.exercise_id)?.name ?? ""), input.unitSystem)} x ${set.reps}`]
         }
       };
     }, {});

@@ -8,7 +8,7 @@ const volumeWeight = 0.35;
 const resistanceWeight = 0.2;
 const maximumEstimated1RMReps = 10;
 
-type ScoreableSet = Pick<WorkoutSet, "weight" | "reps" | "set_number">;
+type ScoreableSet = Pick<WorkoutSet, "weight" | "reps" | "set_number"> & Pick<Partial<WorkoutSet>, "is_warmup">;
 type PerformanceReference = Pick<ExerciseScorePoint, "estimated1RM" | "failureVolume" | "fatigueResistance">;
 type LoadContext = { loadType?: ExerciseLoadType; bodyWeight?: number };
 
@@ -27,7 +27,7 @@ export function calculateEstimated1RM(weight: number, reps: number) {
 }
 
 export function calculateSessionPerformance(sets: ScoreableSet[], reference?: PerformanceReference, loadContext: LoadContext = {}): SessionPerformance | null {
-  const orderedSets = [...sets].sort((a, b) => a.set_number - b.set_number);
+  const orderedSets = [...sets].filter((set) => !set.is_warmup).sort((a, b) => a.set_number - b.set_number);
   const loadType = loadContext.loadType ?? "external";
   if (orderedSets.length < 2 || orderedSets.some((set) => !isValidEnteredSet(set, loadType))) return null;
   const effectiveSets = orderedSets.map((set) => ({
@@ -81,7 +81,7 @@ export function buildExerciseScorePoints(exercises: Exercise[], sessions: Workou
   const byExerciseSession = new Map<string, WorkoutSet[]>();
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
 
-  for (const set of sets) {
+  for (const set of sets.filter((set) => !set.is_warmup)) {
     const key = `${set.exercise_id}:${set.session_id}`;
     byExerciseSession.set(key, [...(byExerciseSession.get(key) ?? []), set]);
   }

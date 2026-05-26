@@ -1,12 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
 import { Check, ChevronDown, ChevronUp, FileUp, LogOut } from "lucide-react-native";
 
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
+import { categoryForExercise, guidedCategoryLabels } from "@/constants/guidedWorkout";
 import { ImportPreview, parseImportData } from "@/services/import/importService";
 import { useFitnessStore } from "@/store/useFitnessStore";
+import { GuidedExerciseCategory, GuidedWorkoutPreferences } from "@/types";
 import { palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback } from "@/utils/touch";
 
@@ -42,6 +44,8 @@ export function SettingsScreen() {
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const setUnitSystem = useFitnessStore((state) => state.setUnitSystem);
   const importTrainingData = useFitnessStore((state) => state.importTrainingData);
+  const guidedWorkoutPreferences = useFitnessStore((state) => state.guidedWorkoutPreferences);
+  const saveGuidedWorkoutPreferences = useFitnessStore((state) => state.saveGuidedWorkoutPreferences);
   const strengthCount = exercises.filter((exercise) => exercise.is_strength_exercise).length;
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -49,6 +53,36 @@ export function SettingsScreen() {
   const [selectedFileText, setSelectedFileText] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [showFormula, setShowFormula] = useState(false);
+  const [guidedDraft, setGuidedDraft] = useState(guidedWorkoutPreferences);
+  const [guidedError, setGuidedError] = useState<string | null>(null);
+
+  useEffect(() => setGuidedDraft(guidedWorkoutPreferences), [guidedWorkoutPreferences]);
+
+  async function saveGuided(next: GuidedWorkoutPreferences) {
+    setGuidedError(null);
+    try {
+      await saveGuidedWorkoutPreferences(next);
+    } catch (error) {
+      setGuidedError(error instanceof Error ? error.message : "Could not save guided workout preferences.");
+    }
+  }
+
+  function updateNumberPreference(key: keyof Omit<GuidedWorkoutPreferences, "exerciseCategories">, value: string) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return;
+    const next = { ...guidedDraft, [key]: parsed };
+    setGuidedDraft(next);
+    void saveGuided(next);
+  }
+
+  function setCategory(exerciseName: string, category: GuidedExerciseCategory) {
+    const next = {
+      ...guidedDraft,
+      exerciseCategories: { ...guidedDraft.exerciseCategories, [exerciseName]: category }
+    };
+    setGuidedDraft(next);
+    void saveGuided(next);
+  }
 
   function validateImport(text: string) {
     setImportError(null);
@@ -125,7 +159,7 @@ export function SettingsScreen() {
         </Pressable>
         {showFormula ? (
           <View style={styles.formulaDetails}>
-            <Body>Eligible sessions use two or more loaded sets with positive whole-number reps.</Body>
+            <Body>Eligible sessions use two or more working sets with positive whole-number reps; warm-up sets are excluded.</Body>
             <Body>Estimated 1RM = weight x (1 + min(reps, 10) / 30)</Body>
             <Body>Strength = best estimated 1RM; volume = sum(weight x reps)</Body>
             <Body>Resistance = min(1, final set e1RM / first set e1RM)</Body>
@@ -138,6 +172,36 @@ export function SettingsScreen() {
       <Panel>
         <SectionTitle>Exercise tracking</SectionTitle>
         <Body>{exercises.length} standard exercises available. {strengthCount} selected for logging and scoring.</Body>
+      </Panel>
+
+      <Panel>
+        <SectionTitle>Guided workout</SectionTitle>
+        <Body style={styles.importNotice}>Working-set targets control the prompts shown during a guided workout. Warm-up sets never count toward progression or best sessions.</Body>
+        <View style={styles.preferenceGrid}>
+          <PreferenceField label="Hypertrophy first set reps" value={guidedDraft.hypertrophyTargetReps} onChange={(value) => updateNumberPreference("hypertrophyTargetReps", value)} />
+          <PreferenceField label="Pyramid decrement" value={guidedDraft.hypertrophyRepDecrement} onChange={(value) => updateNumberPreference("hypertrophyRepDecrement", value)} />
+          <PreferenceField label="Strength reps" value={guidedDraft.strengthTargetReps} onChange={(value) => updateNumberPreference("strengthTargetReps", value)} />
+          <PreferenceField label="Top-set reps" value={guidedDraft.topSetTargetReps} onChange={(value) => updateNumberPreference("topSetTargetReps", value)} />
+          <PreferenceField label="Back-off starting %" value={guidedDraft.backoffPercentage} onChange={(value) => updateNumberPreference("backoffPercentage", value)} />
+          <PreferenceField label="Pause increases after days" value={guidedDraft.inactivityDays} onChange={(value) => updateNumberPreference("inactivityDays", value)} />
+        </View>
+        <Label>Exercise categories</Label>
+        {exercises.map((exercise) => (
+          <View key={exercise.id} style={styles.categoryRow}>
+            <Body style={styles.categoryName}>{exercise.name}</Body>
+            <View style={styles.categoryActions}>
+              {(Object.keys(guidedCategoryLabels) as GuidedExerciseCategory[]).map((category) => {
+                const selected = categoryForExercise(exercise.name, guidedDraft) === category;
+                return (
+                  <Pressable key={category} onPress={() => setCategory(exercise.name, category)} style={pressableFeedback([styles.categoryButton, selected && styles.categoryButtonActive])}>
+                    <Body style={[styles.categoryButtonText, selected && styles.categoryButtonTextActive]}>{guidedCategoryLabels[category]}</Body>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ))}
+        {guidedError ? <Body style={styles.importError}>{guidedError}</Body> : null}
       </Panel>
 
       <Panel>
@@ -178,6 +242,15 @@ export function SettingsScreen() {
         </View>
       </Panel>
     </Screen>
+  );
+}
+
+function PreferenceField({ label, value, onChange }: { label: string; value: number; onChange: (value: string) => void }) {
+  return (
+    <View style={styles.preferenceField}>
+      <Label>{label}</Label>
+      <TextInput style={styles.preferenceInput} value={String(value)} onChangeText={onChange} inputMode="numeric" />
+    </View>
   );
 }
 
@@ -268,6 +341,60 @@ const styles = StyleSheet.create({
   importError: {
     color: palette.danger,
     fontWeight: "800"
+  },
+  preferenceGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.sm
+  },
+  preferenceField: {
+    minWidth: 150,
+    flex: 1,
+    gap: spacing.xs
+  },
+  preferenceInput: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 8,
+    backgroundColor: palette.surface,
+    paddingHorizontal: spacing.sm,
+    color: palette.ink,
+    fontSize: 16
+  },
+  categoryRow: {
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
+    paddingTop: spacing.sm,
+    gap: spacing.sm
+  },
+  categoryName: {
+    fontWeight: "800"
+  },
+  categoryActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs
+  },
+  categoryButton: {
+    minHeight: 36,
+    justifyContent: "center",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
+    paddingHorizontal: spacing.sm
+  },
+  categoryButtonActive: {
+    backgroundColor: palette.ink,
+    borderColor: palette.ink
+  },
+  categoryButtonText: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: "800"
+  },
+  categoryButtonTextActive: {
+    color: palette.surface
   },
   unitRow: {
     flexDirection: "row",

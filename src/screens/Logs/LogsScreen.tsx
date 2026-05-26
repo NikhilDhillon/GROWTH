@@ -52,7 +52,7 @@ export function LogsScreen() {
     const sessionSets = sets
       .filter((set) => set.session_id === log.sessionId)
       .sort((a, b) => a.set_number - b.set_number)
-      .map((set) => ({ reps: String(set.reps), weight: formatWeightInput(set.weight, unitSystem) }));
+      .map((set) => ({ reps: String(set.reps), weight: formatWeightInput(set.weight, unitSystem), isWarmup: Boolean(set.is_warmup) }));
     setUpdateSaveState("idle");
     setUpdateError(null);
     setEditingWorkout({
@@ -212,6 +212,9 @@ export function LogsScreen() {
                                   inputMode="numeric"
                                   placeholder="reps"
                                 />
+                                <Pressable onPress={() => setEditingWorkout((current) => current ? { ...current, sets: current.sets.map((item, itemIndex) => itemIndex === index ? { ...item, isWarmup: !item.isWarmup } : item) } : current)} style={pressableFeedback([styles.kindButton, set.isWarmup && styles.kindButtonActive])}>
+                                  <Body style={[styles.kindText, set.isWarmup && styles.kindTextActive]}>{set.isWarmup ? "Warm-up" : "Working"}</Body>
+                                </Pressable>
                                 <Pressable
                                   accessibilityLabel="Remove set"
                                   hitSlop={touchHitSlop}
@@ -271,7 +274,7 @@ export function LogsScreen() {
     </Screen>
   );
 
-  function updateEditingSet(index: number, field: keyof LoggedSetDraft, value: string) {
+  function updateEditingSet(index: number, field: "weight" | "reps", value: string) {
     setEditingWorkout((current) =>
       current
         ? {
@@ -431,6 +434,27 @@ const styles = StyleSheet.create({
   setInput: {
     flexBasis: 0,
     paddingHorizontal: spacing.sm
+  },
+  kindButton: {
+    minHeight: 40,
+    flexShrink: 0,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
+    justifyContent: "center",
+    paddingHorizontal: spacing.xs
+  },
+  kindButtonActive: {
+    backgroundColor: palette.accentSoft,
+    borderColor: palette.accent
+  },
+  kindText: {
+    color: palette.ink,
+    fontSize: 11,
+    fontWeight: "800"
+  },
+  kindTextActive: {
+    color: palette.accent
   },
   notes: {
     minHeight: 72,

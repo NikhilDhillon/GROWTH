@@ -2,6 +2,17 @@ export type MuscleGroup = "Chest" | "Back" | "Shoulders" | "Biceps" | "Triceps" 
 
 export type TrendStatus = "Increasing" | "Stable" | "Decreasing";
 export type UnitSystem = "lb" | "kg";
+export type GuidedExerciseCategory = "hypertrophy" | "strength" | "top_set" | "unguided";
+
+export type GuidedWorkoutPreferences = {
+  hypertrophyTargetReps: number;
+  hypertrophyRepDecrement: number;
+  strengthTargetReps: number;
+  topSetTargetReps: number;
+  backoffPercentage: number;
+  inactivityDays: number;
+  exerciseCategories: Record<string, GuidedExerciseCategory>;
+};
 
 export type Exercise = {
   id: number;
@@ -35,6 +46,7 @@ export type WorkoutSet = {
   reps: number;
   weight: number;
   rir?: number | null;
+  is_warmup?: number | boolean | null;
   created_at: string;
 };
 
@@ -115,6 +127,7 @@ export type MuscleStrengthConfig = {
 export type LoggedSetDraft = {
   reps: string;
   weight: string;
+  isWarmup?: boolean;
 };
 
 export type ActiveWorkoutExerciseDraft = {
