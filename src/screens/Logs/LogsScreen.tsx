@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from "react-native";
+import { useNavigation } from "@react-navigation/native";
 import { Check, ChevronDown, ChevronRight, Pencil, Plus, Save, Trash2, X } from "lucide-react-native";
 
 import { DatePickerField } from "@/components/DatePickerField";
@@ -27,11 +28,13 @@ const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
 type SaveState = "idle" | "saving" | "saved";
 
 export function LogsScreen() {
+  const navigation = useNavigation<{ navigate: (route: string, params?: object) => void }>();
   const exercises = useFitnessStore((state) => state.exercises);
   const sessions = useFitnessStore((state) => state.sessions);
   const sets = useFitnessStore((state) => state.sets);
   const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
   const points = useFitnessStore((state) => state.exercisePoints);
+  const completedGuidedWorkouts = useFitnessStore((state) => state.completedGuidedWorkouts);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const deleteWorkoutLog = useFitnessStore((state) => state.deleteWorkoutLog);
   const updateWorkoutLog = useFitnessStore((state) => state.updateWorkoutLog);
@@ -111,6 +114,29 @@ export function LogsScreen() {
         <Label>Workout history</Label>
         <Title>Logs</Title>
       </View>
+
+      <Panel>
+        <SectionTitle>Completed guided workouts</SectionTitle>
+        {completedGuidedWorkouts.length ? completedGuidedWorkouts.map((workout) => {
+          const achievements = workout.completedExercises.filter((exercise) => exercise.guidedOutcome?.celebrated).length;
+          return (
+            <View key={workout.id} style={styles.completedWorkoutRow}>
+              <View style={styles.historyText}>
+                <Body style={styles.dateText}>{formatShortDate(workout.workoutDate)} · {formatCompletedDuration(workout.startedAt, workout.finishedAt)}</Body>
+                <Body>{workout.completedExercises.length} exercises{achievements ? ` · ${achievements} target${achievements === 1 ? "" : "s"} cleared` : " · work recorded"}</Body>
+              </View>
+              <Pressable
+                accessibilityLabel={`View workout summary from ${workout.workoutDate}`}
+                onPress={() => navigation.navigate("WorkoutSummary", { workout, finishedAt: workout.finishedAt })}
+                style={pressableFeedback(styles.summaryButton)}
+              >
+                <Body style={styles.summaryButtonText}>Summary</Body>
+                <ChevronRight size={16} color={palette.ink} />
+              </Pressable>
+            </View>
+          );
+        }) : <Body>Finish a guided workout to see its summary here.</Body>}
+      </Panel>
 
       <Panel>
         <Pressable
@@ -326,7 +352,35 @@ function loadPlaceholder(loadType: ExerciseLoadType, unitSystem: string) {
   return unitSystem;
 }
 
+function formatCompletedDuration(startedAt: string, finishedAt: string) {
+  const minutes = Math.max(1, Math.round((new Date(finishedAt).getTime() - new Date(startedAt).getTime()) / 60000));
+  return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 const styles = StyleSheet.create({
+  completedWorkoutRow: {
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
+    paddingTop: spacing.md,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: spacing.md
+  },
+  summaryButton: {
+    minHeight: 42,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: 8,
+    paddingHorizontal: spacing.md,
+    ...fastTouchStyle
+  },
+  summaryButtonText: {
+    fontWeight: "800"
+  },
   muscleSection: {
     borderTopWidth: 1,
     borderTopColor: palette.border,

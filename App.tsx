@@ -18,12 +18,15 @@ import { WorkoutScreen } from "@/screens/Workout/WorkoutScreen";
 import { ExerciseScreen } from "@/screens/Exercise/ExerciseScreen";
 import { AnalyticsScreen } from "@/screens/Analytics/AnalyticsScreen";
 import { SettingsScreen } from "@/screens/Settings/SettingsScreen";
+import { GuidedWorkoutSettingsScreen } from "@/screens/Settings/GuidedWorkoutSettingsScreen";
 import { AuthScreen } from "@/screens/Auth/AuthScreen";
 import { LogsScreen } from "@/screens/Logs/LogsScreen";
 import { BodyweightScreen } from "@/screens/Bodyweight/BodyweightScreen";
 import { BulkAnalyticsScreen } from "@/screens/BulkAnalytics/BulkAnalyticsScreen";
 import { SocialScreen } from "@/screens/Social/SocialScreen";
 import { GuidedWorkoutScreen } from "@/screens/Workout/GuidedWorkoutScreen";
+import { WorkoutSummaryScreen } from "@/screens/Workout/WorkoutSummaryScreen";
+import type { ActiveWorkout } from "@/types";
 
 type RootStackParamList = {
   Home: undefined;
@@ -35,10 +38,12 @@ type RootStackParamList = {
   Social: undefined;
   Logs: undefined;
   Settings: undefined;
+  GuidedWorkoutSettings: undefined;
   ActiveWorkout: undefined;
+  WorkoutSummary: { workout: ActiveWorkout; finishedAt: string };
 };
 
-type AppRouteName = Exclude<keyof RootStackParamList, "ActiveWorkout">;
+type AppRouteName = Exclude<keyof RootStackParamList, "ActiveWorkout" | "GuidedWorkoutSettings" | "WorkoutSummary">;
 type CurrentRouteName = keyof RootStackParamList;
 type NavIcon = ComponentType<{ color: string; size: number }>;
 
@@ -70,7 +75,7 @@ export default function App() {
 
   function updateActiveRoute() {
     const routeName = navigationRef.getCurrentRoute()?.name;
-    if (isAppRouteName(routeName) || routeName === "ActiveWorkout") {
+    if (isAppRouteName(routeName) || routeName === "ActiveWorkout" || routeName === "GuidedWorkoutSettings" || routeName === "WorkoutSummary") {
       setActiveRouteName(routeName);
     }
   }
@@ -175,7 +180,8 @@ export default function App() {
                 header: () =>
                   isLaptopWeb ? null : (
                     <AppHeader
-                      activeRouteName={isAppRouteName(route.name) ? route.name : "Log"}
+                      activeRouteName={route.name === "GuidedWorkoutSettings" ? "Settings" : isAppRouteName(route.name) ? route.name : "Log"}
+                      title={route.name === "GuidedWorkoutSettings" ? "Guided workout" : route.name === "WorkoutSummary" ? "Workout complete" : undefined}
                       currentUserName={displayName(currentUser.name, currentUser.email)}
                       onNavigate={(routeName) => navigation.navigate(routeName)}
                     />
@@ -185,7 +191,9 @@ export default function App() {
               {appRoutes.map((route) => (
                 <Stack.Screen key={route.name} name={route.name} component={route.component} />
               ))}
+              <Stack.Screen name="GuidedWorkoutSettings" component={GuidedWorkoutSettingsScreen} />
               <Stack.Screen name="ActiveWorkout" component={GuidedWorkoutScreen} />
+              <Stack.Screen name="WorkoutSummary" component={WorkoutSummaryScreen} />
             </Stack.Navigator>
           </View>
         ) : (
@@ -221,11 +229,13 @@ function AppHeader({
   activeRouteName,
   currentUserName,
   onNavigate,
+  title,
   showMenuButton = true
 }: {
   activeRouteName: AppRouteName;
   currentUserName: string;
   onNavigate: (routeName: AppRouteName) => void;
+  title?: string;
   showMenuButton?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -252,7 +262,7 @@ function AppHeader({
             <Menu size={23} color={palette.ink} />
           </Pressable>
         ) : null}
-        <Text style={styles.headerTitle} numberOfLines={1}>{activeRoute.label}</Text>
+        <Text style={styles.headerTitle} numberOfLines={1}>{title ?? activeRoute.label}</Text>
         <View style={styles.userBadge} pointerEvents="none">
           <Text style={styles.userBadgeText} numberOfLines={1}>{currentUserName}</Text>
         </View>
@@ -320,7 +330,9 @@ function AppSidebar({
 
         <ScrollView contentContainerStyle={styles.sidebarList} showsVerticalScrollIndicator={false}>
           {appRoutes.map((route) => {
-            const selected = route.name === activeRouteName;
+            const selected = route.name === activeRouteName ||
+              (activeRouteName === "GuidedWorkoutSettings" && route.name === "Settings") ||
+              (activeRouteName === "WorkoutSummary" && route.name === "Log");
             const Icon = route.Icon;
             const color = selected ? palette.ink : palette.muted;
 

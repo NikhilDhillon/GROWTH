@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
-import { Check, ChevronDown, ChevronUp, FileUp, LogOut } from "lucide-react-native";
+import { useNavigation } from "@react-navigation/native";
+import { Check, ChevronDown, ChevronRight, ChevronUp, FileUp, LogOut } from "lucide-react-native";
 
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
@@ -8,7 +9,7 @@ import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { categoryForExercise, guidedCategoryLabels } from "@/constants/guidedWorkout";
 import { ImportPreview, parseImportData } from "@/services/import/importService";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { GuidedExerciseCategory, GuidedWorkoutPreferences } from "@/types";
+import { GuidedExerciseCategory } from "@/types";
 import { palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback } from "@/utils/touch";
 
@@ -38,6 +39,7 @@ const sampleImportJson = `{
 }`;
 
 export function SettingsScreen() {
+  const navigation = useNavigation<{ navigate: (route: string) => void }>();
   const exercises = useFitnessStore((state) => state.exercises);
   const currentUser = useFitnessStore((state) => state.currentUser);
   const logout = useFitnessStore((state) => state.logout);
@@ -45,7 +47,6 @@ export function SettingsScreen() {
   const setUnitSystem = useFitnessStore((state) => state.setUnitSystem);
   const importTrainingData = useFitnessStore((state) => state.importTrainingData);
   const guidedWorkoutPreferences = useFitnessStore((state) => state.guidedWorkoutPreferences);
-  const saveGuidedWorkoutPreferences = useFitnessStore((state) => state.saveGuidedWorkoutPreferences);
   const strengthCount = exercises.filter((exercise) => exercise.is_strength_exercise).length;
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -53,36 +54,10 @@ export function SettingsScreen() {
   const [selectedFileText, setSelectedFileText] = useState("");
   const [isImporting, setIsImporting] = useState(false);
   const [showFormula, setShowFormula] = useState(false);
-  const [guidedDraft, setGuidedDraft] = useState(guidedWorkoutPreferences);
-  const [guidedError, setGuidedError] = useState<string | null>(null);
-
-  useEffect(() => setGuidedDraft(guidedWorkoutPreferences), [guidedWorkoutPreferences]);
-
-  async function saveGuided(next: GuidedWorkoutPreferences) {
-    setGuidedError(null);
-    try {
-      await saveGuidedWorkoutPreferences(next);
-    } catch (error) {
-      setGuidedError(error instanceof Error ? error.message : "Could not save guided workout preferences.");
-    }
-  }
-
-  function updateNumberPreference(key: keyof Omit<GuidedWorkoutPreferences, "exerciseCategories">, value: string) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed) || parsed <= 0) return;
-    const next = { ...guidedDraft, [key]: parsed };
-    setGuidedDraft(next);
-    void saveGuided(next);
-  }
-
-  function setCategory(exerciseName: string, category: GuidedExerciseCategory) {
-    const next = {
-      ...guidedDraft,
-      exerciseCategories: { ...guidedDraft.exerciseCategories, [exerciseName]: category }
-    };
-    setGuidedDraft(next);
-    void saveGuided(next);
-  }
+  const guidedCounts = (Object.keys(guidedCategoryLabels) as GuidedExerciseCategory[]).map((category) => ({
+    category,
+    count: exercises.filter((exercise) => categoryForExercise(exercise.name, guidedWorkoutPreferences) === category).length
+  }));
 
   function validateImport(text: string) {
     setImportError(null);
@@ -175,33 +150,22 @@ export function SettingsScreen() {
       </Panel>
 
       <Panel>
-        <SectionTitle>Guided workout</SectionTitle>
-        <Body style={styles.importNotice}>Working-set targets control the prompts shown during a guided workout. Warm-up sets never count toward progression or best sessions.</Body>
-        <View style={styles.preferenceGrid}>
-          <PreferenceField label="Hypertrophy first set reps" value={guidedDraft.hypertrophyTargetReps} onChange={(value) => updateNumberPreference("hypertrophyTargetReps", value)} />
-          <PreferenceField label="Pyramid decrement" value={guidedDraft.hypertrophyRepDecrement} onChange={(value) => updateNumberPreference("hypertrophyRepDecrement", value)} />
-          <PreferenceField label="Strength reps" value={guidedDraft.strengthTargetReps} onChange={(value) => updateNumberPreference("strengthTargetReps", value)} />
-          <PreferenceField label="Top-set reps" value={guidedDraft.topSetTargetReps} onChange={(value) => updateNumberPreference("topSetTargetReps", value)} />
-          <PreferenceField label="Back-off starting %" value={guidedDraft.backoffPercentage} onChange={(value) => updateNumberPreference("backoffPercentage", value)} />
-          <PreferenceField label="Pause increases after days" value={guidedDraft.inactivityDays} onChange={(value) => updateNumberPreference("inactivityDays", value)} />
+        <View style={styles.panelHeading}>
+          <SectionTitle>Guided workout</SectionTitle>
+          <Pressable accessibilityRole="button" onPress={() => navigation.navigate("GuidedWorkoutSettings")} style={pressableFeedback(styles.editButton)}>
+            <Body style={styles.editButtonText}>Edit</Body>
+            <ChevronRight size={17} color={palette.ink} />
+          </Pressable>
         </View>
-        <Label>Exercise categories</Label>
-        {exercises.map((exercise) => (
-          <View key={exercise.id} style={styles.categoryRow}>
-            <Body style={styles.categoryName}>{exercise.name}</Body>
-            <View style={styles.categoryActions}>
-              {(Object.keys(guidedCategoryLabels) as GuidedExerciseCategory[]).map((category) => {
-                const selected = categoryForExercise(exercise.name, guidedDraft) === category;
-                return (
-                  <Pressable key={category} onPress={() => setCategory(exercise.name, category)} style={pressableFeedback([styles.categoryButton, selected && styles.categoryButtonActive])}>
-                    <Body style={[styles.categoryButtonText, selected && styles.categoryButtonTextActive]}>{guidedCategoryLabels[category]}</Body>
-                  </Pressable>
-                );
-              })}
-            </View>
-          </View>
-        ))}
-        {guidedError ? <Body style={styles.importError}>{guidedError}</Body> : null}
+        <Body style={styles.importNotice}>Working-set targets control the prompts shown during a guided workout. Warm-up sets never count toward progression or best sessions.</Body>
+        <View style={styles.summaryGrid}>
+          <Body>Hypertrophy: {guidedWorkoutPreferences.hypertrophyTargetReps} reps, -{guidedWorkoutPreferences.hypertrophyRepDecrement} per set</Body>
+          <Body>Strength: {guidedWorkoutPreferences.strengthTargetReps} reps</Body>
+          <Body>Top-set: {guidedWorkoutPreferences.topSetTargetReps} reps</Body>
+          <Body>Back-off start: {guidedWorkoutPreferences.backoffPercentage}%</Body>
+          <Body>Progression pause: {guidedWorkoutPreferences.inactivityDays} days</Body>
+        </View>
+        <Body>{guidedCounts.map(({ category, count }) => `${guidedCategoryLabels[category]}: ${count}`).join(" | ")}</Body>
       </Panel>
 
       <Panel>
@@ -242,15 +206,6 @@ export function SettingsScreen() {
         </View>
       </Panel>
     </Screen>
-  );
-}
-
-function PreferenceField({ label, value, onChange }: { label: string; value: number; onChange: (value: string) => void }) {
-  return (
-    <View style={styles.preferenceField}>
-      <Label>{label}</Label>
-      <TextInput style={styles.preferenceInput} value={String(value)} onChangeText={onChange} inputMode="numeric" />
-    </View>
   );
 }
 
@@ -342,59 +297,31 @@ const styles = StyleSheet.create({
     color: palette.danger,
     fontWeight: "800"
   },
-  preferenceGrid: {
+  panelHeading: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: spacing.md
   },
-  preferenceField: {
-    minWidth: 150,
-    flex: 1,
-    gap: spacing.xs
-  },
-  preferenceInput: {
-    minHeight: 44,
-    borderWidth: 1,
-    borderColor: palette.border,
-    borderRadius: 8,
-    backgroundColor: palette.surface,
-    paddingHorizontal: spacing.sm,
-    color: palette.ink,
-    fontSize: 16
-  },
-  categoryRow: {
-    borderTopWidth: 1,
-    borderTopColor: palette.border,
-    paddingTop: spacing.sm,
-    gap: spacing.sm
-  },
-  categoryName: {
-    fontWeight: "800"
-  },
-  categoryActions: {
+  editButton: {
+    minHeight: 38,
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.xs
-  },
-  categoryButton: {
-    minHeight: 36,
-    justifyContent: "center",
+    alignItems: "center",
+    gap: spacing.xs,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: palette.border,
     paddingHorizontal: spacing.sm
   },
-  categoryButtonActive: {
-    backgroundColor: palette.ink,
-    borderColor: palette.ink
-  },
-  categoryButtonText: {
+  editButtonText: {
     color: palette.ink,
-    fontSize: 12,
-    fontWeight: "800"
+    fontWeight: "900"
   },
-  categoryButtonTextActive: {
-    color: palette.surface
+  summaryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    columnGap: spacing.lg,
+    rowGap: spacing.xs
   },
   unitRow: {
     flexDirection: "row",

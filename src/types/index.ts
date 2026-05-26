@@ -141,10 +141,18 @@ export type ActiveWorkoutExerciseDraft = {
 
 export type CompletedWorkoutExercise = {
   exerciseId: number;
+  sessionId?: number;
   exerciseName: string;
   muscle: MuscleGroup;
   sets: LoggedSetDraft[];
   completedAt: string;
+  guidedOutcome?: GuidedSessionOutcome;
+};
+
+export type GuidedSessionOutcome = {
+  category: GuidedExerciseCategory;
+  celebrated: boolean;
+  messages: string[];
 };
 
 export type ActiveWorkout = {
@@ -157,6 +165,12 @@ export type ActiveWorkout = {
   currentExercise: ActiveWorkoutExerciseDraft;
   pendingMuscle: MuscleGroup | null;
   schedulePrompt: "off_plan" | "replace" | null;
+  scheduleChanges: string[];
+};
+
+export type CompletedGuidedWorkout = ActiveWorkout & {
+  id: string;
+  finishedAt: string;
 };
 
 export type WorkoutRecommendationRow = {

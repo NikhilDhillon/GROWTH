@@ -1,5 +1,5 @@
 import { categoryForExercise } from "@/constants/guidedWorkout";
-import { Exercise, GuidedExerciseCategory, GuidedWorkoutPreferences, WorkoutSession, WorkoutSet } from "@/types";
+import { Exercise, GuidedExerciseCategory, GuidedSessionOutcome, GuidedWorkoutPreferences, LoggedSetDraft, WorkoutSession, WorkoutSet } from "@/types";
 
 export type GuidedSetTarget = {
   draftIndex: number;
@@ -28,6 +28,72 @@ export type GuidedRecommendation = {
   backoffReady: boolean;
   blockReady: boolean;
 };
+
+export function buildGuidedSessionOutcome(input: {
+  exercise: Exercise;
+  preferences: GuidedWorkoutPreferences;
+  recommendation?: GuidedRecommendation | null;
+  sets: LoggedSetDraft[];
+}): GuidedSessionOutcome {
+  const category = input.recommendation?.category ?? categoryForExercise(input.exercise.name, input.preferences);
+  const workingSets = input.sets.filter((set) => !set.isWarmup && (set.reps.trim() || set.weight.trim()));
+  if (category === "unguided") {
+    return { category, celebrated: false, messages: ["Session logged for reference. No progression guidance applies to this exercise."] };
+  }
+
+  const targets = input.recommendation?.targets ?? workingSets.map((_, index) => ({
+    draftIndex: index,
+    workingSetNumber: index + 1,
+    role: category === "top_set" ? (index === 0 ? "top_set" as const : "backoff" as const) : "working" as const,
+    targetReps: targetReps(category, index, input.preferences),
+    increaseWeight: false
+  }));
+
+  if (category !== "top_set") {
+    if (targets.some((target) => target.increaseWeight)) {
+      return { category, celebrated: false, messages: ["Heavier-load attempt logged. Rep targets resume the next time you train this exercise."] };
+    }
+    const achieved = targets.length > 0 && targets.every((target) => Number(input.sets[target.draftIndex]?.reps) >= Number(target.targetReps));
+    return {
+      category,
+      celebrated: achieved,
+      messages: [achieved
+        ? category === "hypertrophy"
+          ? "Full pyramid target achieved. Increase the working weights next session."
+          : "All strength targets achieved. Increase the weight next session."
+        : category === "hypertrophy"
+          ? "Keep these working weights and build toward the full pyramid next session."
+          : "Keep this weight and close the remaining target reps next session."]
+    };
+  }
+
+  const messages: string[] = [];
+  let celebrated = false;
+  const topSet = targets.find((target) => target.role === "top_set");
+  if (topSet?.increaseWeight) {
+    messages.push("Heavier top-set attempt logged. Top-set rep guidance resumes next session.");
+  } else if (topSet) {
+    const achieved = Number(input.sets[topSet.draftIndex]?.reps) >= Number(topSet.targetReps);
+    celebrated ||= achieved;
+    messages.push(achieved
+      ? "Top-set target achieved. Increase the top-set weight next session."
+      : "Top-set target remains in reach. Keep this load and build the reps next session.");
+  }
+
+  const backoffs = targets.filter((target) => target.role === "backoff");
+  if (backoffs.length < 2) {
+    messages.push("Log at least two back-off working sets to evaluate back-off progression.");
+  } else if (backoffs.some((target) => target.increaseWeight)) {
+    messages.push("Heavier back-off attempt logged. Back-off rep guidance resumes next session.");
+  } else {
+    const achieved = backoffs.every((target) => Number(input.sets[target.draftIndex]?.reps) >= Number(target.targetReps));
+    celebrated ||= achieved;
+    messages.push(achieved
+      ? "All back-off targets achieved. Increase the back-off weight next session."
+      : "Keep the back-off weight and finish the remaining target reps next session.");
+  }
+  return { category, celebrated, messages };
+}
 
 export function buildGuidedRecommendation(input: {
   exercise: Exercise;

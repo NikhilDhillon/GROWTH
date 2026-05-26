@@ -11,10 +11,10 @@ import { ExerciseLoadType, getExerciseLoadType, supportsBarbellCalculator } from
 import { guidedCategoryLabels } from "@/constants/guidedWorkout";
 import { cloneTrainingSplitDays } from "@/constants/trainingSplit";
 import { getClosestBodyweightForDate } from "@/services/analytics/bulkAnalyticsService";
-import { buildGuidedRecommendation } from "@/services/guidedWorkout/guidedWorkoutService";
+import { buildGuidedRecommendation, buildGuidedSessionOutcome } from "@/services/guidedWorkout/guidedWorkoutService";
 import { calculateSessionPerformance, findStrengthReference } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { ActiveWorkout, LoggedSetDraft, MuscleGroup, SplitMuscle, TrainingSplitDay } from "@/types";
+import { ActiveWorkout, CompletedGuidedWorkout, LoggedSetDraft, MuscleGroup, SplitMuscle, TrainingSplitDay } from "@/types";
 import { muscles, palette, spacing } from "@/utils/theme";
 import { pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { formatBodyWeight, formatWeight, formatWeightInput, weightToStorageUnit } from "@/utils/units";
@@ -30,7 +30,7 @@ const plateVisuals: Record<PlateWeight, { backgroundColor: string; height: numbe
 };
 
 export function GuidedWorkoutScreen() {
-  const navigation = useNavigation<{ navigate: (route: string) => void }>();
+  const navigation = useNavigation<{ navigate: (route: string, params?: object) => void }>();
   const activeWorkout = useFitnessStore((state) => state.activeWorkout);
   const exercises = useFitnessStore((state) => state.exercises);
   const sessions = useFitnessStore((state) => state.sessions);
@@ -132,7 +132,7 @@ export function GuidedWorkoutScreen() {
     const days = cloneTrainingSplitDays(trainingSplit.days);
     const today = days.find((day) => day.key === workout.todayDayKey);
     if (today && !today.muscles.includes(splitMuscle)) today.muscles.push(splitMuscle);
-    await saveScheduleAndSelect(days, pendingMuscle);
+    await saveScheduleAndSelect(days, pendingMuscle, `${splitMuscle} was added to today's weekly split.`);
   }
 
   async function replacePlannedMuscle(replaced: SplitMuscle) {
@@ -143,10 +143,10 @@ export function GuidedWorkoutScreen() {
       const position = today.muscles.indexOf(replaced);
       if (position >= 0) today.muscles[position] = exerciseMuscleToSplitMuscle(pendingMuscle);
     }
-    await saveScheduleAndSelect(days, pendingMuscle);
+    await saveScheduleAndSelect(days, pendingMuscle, `${replaced} was replaced with ${exerciseMuscleToSplitMuscle(pendingMuscle)} in today's weekly split.`);
   }
 
-  async function saveScheduleAndSelect(days: TrainingSplitDay[], muscle: MuscleGroup) {
+  async function saveScheduleAndSelect(days: TrainingSplitDay[], muscle: MuscleGroup, scheduleChange: string) {
     try {
       await saveTrainingSplit(days);
       setShowAlternateMuscles(false);
@@ -155,7 +155,8 @@ export function GuidedWorkoutScreen() {
         plannedMuscles: [...(days.find((day) => day.key === workout.todayDayKey)?.muscles ?? workout.plannedMuscles)],
         currentExercise: { ...workout.currentExercise, muscle, exerciseId: null },
         pendingMuscle: null,
-        schedulePrompt: null
+        schedulePrompt: null,
+        scheduleChanges: [...workout.scheduleChanges, scheduleChange]
       }));
     } catch (caught) {
       setError(errorMessage(caught));
@@ -180,7 +181,10 @@ export function GuidedWorkoutScreen() {
         plannedMuscles: [...day.muscles],
         currentExercise: emptyActiveExercise(),
         pendingMuscle: null,
-        schedulePrompt: null
+        schedulePrompt: null,
+        scheduleChanges: saveSwap
+          ? [...workout.scheduleChanges, `Today's rest day was swapped with ${day.label}.`]
+          : workout.scheduleChanges
       });
     } catch (caught) {
       setError(errorMessage(caught));
@@ -209,19 +213,33 @@ export function GuidedWorkoutScreen() {
         notes: current.notes,
         sets: current.sets
       });
+      const savedState = useFitnessStore.getState();
+      const sessionId = savedState.sessions
+        .filter((session) => session.workout_date === workout.workoutDate)
+        .filter((session) => savedState.sets.some((set) => set.session_id === session.id && set.exercise_id === selectedExercise.id))
+        .sort((left, right) => left.id - right.id)
+        .at(-1)?.id;
+      const completedExercise = {
+        exerciseId: selectedExercise.id,
+        sessionId,
+        exerciseName: selectedExercise.name,
+        muscle: selectedExercise.primary_muscle,
+        sets: current.sets,
+        completedAt: new Date().toISOString(),
+        guidedOutcome: buildGuidedSessionOutcome({
+          exercise: selectedExercise,
+          preferences: guidedWorkoutPreferences,
+          recommendation,
+          sets: current.sets
+        })
+      };
       if (endAfterSave) {
-        await finish();
+        await finish({ ...workout, completedExercises: [...workout.completedExercises, completedExercise] });
         return;
       }
       await updateActiveWorkout({
         ...workout,
-        completedExercises: [...workout.completedExercises, {
-          exerciseId: selectedExercise.id,
-          exerciseName: selectedExercise.name,
-          muscle: selectedExercise.primary_muscle,
-          sets: current.sets,
-          completedAt: new Date().toISOString()
-        }],
+        completedExercises: [...workout.completedExercises, completedExercise],
         currentExercise: emptyActiveExercise()
       });
       setShowAlternateMuscles(false);
@@ -232,10 +250,22 @@ export function GuidedWorkoutScreen() {
     }
   }
 
-  async function finish() {
-    await finishActiveWorkout();
+  async function finish(completedWorkout = workout) {
+    if (!completedWorkout.completedExercises.length) {
+      await finishActiveWorkout();
+      setConfirmEnd(false);
+      navigation.navigate("Home");
+      return;
+    }
+    const finishedAt = new Date().toISOString();
+    const summary: CompletedGuidedWorkout = {
+      ...completedWorkout,
+      id: `${completedWorkout.startedAt}-${finishedAt}`,
+      finishedAt
+    };
+    await finishActiveWorkout(summary);
     setConfirmEnd(false);
-    navigation.navigate("Home");
+    navigation.navigate("WorkoutSummary", { workout: summary, finishedAt });
   }
 
   if (!activeWorkout.plannedMuscles.length) {
@@ -444,14 +474,29 @@ export function GuidedWorkoutScreen() {
               <SectionTitle>End workout?</SectionTitle>
               <Pressable onPress={() => setConfirmEnd(false)}><X size={20} color={palette.ink} /></Pressable>
             </View>
-            <Body>{hasEnteredSets(current.sets) && selectedExercise ? "Your current exercise will be saved before finishing." : "Your completed exercises are already saved."}</Body>
+            <Body>{hasEnteredSets(current.sets) && selectedExercise
+              ? "You have entered sets for the current exercise. Save them in this workout or discard them before finishing."
+              : activeWorkout.completedExercises.length
+                ? "Your completed exercises are saved. Finish to view your session summary."
+                : "No exercises have been completed. Finishing now will discard this empty workout."}</Body>
             <View style={styles.actions}>
               <Pressable onPress={() => setConfirmEnd(false)} style={pressableFeedback(styles.secondaryButton)}>
                 <Body style={styles.buttonText}>Continue workout</Body>
               </Pressable>
-              <Pressable disabled={saving} onPress={() => void completeCurrent(true)} style={pressableFeedback(styles.primaryButton)}>
-                <Body style={styles.primaryText}>End workout</Body>
-              </Pressable>
+              {hasEnteredSets(current.sets) && selectedExercise ? (
+                <>
+                  <Pressable disabled={saving} onPress={() => void finish()} style={pressableFeedback(styles.secondaryButton)}>
+                    <Body style={styles.buttonText}>Discard current & finish</Body>
+                  </Pressable>
+                  <Pressable disabled={saving} onPress={() => void completeCurrent(true)} style={pressableFeedback(styles.primaryButton)}>
+                    <Body style={styles.primaryText}>Save current & finish</Body>
+                  </Pressable>
+                </>
+              ) : (
+                <Pressable disabled={saving} onPress={() => void finish()} style={pressableFeedback(styles.primaryButton)}>
+                  <Body style={styles.primaryText}>{activeWorkout.completedExercises.length ? "Finish workout" : "Discard workout"}</Body>
+                </Pressable>
+              )}
             </View>
           </View>
         </View>

@@ -1,4 +1,4 @@
-import { ActiveWorkout, ActiveWorkoutExerciseDraft, MuscleGroup, SplitMuscle, TrainingSplitDay } from "@/types";
+import { ActiveWorkout, ActiveWorkoutExerciseDraft, CompletedGuidedWorkout, MuscleGroup, SplitMuscle, TrainingSplitDay } from "@/types";
 import { todayIso } from "@/utils/date";
 
 const dayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
@@ -29,7 +29,8 @@ export function createActiveWorkout(day: TrainingSplitDay): ActiveWorkout {
     completedExercises: [],
     currentExercise: emptyActiveExercise(),
     pendingMuscle: null,
-    schedulePrompt: null
+    schedulePrompt: null,
+    scheduleChanges: []
   };
 }
 
@@ -64,6 +65,18 @@ export function normalizeActiveWorkout(value: unknown): ActiveWorkout | null {
     completedExercises: Array.isArray(input.completedExercises) ? input.completedExercises : [],
     currentExercise: input.currentExercise ?? emptyActiveExercise(),
     pendingMuscle: input.pendingMuscle ?? null,
-    schedulePrompt: input.schedulePrompt === "off_plan" || input.schedulePrompt === "replace" ? input.schedulePrompt : null
+    schedulePrompt: input.schedulePrompt === "off_plan" || input.schedulePrompt === "replace" ? input.schedulePrompt : null,
+    scheduleChanges: Array.isArray(input.scheduleChanges) ? input.scheduleChanges.filter((message): message is string => typeof message === "string") : []
   };
+}
+
+export function normalizeCompletedGuidedWorkouts(value: unknown): CompletedGuidedWorkout[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((record) => {
+    if (!record || typeof record !== "object") return [];
+    const input = record as Partial<CompletedGuidedWorkout>;
+    const workout = normalizeActiveWorkout(input);
+    if (!workout || typeof input.id !== "string" || typeof input.finishedAt !== "string") return [];
+    return [{ ...workout, id: input.id, finishedAt: input.finishedAt }];
+  }).slice(0, 50);
 }

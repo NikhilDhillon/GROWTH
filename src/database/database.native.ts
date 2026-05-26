@@ -1,12 +1,12 @@
 import * as SQLite from "expo-sqlite";
 
-import { normalizeActiveWorkout } from "@/constants/activeWorkout";
+import { normalizeActiveWorkout, normalizeCompletedGuidedWorkouts } from "@/constants/activeWorkout";
 import { catalogExercises } from "@/constants/exercises";
 import { normalizeGuidedWorkoutPreferences } from "@/constants/guidedWorkout";
 import { createDefaultTrainingSplit, normalizeTrainingSplit } from "@/constants/trainingSplit";
 import { schema } from "@/database/schema";
 import { buildWorkoutFingerprint, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
-import { ActiveWorkout, BodyWeightLog, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 type Database = SQLite.SQLiteDatabase;
@@ -130,12 +130,13 @@ async function ensureCatalogAdditions(db: Database) {
 
 export async function loadAllData() {
   const db = await getDatabase();
-  const [currentUser, unitSetting, trainingSplitSetting, activeWorkoutSetting, guidedWorkoutSetting] = await Promise.all([
+  const [currentUser, unitSetting, trainingSplitSetting, activeWorkoutSetting, guidedWorkoutSetting, completedWorkoutsSetting] = await Promise.all([
     db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1"),
     db.getFirstAsync<{ value: UnitSystem }>("SELECT value FROM app_settings WHERE key = ?", ["unit_system"]),
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["training_split"]),
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["active_workout"]),
-    db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["guided_workout_preferences"])
+    db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["guided_workout_preferences"]),
+    db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["completed_guided_workouts"])
   ]);
   const [exercises, sessions, sets, bodyWeightLogs, configs] = await Promise.all([
     db.getAllAsync<Exercise>(
@@ -165,7 +166,8 @@ export async function loadAllData() {
   const trainingSplit = trainingSplitSetting?.value ? normalizeTrainingSplit(JSON.parse(trainingSplitSetting.value)) : createDefaultTrainingSplit();
   const activeWorkout = normalizeActiveWorkout(activeWorkoutSetting?.value ? JSON.parse(activeWorkoutSetting.value) : null);
   const guidedWorkoutPreferences = normalizeGuidedWorkoutPreferences(guidedWorkoutSetting?.value ? JSON.parse(guidedWorkoutSetting.value) : null);
-  return { exercises, sessions, sets, bodyWeightLogs, configs, currentUser: currentUser ?? null, unitSystem, trainingSplit, activeWorkout, guidedWorkoutPreferences };
+  const completedGuidedWorkouts = normalizeCompletedGuidedWorkouts(completedWorkoutsSetting?.value ? JSON.parse(completedWorkoutsSetting.value) : null);
+  return { exercises, sessions, sets, bodyWeightLogs, configs, currentUser: currentUser ?? null, unitSystem, trainingSplit, activeWorkout, guidedWorkoutPreferences, completedGuidedWorkouts };
 }
 
 export async function registerUser(input: { name: string; email: string; password: string }) {
@@ -372,6 +374,12 @@ export async function saveActiveWorkout(activeWorkout: ActiveWorkout | null) {
     return;
   }
   await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["active_workout", JSON.stringify(activeWorkout)]);
+}
+
+export async function saveCompletedGuidedWorkouts(workouts: CompletedGuidedWorkout[]) {
+  const db = await getDatabase();
+  const normalized = normalizeCompletedGuidedWorkouts(workouts);
+  await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["completed_guided_workouts", JSON.stringify(normalized)]);
 }
 
 export async function loadSocialData(): Promise<SocialData> {

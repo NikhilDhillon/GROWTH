@@ -4,9 +4,9 @@ import { getExerciseLoadType } from "@/constants/exercises";
 import { createDefaultGuidedWorkoutPreferences } from "@/constants/guidedWorkout";
 import { createDefaultTrainingSplit } from "@/constants/trainingSplit";
 import { buildExerciseScorePoints, buildMuscleScorePoints, summarizeMuscles } from "@/services/strength/strengthService";
-import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, removeSplitSync as removeStoredSplitSync, requestPasswordReset, requestSplitSync as requestStoredSplitSync, respondSplitSync as respondStoredSplitSync, revokeFriendInvite as revokeStoredFriendInvite, saveActiveWorkout as saveStoredActiveWorkout, saveBodyWeightLog as saveStoredBodyWeightLog, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateGuidedWorkoutPreferences as updateStoredGuidedWorkoutPreferences, updateTrainingSplit as updateStoredTrainingSplit, updateUnitSystem, updateWorkoutSession } from "@/database/database";
+import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, removeSplitSync as removeStoredSplitSync, requestPasswordReset, requestSplitSync as requestStoredSplitSync, respondSplitSync as respondStoredSplitSync, revokeFriendInvite as revokeStoredFriendInvite, saveActiveWorkout as saveStoredActiveWorkout, saveBodyWeightLog as saveStoredBodyWeightLog, saveCompletedGuidedWorkouts as saveStoredCompletedGuidedWorkouts, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateGuidedWorkoutPreferences as updateStoredGuidedWorkoutPreferences, updateTrainingSplit as updateStoredTrainingSplit, updateUnitSystem, updateWorkoutSession } from "@/database/database";
 import { ParsedImportData } from "@/services/import/importService";
-import { ActiveWorkout, BodyWeightLog, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, LoggedSetDraft, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, LoggedSetDraft, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { todayIso } from "@/utils/date";
 import { bodyWeightDisplayUnit, bodyWeightToStorageUnit, weightToStorageUnit } from "@/utils/units";
 
@@ -23,6 +23,7 @@ type FitnessState = {
   configs: MuscleStrengthConfig[];
   trainingSplit: TrainingSplit;
   activeWorkout: ActiveWorkout | null;
+  completedGuidedWorkouts: CompletedGuidedWorkout[];
   guidedWorkoutPreferences: GuidedWorkoutPreferences;
   exercisePoints: ExerciseScorePoint[];
   musclePoints: MuscleScorePoint[];
@@ -58,7 +59,7 @@ type FitnessState = {
   saveTrainingSplit: (days: TrainingSplitDay[]) => Promise<void>;
   startActiveWorkout: (activeWorkout: ActiveWorkout) => Promise<void>;
   updateActiveWorkout: (activeWorkout: ActiveWorkout) => Promise<void>;
-  finishActiveWorkout: () => Promise<void>;
+  finishActiveWorkout: (summary?: CompletedGuidedWorkout) => Promise<void>;
   saveGuidedWorkoutPreferences: (preferences: GuidedWorkoutPreferences) => Promise<void>;
   setConfigWeight: (id: number, weightFactor: number) => Promise<void>;
 };
@@ -83,6 +84,7 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   configs: [],
   trainingSplit: createDefaultTrainingSplit(),
   activeWorkout: null,
+  completedGuidedWorkouts: [],
   guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(),
   exercisePoints: [],
   musclePoints: [],
@@ -112,6 +114,7 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
         configs: [],
         trainingSplit: createDefaultTrainingSplit(),
         activeWorkout: null,
+        completedGuidedWorkouts: [],
         guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(),
         exercisePoints: [],
         musclePoints: [],
@@ -322,9 +325,13 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
     set({ activeWorkout });
     await saveStoredActiveWorkout(activeWorkout);
   },
-  finishActiveWorkout: async () => {
-    set({ activeWorkout: null });
+  finishActiveWorkout: async (summary) => {
+    const completedGuidedWorkouts = summary
+      ? [summary, ...get().completedGuidedWorkouts.filter((workout) => workout.id !== summary.id)].slice(0, 50)
+      : get().completedGuidedWorkouts;
+    set({ activeWorkout: null, completedGuidedWorkouts });
     await saveStoredActiveWorkout(null);
+    if (summary) await saveStoredCompletedGuidedWorkouts(completedGuidedWorkouts);
   },
   saveGuidedWorkoutPreferences: async (preferences) => {
     const guidedWorkoutPreferences = await updateStoredGuidedWorkoutPreferences(preferences);
