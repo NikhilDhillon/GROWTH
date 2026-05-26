@@ -21,6 +21,13 @@ const plateWeights = [45, 35, 25, 10, 5] as const;
 type PlateWeight = typeof plateWeights[number];
 type PlateCounts = Record<PlateWeight, number>;
 const emptyPlateCounts = (): PlateCounts => ({ 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 });
+const plateVisuals: Record<PlateWeight, { backgroundColor: string; height: number; width: number }> = {
+  45: { backgroundColor: "#2563eb", height: 52, width: 11 },
+  35: { backgroundColor: "#eab308", height: 46, width: 10 },
+  25: { backgroundColor: "#16a34a", height: 40, width: 9 },
+  10: { backgroundColor: "#64748b", height: 32, width: 8 },
+  5: { backgroundColor: "#dc2626", height: 24, width: 7 }
+};
 type SaveState = "idle" | "saving" | "saved";
 
 export function WorkoutScreen() {
@@ -121,25 +128,21 @@ export function WorkoutScreen() {
   }
 
   function changePlateCount(plate: PlateWeight, increment: number) {
-    const nextCounts = { ...plateCounts, [plate]: Math.max(0, plateCounts[plate] + increment) };
-    setPlateCounts(nextCounts);
-    applyLoadedBarWeight(calculateLoadedBarWeight(barWeight, nextCounts));
+    setPlateCounts((current) => ({ ...current, [plate]: Math.max(0, current[plate] + increment) }));
   }
 
   function updateBarWeight(value: string) {
     setBarWeight(value);
-    applyLoadedBarWeight(calculateLoadedBarWeight(value, plateCounts));
   }
 
-  function applyLoadedBarWeight(weightInPounds: number) {
-    const weight = formatWeightInput(weightInPounds, unitSystem);
-    setDraftSets((current) => current.map((set) => ({ ...set, weight })));
+  function applyLoadedBarWeight(index: number) {
+    const weight = formatWeightInput(loadedBarWeight, unitSystem);
+    setDraftSets((current) => current.map((set, itemIndex) => (itemIndex === index ? { ...set, weight } : set)));
   }
 
   function resetLoadedBar() {
     setBarWeight("45");
     setPlateCounts(emptyPlateCounts());
-    applyLoadedBarWeight(45);
   }
 
   return (
@@ -248,7 +251,7 @@ export function WorkoutScreen() {
               </Pressable>
             </View>
             <View style={styles.barWeightRow}>
-              <Label style={styles.barWeightLabel}>Bar</Label>
+              <Label>Bar weight</Label>
               <TextInput
                 style={[styles.input, styles.barWeightInput]}
                 value={barWeight}
@@ -261,19 +264,22 @@ export function WorkoutScreen() {
             </View>
             <View style={styles.loadedBar}>
               <View style={styles.plateStack}>
-                {plateWeights.flatMap((plate) => Array.from({ length: plateCounts[plate] }, (_, index) => <View key={`left-${plate}-${index}`} style={[styles.plate, plateStyle(plate)]} />))}
+                {[...plateWeights].reverse().flatMap((plate) => Array.from({ length: plateCounts[plate] }, (_, index) => <View key={`left-${plate}-${index}`} style={[styles.plate, plateVisuals[plate]]} />))}
               </View>
               <View style={styles.barSleeve} />
               <View style={styles.barShaft} />
               <View style={styles.barSleeve} />
               <View style={[styles.plateStack, styles.rightPlateStack]}>
-                {plateWeights.flatMap((plate) => Array.from({ length: plateCounts[plate] }, (_, index) => <View key={`right-${plate}-${index}`} style={[styles.plate, plateStyle(plate)]} />))}
+                {plateWeights.flatMap((plate) => Array.from({ length: plateCounts[plate] }, (_, index) => <View key={`right-${plate}-${index}`} style={[styles.plate, plateVisuals[plate]]} />))}
               </View>
             </View>
             <View style={styles.plateControls}>
               {plateWeights.map((plate) => (
                 <View key={plate} style={styles.plateControl}>
-                  <Body style={styles.plateText}>{plate}</Body>
+                  <View style={styles.plateLabel}>
+                    <View style={[styles.plateSwatch, { backgroundColor: plateVisuals[plate].backgroundColor }]} />
+                    <Body style={styles.plateText}>{plate} lb</Body>
+                  </View>
                   <View style={styles.countControls}>
                     <Pressable hitSlop={touchHitSlop} onPress={() => changePlateCount(plate, -1)} style={pressableFeedback(styles.countButton)}>
                       <Body style={styles.buttonText}>-</Body>
@@ -286,7 +292,14 @@ export function WorkoutScreen() {
                 </View>
               ))}
             </View>
-            <Body style={styles.loadHint}>Counts are plates per side. Changing the load fills all sets with {formatWeightInput(loadedBarWeight, unitSystem)} {unitSystem}.</Body>
+            <Body style={styles.loadHint}>Counts are plates per side. Apply {formatWeightInput(loadedBarWeight, unitSystem)} {unitSystem} only to the set you are loading.</Body>
+            <View style={styles.applySetButtons}>
+              {draftSets.map((_, index) => (
+                <Pressable key={index} hitSlop={touchHitSlop} onPress={() => applyLoadedBarWeight(index)} style={pressableFeedback(styles.secondaryButton)}>
+                  <Body style={styles.buttonText}>Use for set {index + 1}</Body>
+                </Pressable>
+              ))}
+            </View>
           </View>
         ) : null}
 
@@ -349,12 +362,6 @@ function calculateLoadedBarWeight(barWeight: string, plateCounts: PlateCounts) {
   const parsedBarWeight = Number(barWeight.trim().replace(",", "."));
   const bar = Number.isFinite(parsedBarWeight) && parsedBarWeight >= 0 ? parsedBarWeight : 0;
   return bar + plateWeights.reduce((total, plate) => total + plate * plateCounts[plate] * 2, 0);
-}
-
-function plateStyle(plate: PlateWeight) {
-  if (plate >= 35) return styles.largePlate;
-  if (plate >= 10) return styles.mediumPlate;
-  return styles.smallPlate;
 }
 
 const styles = StyleSheet.create({
@@ -493,15 +500,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.sm
   },
-  barWeightLabel: {
-    width: 30
-  },
   barWeightInput: {
-    maxWidth: 86,
-    flex: 0
+    width: 84,
+    flexGrow: 0,
+    flexShrink: 0
   },
   loadedBar: {
-    minHeight: 46,
+    minHeight: 58,
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center"
@@ -527,18 +532,7 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start"
   },
   plate: {
-    width: 7,
-    borderRadius: 2,
-    backgroundColor: palette.accent
-  },
-  largePlate: {
-    height: 40
-  },
-  mediumPlate: {
-    height: 30
-  },
-  smallPlate: {
-    height: 22
+    borderRadius: 3
   },
   plateControls: {
     flexDirection: "row",
@@ -559,6 +553,16 @@ const styles = StyleSheet.create({
   plateText: {
     fontWeight: "900"
   },
+  plateLabel: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs
+  },
+  plateSwatch: {
+    width: 11,
+    height: 11,
+    borderRadius: 6
+  },
   countControls: {
     flexDirection: "row",
     alignItems: "center",
@@ -578,6 +582,9 @@ const styles = StyleSheet.create({
     minWidth: 12,
     textAlign: "center",
     fontWeight: "900"
+  },
+  applySetButtons: {
+    gap: spacing.sm
   },
   notes: {
     minHeight: 72,
