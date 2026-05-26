@@ -6,6 +6,7 @@ import { DatePickerField } from "@/components/DatePickerField";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
+import { ExerciseLoadType, getExerciseLoadType } from "@/constants/exercises";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { Exercise, LoggedSetDraft, MuscleGroup, WorkoutSession } from "@/types";
 import { formatShortDate } from "@/utils/date";
@@ -179,6 +180,7 @@ export function LogsScreen() {
 
                     {!isCollapsed ? group.logs.map((log) => {
                       const isEditing = editingWorkout?.sessionId === log.sessionId;
+                      const loadType = getExerciseLoadType(log.exerciseName);
                       return (
                       <View key={log.sessionId} style={styles.historyRow}>
                         {isEditing && editingWorkout ? (
@@ -190,6 +192,7 @@ export function LogsScreen() {
                               </Pressable>
                             </View>
                             <DatePickerField value={editingWorkout.workoutDate} onChange={(workoutDate) => setEditingWorkout((current) => current ? { ...current, workoutDate } : current)} />
+                            {loadType !== "external" ? <Body style={styles.hintText}>{loadType === "bodyweight_plus_load" ? "Enter added weight only; body weight is included in scoring." : "Enter assistance weight; it is subtracted from body weight for scoring."}</Body> : null}
                             {editingWorkout.sets.map((set, index) => (
                               <View key={index} style={styles.setRow}>
                                 <Label style={styles.setNumber}>{index + 1}</Label>
@@ -199,7 +202,7 @@ export function LogsScreen() {
                                   onChangeText={(weight) => updateEditingSet(index, "weight", weight)}
                                   keyboardType="decimal-pad"
                                   inputMode="decimal"
-                                  placeholder={unitSystem}
+                                  placeholder={loadPlaceholder(loadType, unitSystem)}
                                 />
                                 <TextInput
                                   style={[styles.input, styles.setInput]}
@@ -312,6 +315,12 @@ function groupLogsByMuscle(logs: ReturnType<typeof buildPreviousLogs>, exercises
       };
     })
     .sort((a, b) => muscles.indexOf(a.muscle) - muscles.indexOf(b.muscle));
+}
+
+function loadPlaceholder(loadType: ExerciseLoadType, unitSystem: string) {
+  if (loadType === "bodyweight_plus_load") return `added ${unitSystem}`;
+  if (loadType === "bodyweight_minus_assistance") return `assist ${unitSystem}`;
+  return unitSystem;
 }
 
 const styles = StyleSheet.create({
@@ -476,5 +485,8 @@ const styles = StyleSheet.create({
   errorText: {
     color: palette.danger,
     fontWeight: "800"
+  },
+  hintText: {
+    color: palette.muted
   }
 });

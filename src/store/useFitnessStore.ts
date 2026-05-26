@@ -1,5 +1,6 @@
 import { create } from "zustand";
 
+import { getExerciseLoadType } from "@/constants/exercises";
 import { buildExerciseScorePoints, buildMuscleScorePoints, summarizeMuscles } from "@/services/strength/strengthService";
 import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, requestPasswordReset, revokeFriendInvite as revokeStoredFriendInvite, saveBodyWeightLog as saveStoredBodyWeightLog, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateUnitSystem, updateWorkoutSession } from "@/database/database";
 import { ParsedImportData } from "@/services/import/importService";
@@ -49,8 +50,8 @@ type FitnessState = {
   setConfigWeight: (id: number, weightFactor: number) => Promise<void>;
 };
 
-function derive(exercises: Exercise[], sessions: WorkoutSession[], sets: WorkoutSet[], configs: MuscleStrengthConfig[]) {
-  const exercisePoints = buildExerciseScorePoints(exercises, sessions, sets);
+function derive(exercises: Exercise[], sessions: WorkoutSession[], sets: WorkoutSet[], bodyWeightLogs: BodyWeightLog[], configs: MuscleStrengthConfig[]) {
+  const exercisePoints = buildExerciseScorePoints(exercises, sessions, sets, bodyWeightLogs);
   const musclePoints = buildMuscleScorePoints(exercises, configs, exercisePoints);
   const muscleSummaries = summarizeMuscles(exercises, configs, musclePoints);
   return { exercisePoints, musclePoints, muscleSummaries };
@@ -77,7 +78,7 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   hydrate: async () => {
     try {
       const data = await loadAllData();
-      const derived = derive(data.exercises, data.sessions, data.sets, data.configs);
+      const derived = derive(data.exercises, data.sessions, data.sets, data.bodyWeightLogs, data.configs);
       set({ ...data, ...derived, loading: false, authError: null });
       try {
         await syncScoreSnapshots(derived.exercisePoints);
@@ -197,13 +198,13 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   setExerciseEnabled: async (exerciseId, enabled) => {
     const previous = get();
     const exercises = previous.exercises.map((exercise) => (exercise.id === exerciseId ? { ...exercise, is_strength_exercise: enabled ? 1 : 0 } : exercise));
-    const derived = derive(exercises, previous.sessions, previous.sets, previous.configs);
+    const derived = derive(exercises, previous.sessions, previous.sets, previous.bodyWeightLogs, previous.configs);
     set({ exercises, ...derived });
 
     try {
       await setStoredExerciseEnabled(exerciseId, enabled);
     } catch (error) {
-      const rollbackDerived = derive(previous.exercises, previous.sessions, previous.sets, previous.configs);
+      const rollbackDerived = derive(previous.exercises, previous.sessions, previous.sets, previous.bodyWeightLogs, previous.configs);
       set({
         exercises: previous.exercises,
         ...rollbackDerived,
@@ -213,7 +214,8 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   },
   saveWorkout: async (input) => {
     const unitSystem = get().unitSystem;
-    const sets = parseScoredSets(input.sets, unitSystem);
+    const exercise = get().exercises.find((item) => item.id === input.exerciseId);
+    const sets = parseScoredSets(input.sets, unitSystem, getExerciseLoadType(exercise?.name ?? ""));
     const workoutDate = /^\d{4}-\d{2}-\d{2}$/.test(input.workoutDate) ? input.workoutDate : todayIso();
 
     await logWorkout({ exerciseId: input.exerciseId, workoutDate, notes: input.notes, sets });
@@ -221,7 +223,8 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   },
   updateWorkoutLog: async (input) => {
     const unitSystem = get().unitSystem;
-    const sets = parseScoredSets(input.sets, unitSystem);
+    const exercise = get().exercises.find((item) => item.id === input.exerciseId);
+    const sets = parseScoredSets(input.sets, unitSystem, getExerciseLoadType(exercise?.name ?? ""));
     const workoutDate = /^\d{4}-\d{2}-\d{2}$/.test(input.workoutDate) ? input.workoutDate : todayIso();
 
     await updateWorkoutSession({ sessionId: input.sessionId, exerciseId: input.exerciseId, workoutDate, notes: input.notes, sets });
@@ -271,7 +274,7 @@ function parseWeightInput(value: string) {
   return Number(value.trim().replace(",", "."));
 }
 
-function parseScoredSets(sets: LoggedSetDraft[], unitSystem: UnitSystem) {
+function parseScoredSets(sets: LoggedSetDraft[], unitSystem: UnitSystem, loadType: ReturnType<typeof getExerciseLoadType>) {
   const enteredSets = sets.filter((set) => set.reps.trim() || set.weight.trim());
   const parsed = enteredSets.map((set) => ({
     reps: Number(set.reps),
@@ -284,8 +287,10 @@ function parseScoredSets(sets: LoggedSetDraft[], unitSystem: UnitSystem) {
   if (parsed.some((set) => !Number.isInteger(set.reps) || set.reps < 1 || set.reps > 10)) {
     throw new Error("Performance Points require 1 to 10 reps per set.");
   }
-  if (parsed.some((set) => !Number.isFinite(set.weight) || set.weight <= 0)) {
-    throw new Error("Performance Points require external weight on every set.");
+  if (parsed.some((set) => !Number.isFinite(set.weight) || (loadType === "external" ? set.weight <= 0 : set.weight < 0))) {
+    throw new Error(loadType === "external"
+      ? "Performance Points require external weight on every set."
+      : "Added weight or assistance cannot be negative.");
   }
 
   return parsed;

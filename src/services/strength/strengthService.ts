@@ -1,4 +1,6 @@
-import { Exercise, ExerciseScorePoint, MuscleGroup, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, TrendStatus, WorkoutSession, WorkoutSet } from "@/types";
+import { ExerciseLoadType, getExerciseLoadType } from "@/constants/exercises";
+import { getClosestBodyweightForDate } from "@/services/analytics/bulkAnalyticsService";
+import { BodyWeightLog, Exercise, ExerciseScorePoint, MuscleGroup, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, TrendStatus, WorkoutSession, WorkoutSet } from "@/types";
 import { muscles } from "@/utils/theme";
 
 const strengthWeight = 0.45;
@@ -7,6 +9,7 @@ const resistanceWeight = 0.2;
 
 type ScoreableSet = Pick<WorkoutSet, "weight" | "reps" | "set_number">;
 type PerformanceReference = Pick<ExerciseScorePoint, "estimated1RM" | "failureVolume" | "fatigueResistance">;
+type LoadContext = { loadType?: ExerciseLoadType; bodyWeight?: number };
 
 export type SessionPerformance = {
   performancePoints: number;
@@ -22,13 +25,19 @@ export function calculateEstimated1RM(weight: number, reps: number) {
   return weight * (1 + reps / 30);
 }
 
-export function calculateSessionPerformance(sets: ScoreableSet[], reference?: PerformanceReference): SessionPerformance | null {
+export function calculateSessionPerformance(sets: ScoreableSet[], reference?: PerformanceReference, loadContext: LoadContext = {}): SessionPerformance | null {
   const orderedSets = [...sets].sort((a, b) => a.set_number - b.set_number);
-  if (orderedSets.length < 2 || orderedSets.some((set) => !isScoreableSet(set))) return null;
+  const loadType = loadContext.loadType ?? "external";
+  if (orderedSets.length < 2 || orderedSets.some((set) => !isValidEnteredSet(set, loadType))) return null;
+  const effectiveSets = orderedSets.map((set) => ({
+    ...set,
+    weight: effectiveWeight(set.weight, loadType, loadContext.bodyWeight)
+  }));
+  if (effectiveSets.some((set) => !isScoreableSet(set))) return null;
 
-  const estimated1RMs = orderedSets.map((set) => calculateEstimated1RM(set.weight, set.reps));
+  const estimated1RMs = effectiveSets.map((set) => calculateEstimated1RM(set.weight, set.reps));
   const estimated1RM = Math.max(...estimated1RMs);
-  const failureVolume = orderedSets.reduce((total, set) => total + set.weight * set.reps, 0);
+  const failureVolume = effectiveSets.reduce((total, set) => total + set.weight * set.reps, 0);
   const fatigueResistance = Math.min(1, estimated1RMs.at(-1)! / estimated1RMs[0]);
   const normalizedStrength = reference ? estimated1RM / reference.estimated1RM : 1;
   const normalizedVolume = reference ? failureVolume / reference.failureVolume : 1;
@@ -67,7 +76,7 @@ export function findStrengthReference(points: ExerciseScorePoint[]) {
   }, undefined);
 }
 
-export function buildExerciseScorePoints(exercises: Exercise[], sessions: WorkoutSession[], sets: WorkoutSet[]) {
+export function buildExerciseScorePoints(exercises: Exercise[], sessions: WorkoutSession[], sets: WorkoutSet[], bodyWeightLogs: BodyWeightLog[] = []) {
   const byExerciseSession = new Map<string, WorkoutSet[]>();
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
 
@@ -94,8 +103,10 @@ export function buildExerciseScorePoints(exercises: Exercise[], sessions: Workou
 
   const output: ExerciseScorePoint[] = [];
   for (const session of sessionsToScore) {
+    const loadType = getExerciseLoadType(session.exerciseName);
+    const bodyWeight = loadType === "external" ? undefined : getClosestBodyweightForDate(session.date, bodyWeightLogs)?.weight;
     const reference = findStrengthReference(output.filter((point) => point.exerciseId === session.exerciseId));
-    const metrics = calculateSessionPerformance(session.sets, reference);
+    const metrics = calculateSessionPerformance(session.sets, reference, { loadType, bodyWeight });
     if (!metrics) continue;
     output.push({
       exerciseId: session.exerciseId,
@@ -178,6 +189,17 @@ export function summarizeMuscles(exercises: Exercise[], configs: MuscleStrengthC
 function isScoreableSet(set: ScoreableSet) {
   return Number.isFinite(set.weight) && set.weight > 0 &&
     Number.isInteger(set.reps) && set.reps >= 1 && set.reps <= 10;
+}
+
+function isValidEnteredSet(set: ScoreableSet, loadType: ExerciseLoadType) {
+  return Number.isFinite(set.weight) && (loadType === "external" ? set.weight > 0 : set.weight >= 0) &&
+    Number.isInteger(set.reps) && set.reps >= 1 && set.reps <= 10;
+}
+
+function effectiveWeight(weight: number, loadType: ExerciseLoadType, bodyWeight?: number) {
+  if (loadType === "external") return weight;
+  if (!Number.isFinite(bodyWeight) || !bodyWeight) return 0;
+  return loadType === "bodyweight_plus_load" ? bodyWeight + weight : bodyWeight - weight;
 }
 
 function compareReference(a: ExerciseScorePoint, b: ExerciseScorePoint) {

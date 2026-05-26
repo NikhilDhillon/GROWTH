@@ -1,3 +1,4 @@
+import { ExerciseLoadType, getExerciseLoadType } from "@/constants/exercises";
 import { Exercise, ExerciseScorePoint, UnitSystem, WorkoutSession, WorkoutSet } from "@/types";
 import { formatWeight } from "@/utils/units";
 
@@ -13,6 +14,7 @@ export type PreviousLog = {
 
 export function buildPreviousLogs(input: { exerciseId?: number; exercises: Exercise[]; sessions: WorkoutSession[]; sets: WorkoutSet[]; points: ExerciseScorePoint[]; unitSystem: UnitSystem }) {
   const sessionById = new Map(input.sessions.map((session) => [session.id, session]));
+  const exerciseById = new Map(input.exercises.map((exercise) => [exercise.id, exercise]));
   const groupedSets = input.sets
     .filter((set) => !input.exerciseId || set.exercise_id === input.exerciseId)
     .reduce<Record<string, { date: string; sessionId: number; exerciseId: number; sets: string[] }>>((groups, set) => {
@@ -23,7 +25,7 @@ export function buildPreviousLogs(input: { exerciseId?: number; exercises: Exerc
         ...groups,
         [key]: {
           ...existing,
-          sets: [...existing.sets, `${formatWeight(set.weight, input.unitSystem)} x ${set.reps}`]
+          sets: [...existing.sets, `${formatLoggedLoad(set.weight, getExerciseLoadType(exerciseById.get(set.exercise_id)?.name ?? ""), input.unitSystem)} x ${set.reps}`]
         }
       };
     }, {});
@@ -39,4 +41,14 @@ export function buildPreviousLogs(input: { exerciseId?: number; exercises: Exerc
       };
     })
     .sort((a, b) => b.date.localeCompare(a.date) || b.sessionId - a.sessionId);
+}
+
+function formatLoggedLoad(weight: number, loadType: ExerciseLoadType, unitSystem: UnitSystem) {
+  if (loadType === "bodyweight_plus_load") {
+    return weight === 0 ? "Body weight" : `Body weight + ${formatWeight(weight, unitSystem)}`;
+  }
+  if (loadType === "bodyweight_minus_assistance") {
+    return weight === 0 ? "Body weight" : `Body weight - ${formatWeight(weight, unitSystem)} assistance`;
+  }
+  return formatWeight(weight, unitSystem);
 }

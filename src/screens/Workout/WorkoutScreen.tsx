@@ -6,13 +6,15 @@ import { DatePickerField } from "@/components/DatePickerField";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
+import { ExerciseLoadType, getExerciseLoadType } from "@/constants/exercises";
+import { getClosestBodyweightForDate } from "@/services/analytics/bulkAnalyticsService";
 import { calculateSessionPerformance, findStrengthReference } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { LoggedSetDraft, MuscleGroup } from "@/types";
 import { todayIso } from "@/utils/date";
 import { muscles, palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
-import { bodyWeightDisplayUnit, formatWeightInput, weightToStorageUnit } from "@/utils/units";
+import { bodyWeightDisplayUnit, formatBodyWeight, formatWeightInput, weightToStorageUnit } from "@/utils/units";
 
 const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
 type SaveState = "idle" | "saving" | "saved";
@@ -21,6 +23,7 @@ export function WorkoutScreen() {
   const allExercises = useFitnessStore((state) => state.exercises);
   const sets = useFitnessStore((state) => state.sets);
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
+  const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
   const saveBodyWeightLog = useFitnessStore((state) => state.saveBodyWeightLog);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
@@ -53,6 +56,8 @@ export function WorkoutScreen() {
   }, [exercises]);
   const visibleExercises = exercisesByMuscle[selectedMuscle] ?? [];
   const selectedExercise = selectedKind === "exercise" ? visibleExercises.find((exercise) => exercise.id === exerciseId) ?? visibleExercises[0] ?? null : null;
+  const selectedLoadType = getExerciseLoadType(selectedExercise?.name ?? "");
+  const selectedBodyWeight = selectedLoadType === "external" ? null : getClosestBodyweightForDate(workoutDate, bodyWeightLogs);
   const previousSets = useMemo(() => {
     if (!selectedExercise) return [];
     const matching = sets.filter((set) => set.exercise_id === selectedExercise.id);
@@ -69,9 +74,10 @@ export function WorkoutScreen() {
         .map((set, index) => ({ reps: Number(set.reps), weight: Number(set.weight), set_number: index + 1 }))
         .map((set) => ({ ...set, weight: weightToStorageUnit(set.weight, unitSystem) }))
         .filter((set) => set.reps > 0 || set.weight > 0),
-      reference
+      reference,
+      { loadType: selectedLoadType, bodyWeight: selectedBodyWeight?.weight }
     );
-  }, [draftSets, exercisePoints, selectedExercise, unitSystem, workoutDate]);
+  }, [draftSets, exercisePoints, selectedBodyWeight?.weight, selectedExercise, selectedLoadType, unitSystem, workoutDate]);
 
   async function handleSave() {
     if (!selectedExercise || workoutSaveState === "saving") return;
@@ -191,17 +197,19 @@ export function WorkoutScreen() {
         <View style={styles.rowBetween}>
           <View>
             <SectionTitle>Working sets</SectionTitle>
-            <Body>Projected Performance Points: {projectedPerformance ? projectedPerformance.performancePoints.toFixed(1) : "..."}</Body>
+            <Body>Projected Performance Points: {projectedPerformance ? projectedPerformance.performancePoints.toFixed(1) : selectedLoadType !== "external" && !selectedBodyWeight ? "Log body weight first" : "..."}</Body>
           </View>
           <Pressable accessibilityLabel="Duplicate previous workout" hitSlop={touchHitSlop} onPress={duplicatePrevious} style={pressableFeedback(styles.iconButton)}>
             <Copy size={18} color={palette.ink} />
           </Pressable>
         </View>
 
+        {selectedLoadType !== "external" ? <Body style={styles.loadHint}>{loadInstruction(selectedLoadType, selectedBodyWeight?.weight)}</Body> : null}
+
         {draftSets.map((set, index) => (
           <View key={index} style={styles.setRow}>
             <Label style={styles.setNumber}>{index + 1}</Label>
-            <TextInput style={[styles.input, styles.setInput]} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} keyboardType="decimal-pad" inputMode="decimal" placeholder={unitSystem} />
+            <TextInput style={[styles.input, styles.setInput]} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} keyboardType="decimal-pad" inputMode="decimal" placeholder={loadPlaceholder(selectedLoadType, unitSystem)} />
             <TextInput style={[styles.input, styles.setInput]} value={set.reps} onChangeText={(value) => updateSet(index, "reps", value)} keyboardType="number-pad" inputMode="numeric" placeholder="reps" />
             <Pressable accessibilityLabel="Remove set" hitSlop={touchHitSlop} onPress={() => setDraftSets((current) => current.filter((_, itemIndex) => itemIndex !== index))} style={pressableFeedback([styles.iconButton, styles.removeButton])}>
               <Trash2 size={16} color={palette.danger} />
@@ -239,6 +247,18 @@ export function WorkoutScreen() {
 function showSaved(setState: (state: SaveState) => void) {
   setState("saved");
   setTimeout(() => setState("idle"), 900);
+}
+
+function loadPlaceholder(loadType: ExerciseLoadType, unitSystem: string) {
+  if (loadType === "bodyweight_plus_load") return `added ${unitSystem}`;
+  if (loadType === "bodyweight_minus_assistance") return `assist ${unitSystem}`;
+  return unitSystem;
+}
+
+function loadInstruction(loadType: ExerciseLoadType, bodyWeight?: number) {
+  const basis = bodyWeight ? `Body weight ${formatBodyWeight(bodyWeight)} is included.` : "Log body weight to calculate Performance Points.";
+  if (loadType === "bodyweight_plus_load") return `Enter added weight only; use 0 for bodyweight reps. ${basis}`;
+  return `Enter assistance weight; use 0 for unassisted reps. ${basis}`;
 }
 
 const styles = StyleSheet.create({
@@ -350,6 +370,9 @@ const styles = StyleSheet.create({
   setInput: {
     flexBasis: 0,
     paddingHorizontal: spacing.sm
+  },
+  loadHint: {
+    color: palette.muted
   },
   notes: {
     minHeight: 72,
