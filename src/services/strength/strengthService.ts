@@ -6,6 +6,7 @@ import { muscles } from "@/utils/theme";
 const strengthWeight = 0.45;
 const volumeWeight = 0.35;
 const resistanceWeight = 0.2;
+const maximumEstimated1RMReps = 10;
 
 type ScoreableSet = Pick<WorkoutSet, "weight" | "reps" | "set_number">;
 type PerformanceReference = Pick<ExerciseScorePoint, "estimated1RM" | "failureVolume" | "fatigueResistance">;
@@ -22,7 +23,7 @@ export type SessionPerformance = {
 };
 
 export function calculateEstimated1RM(weight: number, reps: number) {
-  return weight * (1 + reps / 30);
+  return weight * (1 + Math.min(reps, maximumEstimated1RMReps) / 30);
 }
 
 export function calculateSessionPerformance(sets: ScoreableSet[], reference?: PerformanceReference, loadContext: LoadContext = {}): SessionPerformance | null {
@@ -188,12 +189,12 @@ export function summarizeMuscles(exercises: Exercise[], configs: MuscleStrengthC
 
 function isScoreableSet(set: ScoreableSet) {
   return Number.isFinite(set.weight) && set.weight > 0 &&
-    Number.isInteger(set.reps) && set.reps >= 1 && set.reps <= 10;
+    Number.isInteger(set.reps) && set.reps >= 1;
 }
 
 function isValidEnteredSet(set: ScoreableSet, loadType: ExerciseLoadType) {
   return Number.isFinite(set.weight) && (loadType === "external" ? set.weight > 0 : set.weight >= 0) &&
-    Number.isInteger(set.reps) && set.reps >= 1 && set.reps <= 10;
+    Number.isInteger(set.reps) && set.reps >= 1;
 }
 
 function effectiveWeight(weight: number, loadType: ExerciseLoadType, bodyWeight?: number) {

@@ -45,6 +45,7 @@ export function GuidedWorkoutScreen() {
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [showAlternateMuscles, setShowAlternateMuscles] = useState(false);
 
   useEffect(() => {
     const interval = setInterval(() => setClock(Date.now()), 1000);
@@ -72,10 +73,14 @@ export function GuidedWorkoutScreen() {
   const selectedExercise = exercises.find((exercise) => exercise.id === current.exerciseId) ?? null;
   const visibleExercises = current.muscle ? exercises.filter((exercise) => exercise.primary_muscle === current.muscle) : [];
   const plannedMuscles = activePlannedExerciseMuscles(workout);
+  const displayedMuscles = showAlternateMuscles
+    ? muscles
+    : [...plannedMuscles, ...(current.muscle && !plannedMuscles.includes(current.muscle) ? [current.muscle] : [])];
   const loadType = getExerciseLoadType(selectedExercise?.name ?? "");
   const selectedBodyWeight = loadType === "external" ? null : getClosestBodyweightForDate(workout.workoutDate, bodyWeightLogs);
   const latestSets = selectedExercise ? findLatestSets(selectedExercise.id, sessions, sets) : [];
-  const recommendations = latestSets.map((set, index) => recommendationForSet(set.weight, set.reps, index + 1));
+  const increaseLoad = latestSets[0]?.reps >= 10 && latestSets[1]?.reps >= 8;
+  const recommendations = latestSets.map((set, index) => recommendationForSet(set.weight, set.reps, index + 1, increaseLoad));
   const bestPerformance = selectedExercise ? findStrengthReference(exercisePoints.filter((point) => point.exerciseId === selectedExercise.id)) : undefined;
   const projectedPerformance = selectedExercise
     ? calculateSessionPerformance(
@@ -99,6 +104,7 @@ export function GuidedWorkoutScreen() {
 
   function selectMuscle(muscle: MuscleGroup) {
     if (plannedMuscles.includes(muscle)) {
+      setShowAlternateMuscles(false);
       persist((active) => ({ ...active, pendingMuscle: null, schedulePrompt: null, currentExercise: { ...active.currentExercise, muscle, exerciseId: null } }));
       return;
     }
@@ -107,6 +113,7 @@ export function GuidedWorkoutScreen() {
 
   function useOffPlanMuscleForWorkout() {
     if (!pendingMuscle) return;
+    setShowAlternateMuscles(false);
     persist((active) => ({ ...active, pendingMuscle: null, schedulePrompt: null, currentExercise: { ...active.currentExercise, muscle: pendingMuscle, exerciseId: null } }));
   }
 
@@ -133,6 +140,7 @@ export function GuidedWorkoutScreen() {
   async function saveScheduleAndSelect(days: TrainingSplitDay[], muscle: MuscleGroup) {
     try {
       await saveTrainingSplit(days);
+      setShowAlternateMuscles(false);
       persist((workout) => ({
         ...workout,
         plannedMuscles: [...(days.find((day) => day.key === workout.todayDayKey)?.muscles ?? workout.plannedMuscles)],
@@ -207,6 +215,7 @@ export function GuidedWorkoutScreen() {
         }],
         currentExercise: emptyActiveExercise()
       });
+      setShowAlternateMuscles(false);
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -277,14 +286,17 @@ export function GuidedWorkoutScreen() {
 
       <Panel>
         <SectionTitle>Exercise {activeWorkout.completedExercises.length + 1}</SectionTitle>
-        <Body>Choose a muscle group for your current exercise.</Body>
+        <Body>Choose one of today's muscle groups for your current exercise.</Body>
         <View style={styles.chips}>
-          {muscles.map((muscle) => (
+          {displayedMuscles.map((muscle) => (
             <Pressable key={muscle} onPress={() => selectMuscle(muscle)} style={pressableFeedback([styles.chip, current.muscle === muscle && styles.chipActive])}>
               <Body style={[styles.chipText, current.muscle === muscle && styles.chipTextActive]}>{muscle === "Core" ? "Abs" : muscle}</Body>
             </Pressable>
           ))}
         </View>
+        <Pressable onPress={() => setShowAlternateMuscles((visible) => !visible)} style={pressableFeedback(styles.secondaryButton)}>
+          <Body style={styles.buttonText}>{showAlternateMuscles ? "Hide other muscle groups" : "Choose a different muscle group"}</Body>
+        </Pressable>
         {pendingMuscle ? (
           <View style={styles.prompt}>
             <Body>{pendingMuscle === "Core" ? "Abs" : pendingMuscle} is not planned today. Use it only now or update the weekly split?</Body>
@@ -339,6 +351,7 @@ export function GuidedWorkoutScreen() {
 
           <View style={styles.guidance}>
             <Label>Progressive overload target</Label>
+            <Body>Increase load after reaching 10 reps in set 1 and 8 reps in set 2.</Body>
             {recommendations.length ? recommendations.map((row) => (
               <Body key={row.setNumber}>
                 Set {row.setNumber}: {row.requiresLoadChange
@@ -481,14 +494,14 @@ function BarCalculator({ barWeight, plateCounts, loadedBarWeight, unitSystem, on
   );
 }
 
-function recommendationForSet(weight: number, reps: number, setNumber: number): WorkoutRecommendationRow {
+function recommendationForSet(weight: number, reps: number, setNumber: number, requiresLoadChange: boolean): WorkoutRecommendationRow {
   return {
     setNumber,
     weight,
     priorReps: reps,
     minimumReps: Math.min(10, reps + 1),
     maximumReps: Math.min(10, reps + 3),
-    requiresLoadChange: reps >= 10
+    requiresLoadChange
   };
 }
 

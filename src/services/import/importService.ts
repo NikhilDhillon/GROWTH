@@ -138,10 +138,6 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
             const reps = readPositiveInteger(setEntry.reps, `${setPrefix}.reps`, errors);
             const weight = readNonNegativeNumber(setEntry.weight, `${setPrefix}.weight`, errors);
             if (reps === null || weight === null) return [];
-            if (reps > 10) {
-              errors.push(`${setPrefix}.reps must be between 1 and 10 for Performance Points.`);
-              return [];
-            }
             if (weight <= 0) {
               errors.push(`${setPrefix}.weight must include external load for Performance Points.`);
               return [];

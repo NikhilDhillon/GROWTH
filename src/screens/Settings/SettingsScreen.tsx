@@ -125,8 +125,8 @@ export function SettingsScreen() {
         </Pressable>
         {showFormula ? (
           <View style={styles.formulaDetails}>
-            <Body>Eligible sessions use two or more loaded sets of 1 to 10 reps.</Body>
-            <Body>Estimated 1RM = weight x (1 + reps / 30)</Body>
+            <Body>Eligible sessions use two or more loaded sets with positive whole-number reps.</Body>
+            <Body>Estimated 1RM = weight x (1 + min(reps, 10) / 30)</Body>
             <Body>Strength = best estimated 1RM; volume = sum(weight x reps)</Body>
             <Body>Resistance = min(1, final set e1RM / first set e1RM)</Body>
             <Body>Points = 100 x (0.45 normalized strength + 0.35 normalized volume + 0.20 normalized resistance)</Body>

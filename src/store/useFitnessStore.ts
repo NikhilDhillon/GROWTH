@@ -341,8 +341,8 @@ function parseScoredSets(sets: LoggedSetDraft[], unitSystem: UnitSystem, loadTyp
   if (parsed.length < 2) {
     throw new Error("Performance Points require at least two loaded sets.");
   }
-  if (parsed.some((set) => !Number.isInteger(set.reps) || set.reps < 1 || set.reps > 10)) {
-    throw new Error("Performance Points require 1 to 10 reps per set.");
+  if (parsed.some((set) => !Number.isInteger(set.reps) || set.reps < 1)) {
+    throw new Error("Performance Points require positive whole-number reps per set.");
   }
   if (parsed.some((set) => !Number.isFinite(set.weight) || (loadType === "external" ? set.weight <= 0 : set.weight < 0))) {
     throw new Error(loadType === "external"
