@@ -501,9 +501,12 @@ const styles = StyleSheet.create({
     gap: spacing.sm
   },
   barWeightInput: {
-    width: 84,
     flexGrow: 0,
-    flexShrink: 0
+    flexShrink: 0,
+    flexBasis: 88,
+    minWidth: 88,
+    width: 88,
+    paddingHorizontal: spacing.sm
   },
   loadedBar: {
     minHeight: 58,
