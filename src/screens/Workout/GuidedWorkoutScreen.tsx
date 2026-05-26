@@ -437,7 +437,7 @@ export function GuidedWorkoutScreen() {
           <Label>Sets</Label>
           {current.sets.map((set, index) => (
             <View key={index} style={styles.setRow}>
-              <Label>{index + 1}</Label>
+              <Label style={styles.setNumber}>{index + 1}</Label>
               <TextInput style={[styles.input, styles.setInput]} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} inputMode="decimal" placeholder={loadPlaceholder(loadType, unitSystem)} />
               <TextInput style={[styles.input, styles.setInput]} value={set.reps} onChangeText={(value) => updateSet(index, "reps", value)} inputMode="numeric" placeholder="reps" />
               <Pressable onPress={() => updateDraft({ sets: current.sets.map((item, itemIndex) => itemIndex === index ? { ...item, isWarmup: !item.isWarmup } : item) })} style={pressableFeedback([styles.setKindButton, set.isWarmup && styles.setKindButtonActive])}>
@@ -632,15 +632,16 @@ const styles = StyleSheet.create({
   secondaryButton: { minHeight: 42, borderRadius: 8, borderWidth: 1, borderColor: palette.border, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: spacing.xs, paddingHorizontal: spacing.md },
   endButton: { minHeight: 46, borderRadius: 9, borderWidth: 1, borderColor: palette.border, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.lg },
   buttonText: { color: palette.ink, fontWeight: "800" },
-  setRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  setRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs, width: "100%", minWidth: 0 },
+  setNumber: { width: 18, textAlign: "center", flexShrink: 0 },
   input: { minHeight: 44, borderWidth: 1, borderColor: palette.border, borderRadius: 8, backgroundColor: palette.surface, paddingHorizontal: spacing.sm, color: palette.ink, fontSize: 16 },
-  setInput: { flex: 1 },
-  setKindButton: { minHeight: 42, borderRadius: 8, borderWidth: 1, borderColor: palette.border, justifyContent: "center", paddingHorizontal: spacing.sm },
+  setInput: { flex: 1, flexBasis: 0, minWidth: 0 },
+  setKindButton: { minHeight: 42, flexShrink: 0, borderRadius: 8, borderWidth: 1, borderColor: palette.border, justifyContent: "center", paddingHorizontal: spacing.xs },
   setKindButtonActive: { backgroundColor: palette.accentSoft, borderColor: palette.accent },
-  setKindText: { color: palette.ink, fontWeight: "800", fontSize: 12 },
+  setKindText: { color: palette.ink, fontWeight: "800", fontSize: 11 },
   setKindTextActive: { color: palette.accent },
   notes: { minHeight: 72, textAlignVertical: "top", paddingTop: spacing.sm },
-  iconButton: { width: 42, height: 42, borderRadius: 8, borderWidth: 1, borderColor: palette.border, alignItems: "center", justifyContent: "center" },
+  iconButton: { width: 42, height: 42, flexShrink: 0, borderRadius: 8, borderWidth: 1, borderColor: palette.border, alignItems: "center", justifyContent: "center" },
   barCalculator: { backgroundColor: palette.surfaceAlt, borderRadius: 10, padding: spacing.md, gap: spacing.md },
   barInput: { width: 68 },
   loadedBar: { height: 62, flexDirection: "row", alignItems: "center", justifyContent: "center" },
