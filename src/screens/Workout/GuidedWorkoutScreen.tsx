@@ -468,7 +468,7 @@ function BarCalculator({ barWeight, plateCounts, loadedBarWeight, unitSystem, on
       <View style={styles.loadedBar}>
         <View style={styles.plateStack}>{[...plateWeights].reverse().flatMap((plate) => Array.from({ length: Number(plateCounts[plate] ?? 0) }, (_, index) => <View key={`left-${plate}-${index}`} style={[styles.plate, plateVisuals[plate]]} />))}</View>
         <View style={styles.sleeve} /><View style={styles.shaft} /><View style={styles.sleeve} />
-        <View style={[styles.plateStack, styles.rightPlates]}>{plateWeights.flatMap((plate) => Array.from({ length: Number(plateCounts[plate] ?? 0) }, (_, index) => <View key={`right-${plate}-${index}`} style={[styles.plate, plateVisuals[plate]]} />))}</View>
+        <View style={styles.plateStack}>{plateWeights.flatMap((plate) => Array.from({ length: Number(plateCounts[plate] ?? 0) }, (_, index) => <View key={`right-${plate}-${index}`} style={[styles.plate, plateVisuals[plate]]} />))}</View>
       </View>
       <View style={styles.chips}>
         {plateWeights.map((plate) => (
@@ -577,7 +577,6 @@ const styles = StyleSheet.create({
   barInput: { width: 68 },
   loadedBar: { height: 62, flexDirection: "row", alignItems: "center", justifyContent: "center" },
   plateStack: { flexDirection: "row", alignItems: "center", height: 62 },
-  rightPlates: { flexDirection: "row-reverse" },
   plate: { borderRadius: 2, marginHorizontal: 1 },
   sleeve: { width: 14, height: 7, backgroundColor: palette.muted },
   shaft: { width: 98, height: 4, backgroundColor: palette.ink },
