@@ -1,6 +1,8 @@
 import { categoryForExercise } from "@/constants/guidedWorkout";
 import { Exercise, GuidedExerciseCategory, GuidedSessionOutcome, GuidedWorkoutPreferences, LoggedSetDraft, WorkoutSession, WorkoutSet } from "@/types";
 
+const prescribedWorkingSetCount = 3;
+
 export type GuidedSetTarget = {
   draftIndex: number;
   workingSetNumber: number;
@@ -104,10 +106,8 @@ export function buildGuidedRecommendation(input: {
   draftWarmups: boolean[];
 }): GuidedRecommendation {
   const category = categoryForExercise(input.exercise.name, input.preferences);
-  const draftWorkingIndexes = input.draftWarmups
-    .map((warmup, index) => warmup ? -1 : index)
-    .filter((index) => index >= 0);
-  const requiredSetCount = draftWorkingIndexes.length;
+  const draftWorkingIndexes = prescribedWorkingIndexes(input.draftWarmups);
+  const requiredSetCount = prescribedWorkingSetCount;
   const summaries = exerciseSessions(input.exercise.id, input.sessions, input.sets);
   const latest = summaries.at(-1);
   const inactive = latest ? daysBetween(latest.date, input.workoutDate) > input.preferences.inactivityDays : false;
@@ -161,6 +161,17 @@ export function buildGuidedRecommendation(input: {
     : undefined;
 
   return { category, targets, latest, best, topSetBest, backoffBest, inactive, topSetReady, backoffReady, blockReady };
+}
+
+function prescribedWorkingIndexes(draftWarmups: boolean[]) {
+  const indexes = draftWarmups
+    .map((warmup, index) => warmup ? -1 : index)
+    .filter((index) => index >= 0)
+    .slice(0, prescribedWorkingSetCount);
+  for (let index = draftWarmups.length; indexes.length < prescribedWorkingSetCount; index += 1) {
+    indexes.push(index);
+  }
+  return indexes;
 }
 
 function exerciseSessions(exerciseId: number, sessions: WorkoutSession[], sets: WorkoutSet[]) {

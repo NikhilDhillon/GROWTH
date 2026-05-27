@@ -21,6 +21,8 @@ import { formatBodyWeight, formatWeight, formatWeightInput, weightToStorageUnit 
 
 const plateWeights = [45, 35, 25, 10, 5] as const;
 type PlateWeight = typeof plateWeights[number];
+type PlateCounts = Record<PlateWeight, number>;
+const emptyPlateCounts = (): PlateCounts => ({ 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 });
 const plateVisuals: Record<PlateWeight, { backgroundColor: string; height: number; width: number }> = {
   45: { backgroundColor: "#2563eb", height: 52, width: 11 },
   35: { backgroundColor: "#eab308", height: 46, width: 10 },
@@ -429,6 +431,8 @@ export function GuidedWorkoutScreen() {
               unitSystem={unitSystem}
               onBarWeight={(barWeight) => updateDraft({ barWeight })}
               onPlateCount={(plate, amount) => updateDraft({ plateCounts: { ...current.plateCounts, [plate]: Math.max(0, Number(current.plateCounts[plate] ?? 0) + amount) } })}
+              onTotalLoad={(totalLoad) => updateDraft({ plateCounts: calculatePlateCounts(totalLoad, current.barWeight) })}
+              onReset={() => updateDraft({ barWeight: "45", plateCounts: emptyPlateCounts() })}
               onApply={(index) => updateSet(index, "weight", formatWeightInput(loadedBarWeight, unitSystem))}
               setCount={current.sets.length}
             />
@@ -518,23 +522,58 @@ function TimerDisplay({ startedAt, now }: { startedAt: string; now: number }) {
   );
 }
 
-function BarCalculator({ barWeight, plateCounts, loadedBarWeight, unitSystem, onBarWeight, onPlateCount, onApply, setCount }: {
+function BarCalculator({ barWeight, plateCounts, loadedBarWeight, unitSystem, onBarWeight, onPlateCount, onTotalLoad, onReset, onApply, setCount }: {
   barWeight: string;
   plateCounts: Record<string, number>;
   loadedBarWeight: number;
   unitSystem: "lb" | "kg";
   onBarWeight: (value: string) => void;
   onPlateCount: (plate: PlateWeight, amount: number) => void;
+  onTotalLoad: (value: string) => void;
+  onReset: () => void;
   onApply: (index: number) => void;
   setCount: number;
 }) {
+  const [totalLoadDraft, setTotalLoadDraft] = useState(formatLoadedBarWeight(loadedBarWeight));
+  const [editingTotalLoad, setEditingTotalLoad] = useState(false);
+
+  useEffect(() => {
+    if (!editingTotalLoad) setTotalLoadDraft(formatLoadedBarWeight(loadedBarWeight));
+  }, [editingTotalLoad, loadedBarWeight]);
+
   return (
     <View style={styles.barCalculator}>
       <View style={styles.summaryRow}>
         <View style={styles.flex}>
           <Label>Plate calculator</Label>
-          <Body>Total load: {loadedBarWeight.toFixed(1).replace(".0", "")} lb</Body>
+          <Body>Loaded bar: {formatLoadedBarWeight(loadedBarWeight)} lb</Body>
         </View>
+        <Pressable onPress={() => {
+          setEditingTotalLoad(false);
+          setTotalLoadDraft("45");
+          onReset();
+        }} style={pressableFeedback(styles.resetButton)}>
+          <Body style={styles.buttonText}>Reset</Body>
+        </Pressable>
+      </View>
+      <View style={styles.calculatorInputRow}>
+        <Label>Total load</Label>
+        <TextInput
+          style={[styles.input, styles.barInput]}
+          value={totalLoadDraft}
+          onFocus={() => setEditingTotalLoad(true)}
+          onBlur={() => setEditingTotalLoad(false)}
+          onChangeText={(value) => {
+            setTotalLoadDraft(value);
+            onTotalLoad(value);
+          }}
+          keyboardType="decimal-pad"
+          inputMode="decimal"
+          placeholder="135"
+        />
+        <Body>lb</Body>
+      </View>
+      <View style={styles.calculatorInputRow}>
         <Label>Bar</Label>
         <TextInput style={[styles.input, styles.barInput]} value={barWeight} onChangeText={onBarWeight} inputMode="decimal" placeholder="45" />
         <Body>lb</Body>
@@ -569,9 +608,27 @@ function BarCalculator({ barWeight, plateCounts, loadedBarWeight, unitSystem, on
 }
 
 function calculateLoadedBarWeight(barWeight: string, counts: Record<string, number>) {
-  const parsed = Number(barWeight.trim().replace(",", "."));
-  const bar = Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  const bar = parseWeight(barWeight);
   return bar + plateWeights.reduce((total, plate) => total + plate * Number(counts[plate] ?? 0) * 2, 0);
+}
+
+function calculatePlateCounts(totalLoad: string, barWeight: string) {
+  let remainingPerSide = Math.max(0, (parseWeight(totalLoad) - parseWeight(barWeight)) / 2);
+  return plateWeights.reduce<PlateCounts>((counts, plate) => {
+    const count = Math.floor((remainingPerSide + Number.EPSILON) / plate);
+    counts[plate] = count;
+    remainingPerSide -= count * plate;
+    return counts;
+  }, emptyPlateCounts());
+}
+
+function parseWeight(value: string) {
+  const parsed = Number(value.trim().replace(",", "."));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function formatLoadedBarWeight(weight: number) {
+  return weight.toFixed(1).replace(".0", "");
 }
 
 function loadInstruction(loadType: ExerciseLoadType, bodyWeight?: number) {
@@ -643,6 +700,8 @@ const styles = StyleSheet.create({
   notes: { minHeight: 72, textAlignVertical: "top", paddingTop: spacing.sm },
   iconButton: { width: 42, height: 42, flexShrink: 0, borderRadius: 8, borderWidth: 1, borderColor: palette.border, alignItems: "center", justifyContent: "center" },
   barCalculator: { backgroundColor: palette.surfaceAlt, borderRadius: 10, padding: spacing.md, gap: spacing.md },
+  calculatorInputRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  resetButton: { minHeight: 38, borderRadius: 8, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, justifyContent: "center", paddingHorizontal: spacing.md },
   barInput: { width: 68 },
   loadedBar: { height: 62, flexDirection: "row", alignItems: "center", justifyContent: "center" },
   plateStack: { flexDirection: "row", alignItems: "center", height: 62 },

@@ -45,6 +45,7 @@ export function WorkoutScreen() {
   const [draftSets, setDraftSets] = useState<LoggedSetDraft[]>([emptySet(), emptySet(), emptySet()]);
   const [barWeight, setBarWeight] = useState("45");
   const [plateCounts, setPlateCounts] = useState<PlateCounts>(emptyPlateCounts());
+  const [totalLoadDraft, setTotalLoadDraft] = useState("45");
   const [weightDraft, setWeightDraft] = useState("");
   const [workoutDate, setWorkoutDate] = useState(todayIso());
   const [notes, setNotes] = useState("");
@@ -129,11 +130,19 @@ export function WorkoutScreen() {
   }
 
   function changePlateCount(plate: PlateWeight, increment: number) {
-    setPlateCounts((current) => ({ ...current, [plate]: Math.max(0, current[plate] + increment) }));
+    const next = { ...plateCounts, [plate]: Math.max(0, plateCounts[plate] + increment) };
+    setPlateCounts(next);
+    setTotalLoadDraft(formatLoadedBarWeight(calculateLoadedBarWeight(barWeight, next)));
   }
 
   function updateBarWeight(value: string) {
     setBarWeight(value);
+    setTotalLoadDraft(formatLoadedBarWeight(calculateLoadedBarWeight(value, plateCounts)));
+  }
+
+  function updateTotalLoad(value: string) {
+    setTotalLoadDraft(value);
+    setPlateCounts(calculatePlateCounts(value, barWeight));
   }
 
   function applyLoadedBarWeight(index: number) {
@@ -144,6 +153,7 @@ export function WorkoutScreen() {
   function resetLoadedBar() {
     setBarWeight("45");
     setPlateCounts(emptyPlateCounts());
+    setTotalLoadDraft("45");
   }
 
   return (
@@ -245,11 +255,24 @@ export function WorkoutScreen() {
             <View style={styles.rowBetween}>
               <View>
                 <Label>Plate calculator</Label>
-                <Body>Total load: {loadedBarWeight.toFixed(1).replace(".0", "")} lb</Body>
+                <Body>Loaded bar: {formatLoadedBarWeight(loadedBarWeight)} lb</Body>
               </View>
               <Pressable hitSlop={touchHitSlop} onPress={resetLoadedBar} style={pressableFeedback(styles.resetButton)}>
                 <Body style={styles.buttonText}>Reset</Body>
               </Pressable>
+            </View>
+            <View style={styles.barWeightRow}>
+              <Label>Total load</Label>
+              <TextInput
+                style={[styles.input, styles.barWeightInput]}
+                value={totalLoadDraft}
+                onChangeText={updateTotalLoad}
+                onBlur={() => setTotalLoadDraft(formatLoadedBarWeight(loadedBarWeight))}
+                keyboardType="decimal-pad"
+                inputMode="decimal"
+                placeholder="135"
+              />
+              <Body>lb</Body>
             </View>
             <View style={styles.barWeightRow}>
               <Label>Bar weight</Label>
@@ -363,9 +386,27 @@ function loadInstruction(loadType: ExerciseLoadType, bodyWeight?: number) {
 }
 
 function calculateLoadedBarWeight(barWeight: string, plateCounts: PlateCounts) {
-  const parsedBarWeight = Number(barWeight.trim().replace(",", "."));
-  const bar = Number.isFinite(parsedBarWeight) && parsedBarWeight >= 0 ? parsedBarWeight : 0;
+  const bar = parseWeight(barWeight);
   return bar + plateWeights.reduce((total, plate) => total + plate * plateCounts[plate] * 2, 0);
+}
+
+function calculatePlateCounts(totalLoad: string, barWeight: string) {
+  let remainingPerSide = Math.max(0, (parseWeight(totalLoad) - parseWeight(barWeight)) / 2);
+  return plateWeights.reduce<PlateCounts>((counts, plate) => {
+    const count = Math.floor((remainingPerSide + Number.EPSILON) / plate);
+    counts[plate] = count;
+    remainingPerSide -= count * plate;
+    return counts;
+  }, emptyPlateCounts());
+}
+
+function parseWeight(value: string) {
+  const parsed = Number(value.trim().replace(",", "."));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function formatLoadedBarWeight(weight: number) {
+  return weight.toFixed(1).replace(".0", "");
 }
 
 const styles = StyleSheet.create({
