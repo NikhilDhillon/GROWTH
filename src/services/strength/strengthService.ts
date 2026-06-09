@@ -1,4 +1,4 @@
-import { ExerciseLoadType, getExerciseLoadType } from "@/constants/exercises";
+import { ExerciseLoadType, getExerciseLoadType, isBodyweightLoadType } from "@/constants/exercises";
 import { getClosestBodyweightForDate } from "@/services/analytics/bulkAnalyticsService";
 import { BodyWeightLog, Exercise, ExerciseScorePoint, MuscleGroup, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, TrendStatus, WorkoutSession, WorkoutSet } from "@/types";
 import { muscles } from "@/utils/theme";
@@ -105,7 +105,7 @@ export function buildExerciseScorePoints(exercises: Exercise[], sessions: Workou
   const output: ExerciseScorePoint[] = [];
   for (const session of sessionsToScore) {
     const loadType = getExerciseLoadType(session.exerciseName);
-    const bodyWeight = loadType === "external" ? undefined : getClosestBodyweightForDate(session.date, bodyWeightLogs)?.weight;
+    const bodyWeight = isBodyweightLoadType(loadType) ? getClosestBodyweightForDate(session.date, bodyWeightLogs)?.weight : undefined;
     const reference = findStrengthReference(output.filter((point) => point.exerciseId === session.exerciseId));
     const metrics = calculateSessionPerformance(session.sets, reference, { loadType, bodyWeight });
     if (!metrics) continue;
@@ -193,12 +193,12 @@ function isScoreableSet(set: ScoreableSet) {
 }
 
 function isValidEnteredSet(set: ScoreableSet, loadType: ExerciseLoadType) {
-  return Number.isFinite(set.weight) && (loadType === "external" ? set.weight > 0 : set.weight >= 0) &&
+  return Number.isFinite(set.weight) && (isBodyweightLoadType(loadType) ? set.weight >= 0 : set.weight > 0) &&
     Number.isInteger(set.reps) && set.reps >= 1;
 }
 
 function effectiveWeight(weight: number, loadType: ExerciseLoadType, bodyWeight?: number) {
-  if (loadType === "external") return weight;
+  if (!isBodyweightLoadType(loadType)) return weight;
   if (!Number.isFinite(bodyWeight) || !bodyWeight) return 0;
   return loadType === "bodyweight_plus_load" ? bodyWeight + weight : bodyWeight - weight;
 }

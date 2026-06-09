@@ -3,21 +3,23 @@ import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from "react
 import { useNavigation } from "@react-navigation/native";
 import { Check, ChevronRight, Plus, Timer, Trash2, X } from "lucide-react-native";
 
+import { MachineProfilePanel } from "@/components/MachineProfilePanel";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { activePlannedExerciseMuscles, emptyActiveExercise, exerciseMuscleToSplitMuscle, splitMuscleToExerciseMuscle } from "@/constants/activeWorkout";
-import { ExerciseLoadType, getExerciseLoadType, supportsBarbellCalculator } from "@/constants/exercises";
+import { ExerciseLoadType, getExerciseLoadType, isBodyweightLoadType, isMachineLoadType, supportsBarbellCalculator } from "@/constants/exercises";
 import { guidedCategoryLabels } from "@/constants/guidedWorkout";
+import { preferredMachineProfile, profileAppliesToExercise } from "@/constants/machineProfiles";
 import { cloneTrainingSplitDays } from "@/constants/trainingSplit";
 import { getClosestBodyweightForDate } from "@/services/analytics/bulkAnalyticsService";
 import { buildGuidedRecommendation, buildGuidedSessionOutcome } from "@/services/guidedWorkout/guidedWorkoutService";
 import { calculateSessionPerformance, findStrengthReference } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { ActiveWorkout, CompletedGuidedWorkout, LoggedSetDraft, MuscleGroup, SplitMuscle, TrainingSplitDay } from "@/types";
+import { ActiveWorkout, CompletedGuidedWorkout, LoggedSetDraft, MachineProfile, MuscleGroup, SplitMuscle, TrainingSplitDay } from "@/types";
 import { muscles, palette, spacing } from "@/utils/theme";
 import { pressableFeedback, touchHitSlop } from "@/utils/touch";
-import { formatBodyWeight, formatWeight, formatWeightInput, weightToStorageUnit } from "@/utils/units";
+import { formatBodyWeight, formatWeight, formatWeightInput, weightFromStorageUnit, weightToStorageUnit } from "@/utils/units";
 
 const plateWeights = [45, 35, 25, 10, 5] as const;
 type PlateWeight = typeof plateWeights[number];
@@ -39,10 +41,12 @@ export function GuidedWorkoutScreen() {
   const sets = useFitnessStore((state) => state.sets);
   const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
+  const machineProfiles = useFitnessStore((state) => state.machineProfiles);
   const trainingSplit = useFitnessStore((state) => state.trainingSplit);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const guidedWorkoutPreferences = useFitnessStore((state) => state.guidedWorkoutPreferences);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
+  const saveMachineProfile = useFitnessStore((state) => state.saveMachineProfile);
   const saveTrainingSplit = useFitnessStore((state) => state.saveTrainingSplit);
   const updateActiveWorkout = useFitnessStore((state) => state.updateActiveWorkout);
   const finishActiveWorkout = useFitnessStore((state) => state.finishActiveWorkout);
@@ -82,14 +86,26 @@ export function GuidedWorkoutScreen() {
     ? muscles
     : [...plannedMuscles, ...(current.muscle && !plannedMuscles.includes(current.muscle) ? [current.muscle] : [])];
   const loadType = getExerciseLoadType(selectedExercise?.name ?? "");
-  const selectedBodyWeight = loadType === "external" ? null : getClosestBodyweightForDate(workout.workoutDate, bodyWeightLogs);
+  const selectedBodyWeight = isBodyweightLoadType(loadType) ? getClosestBodyweightForDate(workout.workoutDate, bodyWeightLogs) : null;
+  const selectedMachineProfile = machineProfiles.find((profile) => profile.id === current.machineProfileId) ?? null;
+  const lastMachineLoad = selectedExercise && isMachineLoadType(loadType)
+    ? latestMachineLoadForExercise({
+        exerciseId: selectedExercise.id,
+        machineProfileId: current.machineProfileId,
+        profile: selectedMachineProfile,
+        sessions,
+        sets,
+        unitSystem
+      })
+    : null;
   const recommendation = selectedExercise ? buildGuidedRecommendation({
     exercise: selectedExercise,
     preferences: guidedWorkoutPreferences,
     sessions,
     sets,
     workoutDate: workout.workoutDate,
-    draftWarmups: current.sets.map((set) => Boolean(set.isWarmup))
+    draftWarmups: current.sets.map((set) => Boolean(set.isWarmup)),
+    machineProfileId: isMachineLoadType(loadType) ? current.machineProfileId : null
   }) : null;
   const bestPerformance = selectedExercise ? findStrengthReference(exercisePoints.filter((point) => point.exerciseId === selectedExercise.id)) : undefined;
   const projectedPerformance = selectedExercise
@@ -116,7 +132,7 @@ export function GuidedWorkoutScreen() {
   function selectMuscle(muscle: MuscleGroup) {
     if (plannedMuscles.includes(muscle)) {
       setShowAlternateMuscles(false);
-      persist((active) => ({ ...active, pendingMuscle: null, schedulePrompt: null, currentExercise: { ...active.currentExercise, muscle, exerciseId: null } }));
+      persist((active) => ({ ...active, pendingMuscle: null, schedulePrompt: null, currentExercise: { ...active.currentExercise, muscle, exerciseId: null, machineProfileId: null } }));
       return;
     }
     persist((active) => ({ ...active, pendingMuscle: muscle, schedulePrompt: "off_plan" }));
@@ -125,7 +141,7 @@ export function GuidedWorkoutScreen() {
   function useOffPlanMuscleForWorkout() {
     if (!pendingMuscle) return;
     setShowAlternateMuscles(false);
-    persist((active) => ({ ...active, pendingMuscle: null, schedulePrompt: null, currentExercise: { ...active.currentExercise, muscle: pendingMuscle, exerciseId: null } }));
+    persist((active) => ({ ...active, pendingMuscle: null, schedulePrompt: null, currentExercise: { ...active.currentExercise, muscle: pendingMuscle, exerciseId: null, machineProfileId: null } }));
   }
 
   async function addOffPlanMuscle() {
@@ -155,7 +171,7 @@ export function GuidedWorkoutScreen() {
       persist((workout) => ({
         ...workout,
         plannedMuscles: [...(days.find((day) => day.key === workout.todayDayKey)?.muscles ?? workout.plannedMuscles)],
-        currentExercise: { ...workout.currentExercise, muscle, exerciseId: null },
+        currentExercise: { ...workout.currentExercise, muscle, exerciseId: null, machineProfileId: null },
         pendingMuscle: null,
         schedulePrompt: null,
         scheduleChanges: [...workout.scheduleChanges, scheduleChange]
@@ -213,6 +229,7 @@ export function GuidedWorkoutScreen() {
         exerciseId: selectedExercise.id,
         workoutDate: workout.workoutDate,
         notes: current.notes,
+        machineProfileId: isMachineLoadType(loadType) ? current.machineProfileId : null,
         sets: current.sets
       });
       const savedState = useFitnessStore.getState();
@@ -224,6 +241,8 @@ export function GuidedWorkoutScreen() {
       const completedExercise = {
         exerciseId: selectedExercise.id,
         sessionId,
+        machineProfileId: isMachineLoadType(loadType) ? current.machineProfileId : null,
+        machineProfileLabel: isMachineLoadType(loadType) ? selectedMachineProfile?.label ?? null : null,
         exerciseName: selectedExercise.name,
         muscle: selectedExercise.primary_muscle,
         sets: current.sets,
@@ -322,6 +341,7 @@ export function GuidedWorkoutScreen() {
             <ChevronRight size={18} color={palette.muted} />
           </View>
           <Body>{exercise.sets.filter((set) => set.reps || set.weight).map((set) => `${set.isWarmup ? "Warm-up: " : ""}${set.weight} ${unitSystem} x ${set.reps}`).join(" | ")}</Body>
+          {exercise.machineProfileLabel ? <Label>{exercise.machineProfileLabel}</Label> : null}
         </Panel>
       ))}
 
@@ -372,7 +392,7 @@ export function GuidedWorkoutScreen() {
             <Body>Choose an exercise:</Body>
             <View style={styles.chips}>
               {visibleExercises.map((exercise) => (
-                <Pressable key={exercise.id} onPress={() => updateDraft({ exerciseId: exercise.id })} style={pressableFeedback([styles.chip, current.exerciseId === exercise.id && styles.chipActive])}>
+                <Pressable key={exercise.id} onPress={() => chooseExercise(exercise.id)} style={pressableFeedback([styles.chip, current.exerciseId === exercise.id && styles.chipActive])}>
                   <Body style={[styles.chipText, current.exerciseId === exercise.id && styles.chipTextActive]}>{exercise.name}</Body>
                 </Pressable>
               ))}
@@ -419,8 +439,22 @@ export function GuidedWorkoutScreen() {
             ) : recommendation?.best ? <Body>Best completed target ({recommendation.best.date}): {formatSessionSets(recommendation.best.sets, unitSystem)}</Body> : null}
           </View>
 
-          {loadType !== "external" ? (
+          {isBodyweightLoadType(loadType) ? (
             <Body>{loadInstruction(loadType, selectedBodyWeight?.weight)}</Body>
+          ) : null}
+
+          {isMachineLoadType(loadType) ? (
+            <MachineProfilePanel
+              profiles={machineProfiles}
+              selectedProfileId={current.machineProfileId}
+              exerciseId={selectedExercise.id}
+              exerciseName={selectedExercise.name}
+              unitSystem={unitSystem}
+              lastLoad={lastMachineLoad}
+              onSelectProfile={(machineProfileId) => updateDraft({ machineProfileId })}
+              onSaveProfile={saveMachineProfile}
+              onApplyLoad={applyMachineLoad}
+            />
           ) : null}
 
           {supportsBarbellCalculator(selectedExercise.name) ? (
@@ -510,6 +544,27 @@ export function GuidedWorkoutScreen() {
 
   function updateSet(index: number, field: "weight" | "reps", value: string) {
     updateDraft({ sets: current.sets.map((set, itemIndex) => itemIndex === index ? { ...set, [field]: value } : set) });
+  }
+
+  function chooseExercise(exerciseId: number) {
+    const exercise = exercises.find((item) => item.id === exerciseId);
+    const nextLoadType = getExerciseLoadType(exercise?.name ?? "");
+    const currentProfile = machineProfiles.find((profile) => profile.id === current.machineProfileId) ?? null;
+    const machineProfileId = exercise && isMachineLoadType(nextLoadType)
+      ? profileAppliesToExercise(currentProfile, exercise.id)
+        ? currentProfile?.id ?? null
+        : preferredMachineProfile(machineProfiles, exercise.id)?.id ?? null
+      : null;
+    updateDraft({ exerciseId, machineProfileId });
+  }
+
+  function applyMachineLoad(load: string, mode: "blank" | "all") {
+    updateDraft({
+      sets: current.sets.map((set) => {
+        if (mode === "blank" && set.weight.trim()) return set;
+        return { ...set, weight: load };
+      })
+    });
   }
 }
 
@@ -637,10 +692,12 @@ function loadInstruction(loadType: ExerciseLoadType, bodyWeight?: number) {
 }
 
 function loadChangeInstruction(loadType: ExerciseLoadType) {
+  if (loadType === "machine_stack") return "Choose a higher stack";
   return loadType === "bodyweight_minus_assistance" ? "Choose less assistance" : "Choose a heavier load";
 }
 
 function loadPlaceholder(loadType: ExerciseLoadType, unitSystem: string) {
+  if (loadType === "machine_stack") return "stack";
   if (loadType === "bodyweight_plus_load") return `added ${unitSystem}`;
   if (loadType === "bodyweight_minus_assistance") return `assist ${unitSystem}`;
   return unitSystem;
@@ -667,6 +724,30 @@ function setRoleLabel(role: "working" | "top_set" | "backoff", number: number) {
 
 function formatSessionSets(sets: Array<{ weight: number; reps: number }>, unitSystem: "lb" | "kg") {
   return sets.map((set) => `${formatWeight(set.weight, unitSystem)} x ${set.reps}`).join(" | ");
+}
+
+function latestMachineLoadForExercise(input: {
+  exerciseId: number;
+  machineProfileId?: string | null;
+  profile: MachineProfile | null;
+  sessions: Array<{ id: number; workout_date: string; machine_profile_id?: string | null }>;
+  sets: Array<{ exercise_id: number; session_id: number; weight: number; set_number: number; created_at: string; is_warmup?: number | boolean | null }>;
+  unitSystem: "lb" | "kg";
+}) {
+  const sessionById = new Map(input.sessions.map((session) => [session.id, session]));
+  const matching = input.sets
+    .filter((set) => set.exercise_id === input.exerciseId && !set.is_warmup)
+    .filter((set) => !input.machineProfileId || sessionById.get(set.session_id)?.machine_profile_id === input.machineProfileId)
+    .sort((left, right) => {
+      const leftDate = sessionById.get(left.session_id)?.workout_date ?? left.created_at.slice(0, 10);
+      const rightDate = sessionById.get(right.session_id)?.workout_date ?? right.created_at.slice(0, 10);
+      return leftDate.localeCompare(rightDate) || left.session_id - right.session_id || left.set_number - right.set_number;
+    });
+  const weight = matching.at(-1)?.weight;
+  if (!Number.isFinite(weight)) return null;
+  if (input.profile?.stackUnit === "kg") return Number((Number(weight) / 2.2046226218).toFixed(1));
+  if (input.profile?.stackUnit === "plate") return Number(weightFromStorageUnit(Number(weight), input.unitSystem).toFixed(1));
+  return Number(Number(weight).toFixed(1));
 }
 
 const styles = StyleSheet.create({

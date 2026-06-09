@@ -3,6 +3,32 @@ export type MuscleGroup = "Chest" | "Back" | "Shoulders" | "Biceps" | "Triceps" 
 export type TrendStatus = "Increasing" | "Stable" | "Decreasing";
 export type UnitSystem = "lb" | "kg";
 export type GuidedExerciseCategory = "hypertrophy" | "strength" | "top_set" | "unguided";
+export type MachineStackUnit = UnitSystem | "plate";
+export type MachineProfileType =
+  | "single_pulley"
+  | "dual_pulley"
+  | "lat_pulldown"
+  | "low_row"
+  | "cable_crossover"
+  | "selectorized";
+
+export type MachineProfile = {
+  id: string;
+  label: string;
+  machineType: MachineProfileType;
+  stackUnit: MachineStackUnit;
+  increment: number;
+  minLoad: number;
+  maxLoad: number;
+  pulleyRatio: "unknown" | "1:1" | "2:1" | "4:1";
+  location?: string;
+  modelName?: string;
+  notes?: string;
+  exerciseIds: number[];
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt?: string | null;
+};
 
 export type GuidedWorkoutPreferences = {
   hypertrophyTargetReps: number;
@@ -35,6 +61,7 @@ export type WorkoutSession = {
   id: number;
   workout_date: string;
   notes?: string | null;
+  machine_profile_id?: string | null;
   created_at: string;
 };
 
@@ -133,6 +160,7 @@ export type LoggedSetDraft = {
 export type ActiveWorkoutExerciseDraft = {
   muscle: MuscleGroup | null;
   exerciseId: number | null;
+  machineProfileId?: string | null;
   sets: LoggedSetDraft[];
   notes: string;
   barWeight: string;
@@ -142,6 +170,8 @@ export type ActiveWorkoutExerciseDraft = {
 export type CompletedWorkoutExercise = {
   exerciseId: number;
   sessionId?: number;
+  machineProfileId?: string | null;
+  machineProfileLabel?: string | null;
   exerciseName: string;
   muscle: MuscleGroup;
   sets: LoggedSetDraft[];

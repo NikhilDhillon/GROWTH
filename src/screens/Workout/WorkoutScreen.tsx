@@ -3,18 +3,20 @@ import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from "react
 import { Check, Copy, Plus, Save, Trash2 } from "lucide-react-native";
 
 import { DatePickerField } from "@/components/DatePickerField";
+import { MachineProfilePanel } from "@/components/MachineProfilePanel";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
-import { ExerciseLoadType, getExerciseLoadType, supportsBarbellCalculator } from "@/constants/exercises";
+import { ExerciseLoadType, getExerciseLoadType, isBodyweightLoadType, isMachineLoadType, supportsBarbellCalculator } from "@/constants/exercises";
+import { preferredMachineProfile, profileAppliesToExercise } from "@/constants/machineProfiles";
 import { getClosestBodyweightForDate } from "@/services/analytics/bulkAnalyticsService";
 import { calculateSessionPerformance, findStrengthReference } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { LoggedSetDraft, MuscleGroup } from "@/types";
+import { LoggedSetDraft, MachineProfile, MuscleGroup } from "@/types";
 import { todayIso } from "@/utils/date";
 import { muscles, palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
-import { bodyWeightDisplayUnit, formatBodyWeight, formatWeightInput, weightToStorageUnit } from "@/utils/units";
+import { bodyWeightDisplayUnit, formatBodyWeight, formatWeightInput, weightFromStorageUnit, weightToStorageUnit } from "@/utils/units";
 
 const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
 const plateWeights = [45, 35, 25, 10, 5] as const;
@@ -32,10 +34,13 @@ type SaveState = "idle" | "saving" | "saved";
 
 export function WorkoutScreen() {
   const allExercises = useFitnessStore((state) => state.exercises);
+  const sessions = useFitnessStore((state) => state.sessions);
   const sets = useFitnessStore((state) => state.sets);
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
   const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
+  const machineProfiles = useFitnessStore((state) => state.machineProfiles);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
+  const saveMachineProfile = useFitnessStore((state) => state.saveMachineProfile);
   const saveBodyWeightLog = useFitnessStore((state) => state.saveBodyWeightLog);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const exercises = useMemo(() => allExercises.filter((exercise) => exercise.is_strength_exercise), [allExercises]);
@@ -49,6 +54,7 @@ export function WorkoutScreen() {
   const [weightDraft, setWeightDraft] = useState("");
   const [workoutDate, setWorkoutDate] = useState(todayIso());
   const [notes, setNotes] = useState("");
+  const [selectedMachineProfileId, setSelectedMachineProfileId] = useState<string | null>(null);
   const [workoutSaveState, setWorkoutSaveState] = useState<SaveState>("idle");
   const [weightSaveState, setWeightSaveState] = useState<SaveState>("idle");
   const [workoutError, setWorkoutError] = useState<string | null>(null);
@@ -72,7 +78,8 @@ export function WorkoutScreen() {
   const selectedExercise = selectedKind === "exercise" ? visibleExercises.find((exercise) => exercise.id === exerciseId) ?? visibleExercises[0] ?? null : null;
   const selectedLoadType = getExerciseLoadType(selectedExercise?.name ?? "");
   const showBarbellCalculator = supportsBarbellCalculator(selectedExercise?.name ?? "");
-  const selectedBodyWeight = selectedLoadType === "external" ? null : getClosestBodyweightForDate(workoutDate, bodyWeightLogs);
+  const selectedBodyWeight = isBodyweightLoadType(selectedLoadType) ? getClosestBodyweightForDate(workoutDate, bodyWeightLogs) : null;
+  const selectedMachineProfile = machineProfiles.find((profile) => profile.id === selectedMachineProfileId) ?? null;
   const loadedBarWeight = calculateLoadedBarWeight(barWeight, plateCounts);
   const previousSets = useMemo(() => {
     if (!selectedExercise) return [];
@@ -80,6 +87,31 @@ export function WorkoutScreen() {
     const lastDate = matching.at(-1)?.created_at.slice(0, 10);
     return matching.filter((set) => set.created_at.slice(0, 10) === lastDate);
   }, [selectedExercise, sets]);
+  const lastMachineLoad = useMemo(() => {
+    if (!selectedExercise || !isMachineLoadType(selectedLoadType)) return null;
+    const sessionById = new Map(sessions.map((session) => [session.id, session]));
+    const matchingSets = sets
+      .filter((set) => set.exercise_id === selectedExercise.id && !set.is_warmup)
+      .filter((set) => !selectedMachineProfileId || sessionById.get(set.session_id)?.machine_profile_id === selectedMachineProfileId)
+      .sort((a, b) => {
+        const left = sessionById.get(a.session_id)?.workout_date ?? a.created_at.slice(0, 10);
+        const right = sessionById.get(b.session_id)?.workout_date ?? b.created_at.slice(0, 10);
+        return left.localeCompare(right) || a.session_id - b.session_id || a.set_number - b.set_number;
+      });
+    return storageWeightToMachineLoad(matchingSets.at(-1)?.weight, selectedMachineProfile, unitSystem);
+  }, [selectedExercise, selectedLoadType, selectedMachineProfile, selectedMachineProfileId, sessions, sets, unitSystem]);
+
+  useEffect(() => {
+    if (!selectedExercise || !isMachineLoadType(selectedLoadType)) {
+      setSelectedMachineProfileId(null);
+      return;
+    }
+    setSelectedMachineProfileId((current) => {
+      const currentProfile = machineProfiles.find((profile) => profile.id === current) ?? null;
+      if (profileAppliesToExercise(currentProfile, selectedExercise.id)) return current;
+      return preferredMachineProfile(machineProfiles, selectedExercise.id)?.id ?? null;
+    });
+  }, [machineProfiles, selectedExercise, selectedLoadType]);
 
   const projectedPerformance = useMemo(() => {
     const reference = selectedExercise
@@ -101,7 +133,7 @@ export function WorkoutScreen() {
     setWorkoutSaveState("saving");
     setWorkoutError(null);
     try {
-      await saveWorkout({ exerciseId: selectedExercise.id, workoutDate, notes, sets: draftSets });
+      await saveWorkout({ exerciseId: selectedExercise.id, workoutDate, notes, machineProfileId: isMachineLoadType(selectedLoadType) ? selectedMachineProfileId : null, sets: draftSets });
       setDraftSets([emptySet(), emptySet(), emptySet()]);
       setNotes("");
       showSaved(setWorkoutSaveState);
@@ -154,6 +186,13 @@ export function WorkoutScreen() {
     setBarWeight("45");
     setPlateCounts(emptyPlateCounts());
     setTotalLoadDraft("45");
+  }
+
+  function applyMachineLoad(load: string, mode: "blank" | "all") {
+    setDraftSets((current) => current.map((set) => {
+      if (mode === "blank" && set.weight.trim()) return set;
+      return { ...set, weight: load };
+    }));
   }
 
   return (
@@ -241,14 +280,28 @@ export function WorkoutScreen() {
         <View style={styles.rowBetween}>
           <View>
             <SectionTitle>Working sets</SectionTitle>
-            <Body>Projected Performance Points: {projectedPerformance ? projectedPerformance.performancePoints.toFixed(1) : selectedLoadType !== "external" && !selectedBodyWeight ? "Log body weight first" : "..."}</Body>
+            <Body>Projected Performance Points: {projectedPerformance ? projectedPerformance.performancePoints.toFixed(1) : isBodyweightLoadType(selectedLoadType) && !selectedBodyWeight ? "Log body weight first" : "..."}</Body>
           </View>
           <Pressable accessibilityLabel="Duplicate previous workout" hitSlop={touchHitSlop} onPress={duplicatePrevious} style={pressableFeedback(styles.iconButton)}>
             <Copy size={18} color={palette.ink} />
           </Pressable>
         </View>
 
-        {selectedLoadType !== "external" ? <Body style={styles.loadHint}>{loadInstruction(selectedLoadType, selectedBodyWeight?.weight)}</Body> : null}
+        {isBodyweightLoadType(selectedLoadType) ? <Body style={styles.loadHint}>{loadInstruction(selectedLoadType, selectedBodyWeight?.weight)}</Body> : null}
+
+        {isMachineLoadType(selectedLoadType) && selectedExercise ? (
+          <MachineProfilePanel
+            profiles={machineProfiles}
+            selectedProfileId={selectedMachineProfileId}
+            exerciseId={selectedExercise.id}
+            exerciseName={selectedExercise.name}
+            unitSystem={unitSystem}
+            lastLoad={lastMachineLoad}
+            onSelectProfile={setSelectedMachineProfileId}
+            onSaveProfile={saveMachineProfile}
+            onApplyLoad={applyMachineLoad}
+          />
+        ) : null}
 
         {showBarbellCalculator ? (
           <View style={styles.barCalculator}>
@@ -374,6 +427,7 @@ function showSaved(setState: (state: SaveState) => void) {
 }
 
 function loadPlaceholder(loadType: ExerciseLoadType, unitSystem: string) {
+  if (loadType === "machine_stack") return "stack";
   if (loadType === "bodyweight_plus_load") return `added ${unitSystem}`;
   if (loadType === "bodyweight_minus_assistance") return `assist ${unitSystem}`;
   return unitSystem;
@@ -383,6 +437,13 @@ function loadInstruction(loadType: ExerciseLoadType, bodyWeight?: number) {
   const basis = bodyWeight ? `Body weight ${formatBodyWeight(bodyWeight)} is included.` : "Log body weight to calculate Performance Points.";
   if (loadType === "bodyweight_plus_load") return `Enter added weight only; use 0 for bodyweight reps. ${basis}`;
   return `Enter assistance weight; use 0 for unassisted reps. ${basis}`;
+}
+
+function storageWeightToMachineLoad(weight: number | undefined, profile: MachineProfile | null, unitSystem: "lb" | "kg") {
+  if (!Number.isFinite(weight)) return null;
+  if (profile?.stackUnit === "kg") return Number((Number(weight) / 2.2046226218).toFixed(1));
+  if (profile?.stackUnit === "plate") return Number(weightFromStorageUnit(Number(weight), unitSystem).toFixed(1));
+  return Number(Number(weight).toFixed(1));
 }
 
 function calculateLoadedBarWeight(barWeight: string, plateCounts: PlateCounts) {

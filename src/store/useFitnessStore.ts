@@ -1,12 +1,13 @@
 import { create } from "zustand";
 
-import { getExerciseLoadType } from "@/constants/exercises";
+import { getExerciseLoadType, isBodyweightLoadType, isMachineLoadType } from "@/constants/exercises";
 import { createDefaultGuidedWorkoutPreferences } from "@/constants/guidedWorkout";
+import { createMachineProfile, MachineProfileDraft, touchMachineProfile, upsertMachineProfile } from "@/constants/machineProfiles";
 import { createDefaultTrainingSplit } from "@/constants/trainingSplit";
 import { buildExerciseScorePoints, buildMuscleScorePoints, summarizeMuscles } from "@/services/strength/strengthService";
-import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, removeSplitSync as removeStoredSplitSync, requestPasswordReset, requestSplitSync as requestStoredSplitSync, respondSplitSync as respondStoredSplitSync, revokeFriendInvite as revokeStoredFriendInvite, saveActiveWorkout as saveStoredActiveWorkout, saveBodyWeightLog as saveStoredBodyWeightLog, saveCompletedGuidedWorkouts as saveStoredCompletedGuidedWorkouts, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateGuidedWorkoutPreferences as updateStoredGuidedWorkoutPreferences, updateTrainingSplit as updateStoredTrainingSplit, updateUnitSystem, updateWorkoutSession } from "@/database/database";
+import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, removeSplitSync as removeStoredSplitSync, requestPasswordReset, requestSplitSync as requestStoredSplitSync, respondSplitSync as respondStoredSplitSync, revokeFriendInvite as revokeStoredFriendInvite, saveActiveWorkout as saveStoredActiveWorkout, saveBodyWeightLog as saveStoredBodyWeightLog, saveCompletedGuidedWorkouts as saveStoredCompletedGuidedWorkouts, saveMachineProfiles as saveStoredMachineProfiles, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateGuidedWorkoutPreferences as updateStoredGuidedWorkoutPreferences, updateTrainingSplit as updateStoredTrainingSplit, updateUnitSystem, updateWorkoutSession } from "@/database/database";
 import { ParsedImportData } from "@/services/import/importService";
-import { ActiveWorkout, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, LoggedSetDraft, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, LoggedSetDraft, MachineProfile, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { todayIso } from "@/utils/date";
 import { bodyWeightDisplayUnit, bodyWeightToStorageUnit, weightToStorageUnit } from "@/utils/units";
 
@@ -24,6 +25,7 @@ type FitnessState = {
   trainingSplit: TrainingSplit;
   activeWorkout: ActiveWorkout | null;
   completedGuidedWorkouts: CompletedGuidedWorkout[];
+  machineProfiles: MachineProfile[];
   guidedWorkoutPreferences: GuidedWorkoutPreferences;
   exercisePoints: ExerciseScorePoint[];
   musclePoints: MuscleScorePoint[];
@@ -48,8 +50,8 @@ type FitnessState = {
   logout: () => Promise<void>;
   clearAuthError: () => void;
   setExerciseEnabled: (exerciseId: number, enabled: boolean) => Promise<void>;
-  saveWorkout: (input: { exerciseId: number; workoutDate: string; notes: string; sets: LoggedSetDraft[] }) => Promise<void>;
-  updateWorkoutLog: (input: { sessionId: number; exerciseId: number; workoutDate: string; notes: string; sets: LoggedSetDraft[] }) => Promise<void>;
+  saveWorkout: (input: { exerciseId: number; workoutDate: string; notes: string; machineProfileId?: string | null; sets: LoggedSetDraft[] }) => Promise<void>;
+  updateWorkoutLog: (input: { sessionId: number; exerciseId: number; workoutDate: string; notes: string; machineProfileId?: string | null; sets: LoggedSetDraft[] }) => Promise<void>;
   deleteWorkoutLog: (sessionId: number) => Promise<void>;
   saveBodyWeightLog: (input: { loggedDate: string; weight: string; unitSystem?: UnitSystem }) => Promise<void>;
   updateBodyWeightLog: (input: { id: number; loggedDate: string; weight: string; unitSystem?: UnitSystem }) => Promise<void>;
@@ -61,6 +63,7 @@ type FitnessState = {
   updateActiveWorkout: (activeWorkout: ActiveWorkout) => Promise<void>;
   finishActiveWorkout: (summary?: CompletedGuidedWorkout) => Promise<void>;
   saveGuidedWorkoutPreferences: (preferences: GuidedWorkoutPreferences) => Promise<void>;
+  saveMachineProfile: (profile: MachineProfileDraft) => Promise<MachineProfile>;
   setConfigWeight: (id: number, weightFactor: number) => Promise<void>;
 };
 
@@ -85,6 +88,7 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   trainingSplit: createDefaultTrainingSplit(),
   activeWorkout: null,
   completedGuidedWorkouts: [],
+  machineProfiles: [],
   guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(),
   exercisePoints: [],
   musclePoints: [],
@@ -115,6 +119,7 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
         trainingSplit: createDefaultTrainingSplit(),
         activeWorkout: null,
         completedGuidedWorkouts: [],
+        machineProfiles: [],
         guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(),
         exercisePoints: [],
         musclePoints: [],
@@ -267,7 +272,8 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
     const sets = parseScoredSets(input.sets, unitSystem, getExerciseLoadType(exercise?.name ?? ""));
     const workoutDate = /^\d{4}-\d{2}-\d{2}$/.test(input.workoutDate) ? input.workoutDate : todayIso();
 
-    await logWorkout({ exerciseId: input.exerciseId, workoutDate, notes: input.notes, sets });
+    await logWorkout({ exerciseId: input.exerciseId, workoutDate, notes: input.notes, machineProfileId: input.machineProfileId ?? null, sets });
+    await touchStoredMachineProfile(input.machineProfileId, input.exerciseId);
     await get().hydrate();
   },
   updateWorkoutLog: async (input) => {
@@ -276,7 +282,8 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
     const sets = parseScoredSets(input.sets, unitSystem, getExerciseLoadType(exercise?.name ?? ""));
     const workoutDate = /^\d{4}-\d{2}-\d{2}$/.test(input.workoutDate) ? input.workoutDate : todayIso();
 
-    await updateWorkoutSession({ sessionId: input.sessionId, exerciseId: input.exerciseId, workoutDate, notes: input.notes, sets });
+    await updateWorkoutSession({ sessionId: input.sessionId, exerciseId: input.exerciseId, workoutDate, notes: input.notes, machineProfileId: input.machineProfileId ?? null, sets });
+    await touchStoredMachineProfile(input.machineProfileId, input.exerciseId);
     await get().hydrate();
   },
   deleteWorkoutLog: async (sessionId) => {
@@ -337,6 +344,21 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
     const guidedWorkoutPreferences = await updateStoredGuidedWorkoutPreferences(preferences);
     set({ guidedWorkoutPreferences });
   },
+  saveMachineProfile: async (input) => {
+    const previous = get().machineProfiles;
+    const existing = input.id ? previous.find((profile) => profile.id === input.id) : undefined;
+    const profile = createMachineProfile(input, existing);
+    const machineProfiles = upsertMachineProfile(previous, profile);
+    set({ machineProfiles });
+    try {
+      const saved = await saveStoredMachineProfiles(machineProfiles);
+      set({ machineProfiles: saved });
+      return saved.find((item) => item.id === profile.id) ?? profile;
+    } catch (error) {
+      set({ machineProfiles: previous, authError: error instanceof Error ? error.message : "Could not save machine profile." });
+      throw error;
+    }
+  },
   setConfigWeight: async (id, weightFactor) => {
     await updateConfigWeight(id, weightFactor);
     await get().hydrate();
@@ -345,6 +367,15 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
 
 function parseWeightInput(value: string) {
   return Number(value.trim().replace(",", "."));
+}
+
+async function touchStoredMachineProfile(machineProfileId: string | null | undefined, exerciseId: number) {
+  if (!machineProfileId) return;
+  const current = useFitnessStore.getState().machineProfiles;
+  if (!current.some((profile) => profile.id === machineProfileId)) return;
+  const machineProfiles = touchMachineProfile(current, machineProfileId, exerciseId);
+  useFitnessStore.setState({ machineProfiles });
+  await saveStoredMachineProfiles(machineProfiles);
 }
 
 function parseScoredSets(sets: LoggedSetDraft[], unitSystem: UnitSystem, loadType: ReturnType<typeof getExerciseLoadType>) {
@@ -361,9 +392,11 @@ function parseScoredSets(sets: LoggedSetDraft[], unitSystem: UnitSystem, loadTyp
   if (parsed.some((set) => !Number.isInteger(set.reps) || set.reps < 1)) {
     throw new Error("Performance Points require positive whole-number reps per set.");
   }
-  if (parsed.some((set) => !Number.isFinite(set.weight) || (loadType === "external" ? set.weight <= 0 : set.weight < 0))) {
-    throw new Error(loadType === "external"
-      ? "Performance Points require external weight on every set."
+  if (parsed.some((set) => !Number.isFinite(set.weight) || (isBodyweightLoadType(loadType) ? set.weight < 0 : set.weight <= 0))) {
+    throw new Error(isMachineLoadType(loadType)
+      ? "Performance Points require a stack/load number on every set."
+      : !isBodyweightLoadType(loadType)
+        ? "Performance Points require external weight on every set."
       : "Added weight or assistance cannot be negative.");
   }
 

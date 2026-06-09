@@ -3,9 +3,10 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import { normalizeActiveWorkout, normalizeCompletedGuidedWorkouts } from "@/constants/activeWorkout";
 import { catalogExerciseRows } from "@/constants/exercises";
 import { createDefaultGuidedWorkoutPreferences, normalizeGuidedWorkoutPreferences } from "@/constants/guidedWorkout";
+import { normalizeMachineProfiles } from "@/constants/machineProfiles";
 import { createDefaultTrainingSplit, normalizeTrainingSplit } from "@/constants/trainingSplit";
 import { buildWorkoutFingerprint, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
-import { ActiveWorkout, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, Friend, FriendInvite, GuidedWorkoutPreferences, LeaderboardEntry, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, Friend, FriendInvite, GuidedWorkoutPreferences, LeaderboardEntry, MachineProfile, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 const storageKey = "growth.preview.database.v2";
@@ -28,6 +29,7 @@ type WebDatabase = {
   activeWorkout: ActiveWorkout | null;
   guidedWorkoutPreferences: GuidedWorkoutPreferences;
   completedGuidedWorkouts: CompletedGuidedWorkout[];
+  machineProfiles: MachineProfile[];
 };
 
 type ProfileRow = {
@@ -84,7 +86,7 @@ function now() {
 }
 
 function seedDatabase(): WebDatabase {
-  return { exercises: catalogExerciseRows(now()), sessions: [], sets: [], bodyWeightLogs: [], configs: [], exercisePreferences: [], users: [], currentUserId: null, unitSystem: "lb", importFingerprints: [], trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(), completedGuidedWorkouts: [] };
+  return { exercises: catalogExerciseRows(now()), sessions: [], sets: [], bodyWeightLogs: [], configs: [], exercisePreferences: [], users: [], currentUserId: null, unitSystem: "lb", importFingerprints: [], trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(), completedGuidedWorkouts: [], machineProfiles: [] };
 }
 
 function readDatabase(): WebDatabase {
@@ -107,7 +109,8 @@ function readDatabase(): WebDatabase {
       trainingSplit: normalizeTrainingSplit(parsed.trainingSplit),
       activeWorkout: normalizeActiveWorkout(parsed.activeWorkout),
       guidedWorkoutPreferences: normalizeGuidedWorkoutPreferences(parsed.guidedWorkoutPreferences),
-      completedGuidedWorkouts: normalizeCompletedGuidedWorkouts(parsed.completedGuidedWorkouts)
+      completedGuidedWorkouts: normalizeCompletedGuidedWorkouts(parsed.completedGuidedWorkouts),
+      machineProfiles: normalizeMachineProfiles(parsed.machineProfiles)
     };
   }
   const seeded = seedDatabase();
@@ -135,17 +138,18 @@ export async function loadAllData() {
     trainingSplit: data.trainingSplit,
     activeWorkout: data.activeWorkout,
     guidedWorkoutPreferences: data.guidedWorkoutPreferences,
-    completedGuidedWorkouts: data.completedGuidedWorkouts
+    completedGuidedWorkouts: data.completedGuidedWorkouts,
+    machineProfiles: data.machineProfiles
   };
 }
 
 async function loadCloudData(client: SupabaseClient) {
   const user = await requireCloudUser(client, false);
   if (!user) {
-    return { exercises: [], sessions: [], sets: [], bodyWeightLogs: [], configs: [], currentUser: null, unitSystem: "lb" as UnitSystem, trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(), completedGuidedWorkouts: [] };
+    return { exercises: [], sessions: [], sets: [], bodyWeightLogs: [], configs: [], currentUser: null, unitSystem: "lb" as UnitSystem, trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(), completedGuidedWorkouts: [], machineProfiles: [] };
   }
 
-  const [profileResult, exercisesResult, preferencesResult, sessionsResult, setsResult, bodyWeightResult, configsResult, settingResult, activeWorkoutResult, guidedWorkoutResult, completedWorkoutsResult] = await Promise.all([
+  const [profileResult, exercisesResult, preferencesResult, sessionsResult, setsResult, bodyWeightResult, configsResult, settingResult, activeWorkoutResult, guidedWorkoutResult, completedWorkoutsResult, machineProfilesResult] = await Promise.all([
     client.from("profiles").select("*").eq("id", user.id).maybeSingle<ProfileRow>(),
     client.from("exercises").select("*").order("name"),
     client.from("user_exercise_preferences").select("*").eq("user_id", user.id),
@@ -156,7 +160,8 @@ async function loadCloudData(client: SupabaseClient) {
     client.from("app_settings").select("value").eq("key", "unit_system").maybeSingle<{ value: UnitSystem }>(),
     client.from("app_settings").select("value").eq("key", "active_workout").maybeSingle<{ value: string }>(),
     client.from("app_settings").select("value").eq("key", "guided_workout_preferences").maybeSingle<{ value: string }>(),
-    client.from("app_settings").select("value").eq("key", "completed_guided_workouts").maybeSingle<{ value: string }>()
+    client.from("app_settings").select("value").eq("key", "completed_guided_workouts").maybeSingle<{ value: string }>(),
+    client.from("app_settings").select("value").eq("key", "machine_profiles").maybeSingle<{ value: string }>()
   ]);
 
   throwIfSupabaseError(profileResult.error);
@@ -172,6 +177,7 @@ async function loadCloudData(client: SupabaseClient) {
   throwIfSupabaseError(activeWorkoutResult.error);
   throwIfSupabaseError(guidedWorkoutResult.error);
   throwIfSupabaseError(completedWorkoutsResult.error);
+  throwIfSupabaseError(machineProfilesResult.error);
 
   const preferences = (preferencesResult.data ?? []) as UserExercisePreference[];
   const trainingSplit = await loadCloudTrainingSplit(client, user.id);
@@ -186,7 +192,8 @@ async function loadCloudData(client: SupabaseClient) {
     trainingSplit,
     activeWorkout: normalizeActiveWorkout(activeWorkoutResult.data?.value ? JSON.parse(activeWorkoutResult.data.value) : null),
     guidedWorkoutPreferences: normalizeGuidedWorkoutPreferences(guidedWorkoutResult.data?.value ? JSON.parse(guidedWorkoutResult.data.value) : null),
-    completedGuidedWorkouts: normalizeCompletedGuidedWorkouts(completedWorkoutsResult.data?.value ? JSON.parse(completedWorkoutsResult.data.value) : null)
+    completedGuidedWorkouts: normalizeCompletedGuidedWorkouts(completedWorkoutsResult.data?.value ? JSON.parse(completedWorkoutsResult.data.value) : null),
+    machineProfiles: normalizeMachineProfiles(machineProfilesResult.data?.value ? JSON.parse(machineProfilesResult.data.value) : null)
   };
 }
 
@@ -319,15 +326,24 @@ export async function setExerciseEnabled(exerciseId: number, enabled: boolean) {
   writeDatabase(data);
 }
 
-export async function logWorkout(input: { exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number; isWarmup?: boolean }[] }) {
+export async function logWorkout(input: { exerciseId: number; workoutDate: string; notes: string; machineProfileId?: string | null; sets: { reps: number; weight: number; isWarmup?: boolean }[] }) {
   if (supabase) {
     await requireCloudUser(supabase);
     const timestamp = `${input.workoutDate}T12:00:00.000Z`;
+    const sessionPayload = {
+      workout_date: input.workoutDate,
+      notes: input.notes,
+      created_at: timestamp,
+      ...(input.machineProfileId ? { machine_profile_id: input.machineProfileId } : {})
+    };
     const sessionResult = await supabase
       .from("workout_sessions")
-      .insert({ workout_date: input.workoutDate, notes: input.notes, created_at: timestamp })
+      .insert(sessionPayload)
       .select("id")
       .single<{ id: number }>();
+    if (sessionResult.error && isMissingMachineSessionColumnError(sessionResult.error) && input.machineProfileId) {
+      return logWorkout({ ...input, machineProfileId: null });
+    }
     throwIfSupabaseError(sessionResult.error);
     if (!sessionResult.data) throw new Error("Could not save workout session.");
 
@@ -353,6 +369,7 @@ export async function logWorkout(input: { exerciseId: number; workoutDate: strin
     id: sessionId,
     workout_date: input.workoutDate,
     notes: input.notes,
+    machine_profile_id: input.machineProfileId ?? null,
     created_at: timestamp
   });
 
@@ -605,16 +622,24 @@ export async function deleteBodyWeightLog(id: number) {
   writeDatabase(data);
 }
 
-export async function updateWorkoutSession(input: { sessionId: number; exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number; isWarmup?: boolean }[] }) {
+export async function updateWorkoutSession(input: { sessionId: number; exerciseId: number; workoutDate: string; notes: string; machineProfileId?: string | null; sets: { reps: number; weight: number; isWarmup?: boolean }[] }) {
   const timestamp = `${input.workoutDate}T12:00:00.000Z`;
 
   if (supabase) {
     await requireCloudUser(supabase);
     const sessionResult = await supabase
       .from("workout_sessions")
-      .update({ workout_date: input.workoutDate, notes: input.notes, created_at: timestamp })
+      .update({ workout_date: input.workoutDate, notes: input.notes, machine_profile_id: input.machineProfileId ?? null, created_at: timestamp })
       .eq("id", input.sessionId);
-    throwIfSupabaseError(sessionResult.error);
+    if (sessionResult.error && isMissingMachineSessionColumnError(sessionResult.error)) {
+      const fallbackSessionResult = await supabase
+        .from("workout_sessions")
+        .update({ workout_date: input.workoutDate, notes: input.notes, created_at: timestamp })
+        .eq("id", input.sessionId);
+      throwIfSupabaseError(fallbackSessionResult.error);
+    } else {
+      throwIfSupabaseError(sessionResult.error);
+    }
 
     const deleteResult = await supabase.from("workout_sets").delete().eq("session_id", input.sessionId);
     throwIfSupabaseError(deleteResult.error);
@@ -641,6 +666,7 @@ export async function updateWorkoutSession(input: { sessionId: number; exerciseI
           ...session,
           workout_date: input.workoutDate,
           notes: input.notes,
+          machine_profile_id: input.machineProfileId ?? null,
           created_at: timestamp
         }
       : session
@@ -765,6 +791,24 @@ export async function saveCompletedGuidedWorkouts(workouts: CompletedGuidedWorko
   const data = readDatabase();
   data.completedGuidedWorkouts = normalized;
   writeDatabase(data);
+}
+
+export async function saveMachineProfiles(profiles: MachineProfile[]) {
+  const normalized = normalizeMachineProfiles(profiles);
+  if (supabase) {
+    const user = await requireCloudUser(supabase);
+    if (!user) throw new Error("Please log in again.");
+    const result = await supabase
+      .from("app_settings")
+      .upsert({ user_id: user.id, key: "machine_profiles", value: JSON.stringify(normalized) }, { onConflict: "user_id,key" });
+    throwIfSupabaseError(result.error);
+    return normalized;
+  }
+
+  const data = readDatabase();
+  data.machineProfiles = normalized;
+  writeDatabase(data);
+  return normalized;
 }
 
 export async function loadSocialData(): Promise<SocialData> {
@@ -1027,6 +1071,12 @@ function isMissingTrainingSplitError(error: { message: string; code?: string } |
       error.message.includes("remove_split_sync")) &&
     (error.message.includes("schema cache") || error.message.includes("does not exist") || error.code === "PGRST205")
   );
+}
+
+function isMissingMachineSessionColumnError(error: { message: string; code?: string } | null) {
+  if (!error) return false;
+  return error.message.includes("machine_profile_id") &&
+    (error.message.includes("schema cache") || error.message.includes("does not exist") || error.code === "PGRST204" || error.code === "PGRST205");
 }
 
 async function loadCloudTrainingSplit(client: SupabaseClient, userId: string) {

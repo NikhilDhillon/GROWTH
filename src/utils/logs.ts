@@ -1,5 +1,5 @@
 import { ExerciseLoadType, getExerciseLoadType } from "@/constants/exercises";
-import { Exercise, ExerciseScorePoint, UnitSystem, WorkoutSession, WorkoutSet } from "@/types";
+import { Exercise, ExerciseScorePoint, MachineProfile, UnitSystem, WorkoutSession, WorkoutSet } from "@/types";
 import { formatWeight } from "@/utils/units";
 
 export type PreviousLog = {
@@ -7,20 +7,25 @@ export type PreviousLog = {
   sessionId: number;
   exerciseId: number;
   exerciseName: string;
+  machineProfileId?: string | null;
+  machineProfileLabel?: string | null;
   sets: string[];
   score: number;
   point?: ExerciseScorePoint;
 };
 
-export function buildPreviousLogs(input: { exerciseId?: number; exercises: Exercise[]; sessions: WorkoutSession[]; sets: WorkoutSet[]; points: ExerciseScorePoint[]; unitSystem: UnitSystem }) {
+export function buildPreviousLogs(input: { exerciseId?: number; exercises: Exercise[]; sessions: WorkoutSession[]; sets: WorkoutSet[]; points: ExerciseScorePoint[]; unitSystem: UnitSystem; machineProfiles?: MachineProfile[] }) {
   const sessionById = new Map(input.sessions.map((session) => [session.id, session]));
   const exerciseById = new Map(input.exercises.map((exercise) => [exercise.id, exercise]));
+  const machineProfileById = new Map((input.machineProfiles ?? []).map((profile) => [profile.id, profile]));
   const groupedSets = input.sets
     .filter((set) => !input.exerciseId || set.exercise_id === input.exerciseId)
-    .reduce<Record<string, { date: string; sessionId: number; exerciseId: number; sets: string[] }>>((groups, set) => {
-      const date = sessionById.get(set.session_id)?.workout_date ?? set.created_at.slice(0, 10);
+    .reduce<Record<string, { date: string; sessionId: number; exerciseId: number; machineProfileId?: string | null; sets: string[] }>>((groups, set) => {
+      const session = sessionById.get(set.session_id);
+      const date = session?.workout_date ?? set.created_at.slice(0, 10);
       const key = String(set.session_id);
-      const existing = groups[key] ?? { date, sessionId: set.session_id, exerciseId: set.exercise_id, sets: [] };
+      const machineProfileId = session?.machine_profile_id ?? null;
+      const existing = groups[key] ?? { date, sessionId: set.session_id, exerciseId: set.exercise_id, machineProfileId, sets: [] };
       return {
         ...groups,
         [key]: {
@@ -36,6 +41,7 @@ export function buildPreviousLogs(input: { exerciseId?: number; exercises: Exerc
       return {
         ...log,
         exerciseName: input.exercises.find((exercise) => exercise.id === log.exerciseId)?.name ?? "Exercise",
+        machineProfileLabel: log.machineProfileId ? machineProfileById.get(log.machineProfileId)?.label ?? null : null,
         score: point?.performancePoints ?? 0,
         point
       };
@@ -44,6 +50,9 @@ export function buildPreviousLogs(input: { exerciseId?: number; exercises: Exerc
 }
 
 function formatLoggedLoad(weight: number, loadType: ExerciseLoadType, unitSystem: UnitSystem) {
+  if (loadType === "machine_stack") {
+    return `Stack ${formatWeight(weight, unitSystem)}`;
+  }
   if (loadType === "bodyweight_plus_load") {
     return weight === 0 ? "Body weight" : `Body weight + ${formatWeight(weight, unitSystem)}`;
   }

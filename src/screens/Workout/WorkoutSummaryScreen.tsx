@@ -96,6 +96,7 @@ export function WorkoutSummaryScreen() {
             {outcome ? <Label>{guidedCategoryLabels[outcome.category]}</Label> : null}
           </View>
           <Body>{formatSets(exercise, unitSystem)}</Body>
+          {exercise.machineProfileLabel ? <Label>{exercise.machineProfileLabel}</Label> : null}
           {outcome?.messages.map((message) => (
             <Body key={message} style={outcome.celebrated ? styles.achievedText : undefined}>{message}</Body>
           ))}

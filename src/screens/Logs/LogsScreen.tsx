@@ -21,6 +21,7 @@ type EditingWorkout = {
   exerciseId: number;
   workoutDate: string;
   notes: string;
+  machineProfileId?: string | null;
   sets: LoggedSetDraft[];
 };
 
@@ -32,6 +33,7 @@ export function LogsScreen() {
   const exercises = useFitnessStore((state) => state.exercises);
   const sessions = useFitnessStore((state) => state.sessions);
   const sets = useFitnessStore((state) => state.sets);
+  const machineProfiles = useFitnessStore((state) => state.machineProfiles);
   const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
   const points = useFitnessStore((state) => state.exercisePoints);
   const completedGuidedWorkouts = useFitnessStore((state) => state.completedGuidedWorkouts);
@@ -39,7 +41,7 @@ export function LogsScreen() {
   const deleteWorkoutLog = useFitnessStore((state) => state.deleteWorkoutLog);
   const updateWorkoutLog = useFitnessStore((state) => state.updateWorkoutLog);
   const deleteBodyWeightLog = useFitnessStore((state) => state.deleteBodyWeightLog);
-  const logs = buildPreviousLogs({ exercises, sessions, sets, points, unitSystem });
+  const logs = buildPreviousLogs({ exercises, sessions, sets, points, unitSystem, machineProfiles });
   const groupedLogs = useMemo(() => groupLogsByMuscle(logs, exercises), [exercises, logs]);
   const [bodyWeightCollapsed, setBodyWeightCollapsed] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -63,6 +65,7 @@ export function LogsScreen() {
       exerciseId: log.exerciseId,
       workoutDate: session?.workout_date ?? log.date,
       notes: session?.notes ?? "",
+      machineProfileId: session?.machine_profile_id ?? null,
       sets: sessionSets.length ? sessionSets : [emptySet()]
     });
   }
@@ -218,7 +221,7 @@ export function LogsScreen() {
                               </Pressable>
                             </View>
                             <DatePickerField value={editingWorkout.workoutDate} onChange={(workoutDate) => setEditingWorkout((current) => current ? { ...current, workoutDate } : current)} />
-                            {loadType !== "external" ? <Body style={styles.hintText}>{loadType === "bodyweight_plus_load" ? "Enter added weight only; body weight is included in scoring." : "Enter assistance weight; it is subtracted from body weight for scoring."}</Body> : null}
+                            {loadType !== "external" ? <Body style={styles.hintText}>{loadType === "machine_stack" ? "Enter the stack/load number shown on the machine." : loadType === "bodyweight_plus_load" ? "Enter added weight only; body weight is included in scoring." : "Enter assistance weight; it is subtracted from body weight for scoring."}</Body> : null}
                             {editingWorkout.sets.map((set, index) => (
                               <View key={index} style={styles.setRow}>
                                 <Label style={styles.setNumber}>{index + 1}</Label>
@@ -272,6 +275,7 @@ export function LogsScreen() {
                           <View style={styles.historyHeader}>
                             <View style={styles.historyText}>
                               <Body style={styles.dateText}>{formatShortDate(log.date)} · {log.score ? `${log.score.toFixed(1)} Performance Points` : "Not eligible for points"}</Body>
+                              {log.machineProfileLabel ? <Label>{log.machineProfileLabel}</Label> : null}
                               <Body>{log.sets.join("  |  ")}</Body>
                               {log.point ? <Body>e1RM {log.point.estimated1RM.toFixed(1)} | Volume {log.point.failureVolume.toFixed(1)} | Resistance {(log.point.fatigueResistance * 100).toFixed(0)}%</Body> : null}
                             </View>
@@ -347,6 +351,7 @@ function groupLogsByMuscle(logs: ReturnType<typeof buildPreviousLogs>, exercises
 }
 
 function loadPlaceholder(loadType: ExerciseLoadType, unitSystem: string) {
+  if (loadType === "machine_stack") return "stack";
   if (loadType === "bodyweight_plus_load") return `added ${unitSystem}`;
   if (loadType === "bodyweight_minus_assistance") return `assist ${unitSystem}`;
   return unitSystem;

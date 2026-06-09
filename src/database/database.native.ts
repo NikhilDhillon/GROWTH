@@ -3,10 +3,11 @@ import * as SQLite from "expo-sqlite";
 import { normalizeActiveWorkout, normalizeCompletedGuidedWorkouts } from "@/constants/activeWorkout";
 import { catalogExercises } from "@/constants/exercises";
 import { normalizeGuidedWorkoutPreferences } from "@/constants/guidedWorkout";
+import { normalizeMachineProfiles } from "@/constants/machineProfiles";
 import { createDefaultTrainingSplit, normalizeTrainingSplit } from "@/constants/trainingSplit";
 import { schema } from "@/database/schema";
 import { buildWorkoutFingerprint, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
-import { ActiveWorkout, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, MachineProfile, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 type Database = SQLite.SQLiteDatabase;
@@ -18,12 +19,20 @@ async function getDatabase() {
     database = await SQLite.openDatabaseAsync("growth.db");
     await database.execAsync(schema);
     await ensureBodyWeightLogSchema(database);
+    await ensureWorkoutSessionSchema(database);
     await ensureWorkoutSetSchema(database);
     await removeLegacySeedData(database);
     await ensureExerciseCatalog(database);
     await ensureCatalogAdditions(database);
   }
   return database;
+}
+
+async function ensureWorkoutSessionSchema(db: Database) {
+  const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(workout_sessions)");
+  if (!columns.some((column) => column.name === "machine_profile_id")) {
+    await db.runAsync("ALTER TABLE workout_sessions ADD COLUMN machine_profile_id TEXT");
+  }
 }
 
 async function ensureWorkoutSetSchema(db: Database) {
@@ -130,13 +139,14 @@ async function ensureCatalogAdditions(db: Database) {
 
 export async function loadAllData() {
   const db = await getDatabase();
-  const [currentUser, unitSetting, trainingSplitSetting, activeWorkoutSetting, guidedWorkoutSetting, completedWorkoutsSetting] = await Promise.all([
+  const [currentUser, unitSetting, trainingSplitSetting, activeWorkoutSetting, guidedWorkoutSetting, completedWorkoutsSetting, machineProfilesSetting] = await Promise.all([
     db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1"),
     db.getFirstAsync<{ value: UnitSystem }>("SELECT value FROM app_settings WHERE key = ?", ["unit_system"]),
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["training_split"]),
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["active_workout"]),
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["guided_workout_preferences"]),
-    db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["completed_guided_workouts"])
+    db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["completed_guided_workouts"]),
+    db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["machine_profiles"])
   ]);
   const [exercises, sessions, sets, bodyWeightLogs, configs] = await Promise.all([
     db.getAllAsync<Exercise>(
@@ -167,7 +177,8 @@ export async function loadAllData() {
   const activeWorkout = normalizeActiveWorkout(activeWorkoutSetting?.value ? JSON.parse(activeWorkoutSetting.value) : null);
   const guidedWorkoutPreferences = normalizeGuidedWorkoutPreferences(guidedWorkoutSetting?.value ? JSON.parse(guidedWorkoutSetting.value) : null);
   const completedGuidedWorkouts = normalizeCompletedGuidedWorkouts(completedWorkoutsSetting?.value ? JSON.parse(completedWorkoutsSetting.value) : null);
-  return { exercises, sessions, sets, bodyWeightLogs, configs, currentUser: currentUser ?? null, unitSystem, trainingSplit, activeWorkout, guidedWorkoutPreferences, completedGuidedWorkouts };
+  const machineProfiles = normalizeMachineProfiles(machineProfilesSetting?.value ? JSON.parse(machineProfilesSetting.value) : null);
+  return { exercises, sessions, sets, bodyWeightLogs, configs, currentUser: currentUser ?? null, unitSystem, trainingSplit, activeWorkout, guidedWorkoutPreferences, completedGuidedWorkouts, machineProfiles };
 }
 
 export async function registerUser(input: { name: string; email: string; password: string }) {
@@ -230,10 +241,10 @@ export async function setExerciseEnabled(exerciseId: number, enabled: boolean) {
   );
 }
 
-export async function logWorkout(input: { exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number; isWarmup?: boolean }[] }) {
+export async function logWorkout(input: { exerciseId: number; workoutDate: string; notes: string; machineProfileId?: string | null; sets: { reps: number; weight: number; isWarmup?: boolean }[] }) {
   const db = await getDatabase();
   const timestamp = `${input.workoutDate}T12:00:00.000Z`;
-  const session = await db.runAsync("INSERT INTO workout_sessions (workout_date, notes, created_at) VALUES (?, ?, ?)", [input.workoutDate, input.notes, timestamp]);
+  const session = await db.runAsync("INSERT INTO workout_sessions (workout_date, notes, machine_profile_id, created_at) VALUES (?, ?, ?, ?)", [input.workoutDate, input.notes, input.machineProfileId ?? null, timestamp]);
 
   for (const [index, set] of input.sets.entries()) {
     await db.runAsync(
@@ -301,11 +312,11 @@ export async function deleteWorkoutSession(sessionId: number) {
   await db.runAsync("DELETE FROM workout_sessions WHERE id = ?", [sessionId]);
 }
 
-export async function updateWorkoutSession(input: { sessionId: number; exerciseId: number; workoutDate: string; notes: string; sets: { reps: number; weight: number; isWarmup?: boolean }[] }) {
+export async function updateWorkoutSession(input: { sessionId: number; exerciseId: number; workoutDate: string; notes: string; machineProfileId?: string | null; sets: { reps: number; weight: number; isWarmup?: boolean }[] }) {
   const db = await getDatabase();
   const timestamp = `${input.workoutDate}T12:00:00.000Z`;
   await db.withTransactionAsync(async () => {
-    await db.runAsync("UPDATE workout_sessions SET workout_date = ?, notes = ?, created_at = ? WHERE id = ?", [input.workoutDate, input.notes, timestamp, input.sessionId]);
+    await db.runAsync("UPDATE workout_sessions SET workout_date = ?, notes = ?, machine_profile_id = ?, created_at = ? WHERE id = ?", [input.workoutDate, input.notes, input.machineProfileId ?? null, timestamp, input.sessionId]);
     await db.runAsync("DELETE FROM workout_sets WHERE session_id = ?", [input.sessionId]);
 
     for (const [index, set] of input.sets.entries()) {
@@ -380,6 +391,13 @@ export async function saveCompletedGuidedWorkouts(workouts: CompletedGuidedWorko
   const db = await getDatabase();
   const normalized = normalizeCompletedGuidedWorkouts(workouts);
   await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["completed_guided_workouts", JSON.stringify(normalized)]);
+}
+
+export async function saveMachineProfiles(profiles: MachineProfile[]) {
+  const db = await getDatabase();
+  const normalized = normalizeMachineProfiles(profiles);
+  await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["machine_profiles", JSON.stringify(normalized)]);
+  return normalized;
 }
 
 export async function loadSocialData(): Promise<SocialData> {

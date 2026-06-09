@@ -9,6 +9,7 @@ export function emptyActiveExercise(): ActiveWorkoutExerciseDraft {
     exerciseId: null,
     sets: [{ reps: "", weight: "" }, { reps: "", weight: "" }, { reps: "", weight: "" }],
     notes: "",
+    machineProfileId: null,
     barWeight: "45",
     plateCounts: { 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 }
   };
@@ -63,10 +64,25 @@ export function normalizeActiveWorkout(value: unknown): ActiveWorkout | null {
     sourceDayKey: input.sourceDayKey,
     plannedMuscles: input.plannedMuscles as SplitMuscle[],
     completedExercises: Array.isArray(input.completedExercises) ? input.completedExercises : [],
-    currentExercise: input.currentExercise ?? emptyActiveExercise(),
+    currentExercise: normalizeActiveExercise(input.currentExercise),
     pendingMuscle: input.pendingMuscle ?? null,
     schedulePrompt: input.schedulePrompt === "off_plan" || input.schedulePrompt === "replace" ? input.schedulePrompt : null,
     scheduleChanges: Array.isArray(input.scheduleChanges) ? input.scheduleChanges.filter((message): message is string => typeof message === "string") : []
+  };
+}
+
+function normalizeActiveExercise(value: unknown): ActiveWorkoutExerciseDraft {
+  const defaults = emptyActiveExercise();
+  if (!value || typeof value !== "object") return defaults;
+  const input = value as Partial<ActiveWorkoutExerciseDraft>;
+  return {
+    muscle: input.muscle ?? null,
+    exerciseId: typeof input.exerciseId === "number" ? input.exerciseId : null,
+    machineProfileId: typeof input.machineProfileId === "string" ? input.machineProfileId : null,
+    sets: Array.isArray(input.sets) ? input.sets : defaults.sets,
+    notes: typeof input.notes === "string" ? input.notes : "",
+    barWeight: typeof input.barWeight === "string" ? input.barWeight : defaults.barWeight,
+    plateCounts: input.plateCounts && typeof input.plateCounts === "object" ? input.plateCounts : defaults.plateCounts
   };
 }
 

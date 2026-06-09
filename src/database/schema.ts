@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS workout_sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   workout_date TEXT NOT NULL,
   notes TEXT,
+  machine_profile_id TEXT,
   created_at TEXT
 );
 

@@ -15,6 +15,7 @@ export type GuidedSetTarget = {
 export type GuidedSessionSummary = {
   sessionId: number;
   date: string;
+  machineProfileId?: string | null;
   sets: WorkoutSet[];
 };
 
@@ -104,11 +105,14 @@ export function buildGuidedRecommendation(input: {
   sets: WorkoutSet[];
   workoutDate: string;
   draftWarmups: boolean[];
+  machineProfileId?: string | null;
 }): GuidedRecommendation {
   const category = categoryForExercise(input.exercise.name, input.preferences);
   const draftWorkingIndexes = prescribedWorkingIndexes(input.draftWarmups);
   const requiredSetCount = prescribedWorkingSetCount;
-  const summaries = exerciseSessions(input.exercise.id, input.sessions, input.sets);
+  const allSummaries = exerciseSessions(input.exercise.id, input.sessions, input.sets);
+  const sameMachineSummaries = input.machineProfileId ? allSummaries.filter((summary) => summary.machineProfileId === input.machineProfileId) : [];
+  const summaries = sameMachineSummaries.length ? sameMachineSummaries : allSummaries;
   const latest = summaries.at(-1);
   const inactive = latest ? daysBetween(latest.date, input.workoutDate) > input.preferences.inactivityDays : false;
   const latestWorking = latest?.sets ?? [];
@@ -186,6 +190,7 @@ function exerciseSessions(exerciseId: number, sessions: WorkoutSession[], sets: 
     .map(([sessionId, groupedSets]) => ({
       sessionId,
       date: sessionById.get(sessionId)?.workout_date ?? groupedSets[0].created_at.slice(0, 10),
+      machineProfileId: sessionById.get(sessionId)?.machine_profile_id ?? null,
       sets: groupedSets.sort((a, b) => a.set_number - b.set_number)
     }))
     .sort((a, b) => a.date.localeCompare(b.date) || a.sessionId - b.sessionId);
