@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { Modal, Pressable, StyleSheet, TextInput, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
-import { Check, ChevronRight, Plus, Timer, Trash2, X } from "lucide-react-native";
+import { Check, ChevronRight, Timer, X } from "lucide-react-native";
 
 import { MachineProfilePanel } from "@/components/MachineProfilePanel";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
+import { SetComposerTarget, VisualSetComposer } from "@/components/VisualSetComposer";
 import { activePlannedExerciseMuscles, emptyActiveExercise, exerciseMuscleToSplitMuscle, splitMuscleToExerciseMuscle } from "@/constants/activeWorkout";
 import { ExerciseLoadType, getExerciseLoadType, isBodyweightLoadType, isMachineLoadType, supportsBarbellCalculator } from "@/constants/exercises";
 import { guidedCategoryLabels } from "@/constants/guidedWorkout";
@@ -16,22 +17,12 @@ import { getClosestBodyweightForDate } from "@/services/analytics/bulkAnalyticsS
 import { buildGuidedRecommendation, buildGuidedSessionOutcome } from "@/services/guidedWorkout/guidedWorkoutService";
 import { calculateSessionPerformance, findStrengthReference } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { ActiveWorkout, CompletedGuidedWorkout, LoggedSetDraft, MachineProfile, MuscleGroup, SplitMuscle, TrainingSplitDay } from "@/types";
+import { ActiveWorkout, CompletedGuidedWorkout, Exercise, GuidedWorkoutPreferences, LoggedSetDraft, MachineProfile, MuscleGroup, SplitMuscle, TrainingSplitDay, UnitSystem, WorkoutSession, WorkoutSet } from "@/types";
 import { muscles, palette, spacing } from "@/utils/theme";
 import { pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { formatBodyWeight, formatWeight, formatWeightInput, weightFromStorageUnit, weightToStorageUnit } from "@/utils/units";
 
-const plateWeights = [45, 35, 25, 10, 5] as const;
-type PlateWeight = typeof plateWeights[number];
-type PlateCounts = Record<PlateWeight, number>;
-const emptyPlateCounts = (): PlateCounts => ({ 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 });
-const plateVisuals: Record<PlateWeight, { backgroundColor: string; height: number; width: number }> = {
-  45: { backgroundColor: "#2563eb", height: 52, width: 11 },
-  35: { backgroundColor: "#eab308", height: 46, width: 10 },
-  25: { backgroundColor: "#16a34a", height: 40, width: 9 },
-  10: { backgroundColor: "#64748b", height: 32, width: 8 },
-  5: { backgroundColor: "#dc2626", height: 24, width: 7 }
-};
+const emptyPlateCounts = () => ({ 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 });
 
 export function GuidedWorkoutScreen() {
   const navigation = useNavigation<{ navigate: (route: string, params?: object) => void }>();
@@ -98,7 +89,7 @@ export function GuidedWorkoutScreen() {
         unitSystem
       })
     : null;
-  const recommendation = selectedExercise ? buildGuidedRecommendation({
+  const recommendation = useMemo(() => selectedExercise ? buildGuidedRecommendation({
     exercise: selectedExercise,
     preferences: guidedWorkoutPreferences,
     sessions,
@@ -106,7 +97,16 @@ export function GuidedWorkoutScreen() {
     workoutDate: workout.workoutDate,
     draftWarmups: current.sets.map((set) => Boolean(set.isWarmup)),
     machineProfileId: isMachineLoadType(loadType) ? current.machineProfileId : null
-  }) : null;
+  }) : null, [current.machineProfileId, current.sets, guidedWorkoutPreferences, loadType, selectedExercise, sessions, sets, workout.workoutDate]);
+  const composerTargets = useMemo<SetComposerTarget[]>(() => {
+    return recommendation?.targets.map((target) => ({
+      draftIndex: target.draftIndex,
+      weight: target.priorWeight,
+      targetReps: target.targetReps,
+      label: setRoleLabel(target.role, target.workingSetNumber),
+      increaseWeight: target.increaseWeight
+    })) ?? [];
+  }, [recommendation]);
   const bestPerformance = selectedExercise ? findStrengthReference(exercisePoints.filter((point) => point.exerciseId === selectedExercise.id)) : undefined;
   const projectedPerformance = selectedExercise
     ? calculateSessionPerformance(
@@ -118,7 +118,6 @@ export function GuidedWorkoutScreen() {
         { loadType, bodyWeight: selectedBodyWeight?.weight }
       )
     : null;
-  const loadedBarWeight = calculateLoadedBarWeight(current.barWeight, current.plateCounts);
   const sourceDay = trainingSplit.days.find((day) => day.key === workout.sourceDayKey);
 
   function persist(updater: (workout: ActiveWorkout) => ActiveWorkout) {
@@ -453,43 +452,24 @@ export function GuidedWorkoutScreen() {
               lastLoad={lastMachineLoad}
               onSelectProfile={(machineProfileId) => updateDraft({ machineProfileId })}
               onSaveProfile={saveMachineProfile}
-              onApplyLoad={applyMachineLoad}
             />
           ) : null}
 
-          {supportsBarbellCalculator(selectedExercise.name) ? (
-            <BarCalculator
-              barWeight={current.barWeight}
-              plateCounts={current.plateCounts}
-              loadedBarWeight={loadedBarWeight}
-              unitSystem={unitSystem}
-              onBarWeight={(barWeight) => updateDraft({ barWeight })}
-              onPlateCount={(plate, amount) => updateDraft({ plateCounts: { ...current.plateCounts, [plate]: Math.max(0, Number(current.plateCounts[plate] ?? 0) + amount) } })}
-              onTotalLoad={(totalLoad) => updateDraft({ plateCounts: calculatePlateCounts(totalLoad, current.barWeight) })}
-              onReset={() => updateDraft({ barWeight: "45", plateCounts: emptyPlateCounts() })}
-              onApply={(index) => updateSet(index, "weight", formatWeightInput(loadedBarWeight, unitSystem))}
-              setCount={current.sets.length}
-            />
-          ) : null}
-
-          <Label>Sets</Label>
-          {current.sets.map((set, index) => (
-            <View key={index} style={styles.setRow}>
-              <Label style={styles.setNumber}>{index + 1}</Label>
-              <TextInput style={[styles.input, styles.setInput]} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} inputMode="decimal" placeholder={loadPlaceholder(loadType, unitSystem)} />
-              <TextInput style={[styles.input, styles.setInput]} value={set.reps} onChangeText={(value) => updateSet(index, "reps", value)} inputMode="numeric" placeholder="reps" />
-              <Pressable onPress={() => updateDraft({ sets: current.sets.map((item, itemIndex) => itemIndex === index ? { ...item, isWarmup: !item.isWarmup } : item) })} style={pressableFeedback([styles.setKindButton, set.isWarmup && styles.setKindButtonActive])}>
-                <Body style={[styles.setKindText, set.isWarmup && styles.setKindTextActive]}>{set.isWarmup ? "Warm-up" : "Working"}</Body>
-              </Pressable>
-              <Pressable onPress={() => updateDraft({ sets: current.sets.filter((_, itemIndex) => itemIndex !== index) })} style={pressableFeedback(styles.iconButton)}>
-                <Trash2 size={16} color={palette.danger} />
-              </Pressable>
-            </View>
-          ))}
-          <Pressable onPress={() => updateDraft({ sets: [...current.sets, { weight: "", reps: "", isWarmup: false }] })} style={pressableFeedback(styles.secondaryButton)}>
-            <Plus size={17} color={palette.ink} />
-            <Body style={styles.buttonText}>Add set</Body>
-          </Pressable>
+          <VisualSetComposer
+            sets={current.sets}
+            loadType={loadType}
+            unitSystem={unitSystem}
+            supportsBarbell={supportsBarbellCalculator(selectedExercise.name)}
+            machineProfile={selectedMachineProfile}
+            machineLabel={selectedMachineProfile?.label ?? null}
+            machineLastLoad={lastMachineLoad}
+            barWeight={current.barWeight}
+            plateCounts={current.plateCounts}
+            targets={composerTargets}
+            onBarWeightChange={(barWeight) => updateDraft({ barWeight })}
+            onPlateCountsChange={(plateCounts) => updateDraft({ plateCounts })}
+            onSetsChange={(sets) => updateDraft({ sets })}
+          />
           <TextInput style={[styles.input, styles.notes]} value={current.notes} onChangeText={(notes) => updateDraft({ notes })} multiline placeholder="Notes" />
           {projectedPerformance ? <Body>Projected performance: {projectedPerformance.performancePoints.toFixed(1)} points | e1RM {formatWeight(projectedPerformance.estimated1RM, unitSystem)}</Body> : null}
         </Panel>
@@ -542,10 +522,6 @@ export function GuidedWorkoutScreen() {
     </Screen>
   );
 
-  function updateSet(index: number, field: "weight" | "reps", value: string) {
-    updateDraft({ sets: current.sets.map((set, itemIndex) => itemIndex === index ? { ...set, [field]: value } : set) });
-  }
-
   function chooseExercise(exerciseId: number) {
     const exercise = exercises.find((item) => item.id === exerciseId);
     const nextLoadType = getExerciseLoadType(exercise?.name ?? "");
@@ -555,17 +531,23 @@ export function GuidedWorkoutScreen() {
         ? currentProfile?.id ?? null
         : preferredMachineProfile(machineProfiles, exercise.id)?.id ?? null
       : null;
-    updateDraft({ exerciseId, machineProfileId });
-  }
-
-  function applyMachineLoad(load: string, mode: "blank" | "all") {
     updateDraft({
-      sets: current.sets.map((set) => {
-        if (mode === "blank" && set.weight.trim()) return set;
-        return { ...set, weight: load };
-      })
+      exerciseId,
+      machineProfileId,
+      sets: exercise ? buildSmartGuidedSets({
+        exercise,
+        preferences: guidedWorkoutPreferences,
+        sessions,
+        sets,
+        workoutDate: workout.workoutDate,
+        machineProfileId: isMachineLoadType(nextLoadType) ? machineProfileId : null,
+        unitSystem
+      }) : current.sets,
+      barWeight: "45",
+      plateCounts: emptyPlateCounts()
     });
   }
+
 }
 
 function TimerDisplay({ startedAt, now }: { startedAt: string; now: number }) {
@@ -577,113 +559,48 @@ function TimerDisplay({ startedAt, now }: { startedAt: string; now: number }) {
   );
 }
 
-function BarCalculator({ barWeight, plateCounts, loadedBarWeight, unitSystem, onBarWeight, onPlateCount, onTotalLoad, onReset, onApply, setCount }: {
-  barWeight: string;
-  plateCounts: Record<string, number>;
-  loadedBarWeight: number;
-  unitSystem: "lb" | "kg";
-  onBarWeight: (value: string) => void;
-  onPlateCount: (plate: PlateWeight, amount: number) => void;
-  onTotalLoad: (value: string) => void;
-  onReset: () => void;
-  onApply: (index: number) => void;
-  setCount: number;
-}) {
-  const [totalLoadDraft, setTotalLoadDraft] = useState(formatLoadedBarWeight(loadedBarWeight));
-  const [editingTotalLoad, setEditingTotalLoad] = useState(false);
+function buildSmartGuidedSets(input: {
+  exercise: Exercise;
+  preferences: GuidedWorkoutPreferences;
+  sessions: WorkoutSession[];
+  sets: WorkoutSet[];
+  workoutDate: string;
+  machineProfileId?: string | null;
+  unitSystem: UnitSystem;
+}): LoggedSetDraft[] {
+  const baseSets: LoggedSetDraft[] = [{ reps: "", weight: "" }, { reps: "", weight: "" }, { reps: "", weight: "" }];
+  const recommendation = buildGuidedRecommendation({
+    exercise: input.exercise,
+    preferences: input.preferences,
+    sessions: input.sessions,
+    sets: input.sets,
+    workoutDate: input.workoutDate,
+    draftWarmups: baseSets.map((set) => Boolean(set.isWarmup)),
+    machineProfileId: input.machineProfileId
+  });
+  const targetCount = Math.max(3, recommendation.targets.reduce((max, target) => Math.max(max, target.draftIndex + 1), 0), recommendation.latest?.sets.length ?? 0);
+  const nextSets = Array.from({ length: targetCount }, (): LoggedSetDraft => ({ reps: "", weight: "" }));
 
-  useEffect(() => {
-    if (!editingTotalLoad) setTotalLoadDraft(formatLoadedBarWeight(loadedBarWeight));
-  }, [editingTotalLoad, loadedBarWeight]);
+  if (recommendation.category === "unguided" && recommendation.latest?.sets.length) {
+    return recommendation.latest.sets.map((set) => ({
+      reps: "",
+      weight: formatWeightInput(set.weight, input.unitSystem),
+      isWarmup: Boolean(set.is_warmup)
+    }));
+  }
 
-  return (
-    <View style={styles.barCalculator}>
-      <View style={styles.summaryRow}>
-        <View style={styles.flex}>
-          <Label>Plate calculator</Label>
-          <Body>Loaded bar: {formatLoadedBarWeight(loadedBarWeight)} lb</Body>
-        </View>
-        <Pressable onPress={() => {
-          setEditingTotalLoad(false);
-          setTotalLoadDraft("45");
-          onReset();
-        }} style={pressableFeedback(styles.resetButton)}>
-          <Body style={styles.buttonText}>Reset</Body>
-        </Pressable>
-      </View>
-      <View style={styles.calculatorInputRow}>
-        <Label>Total load</Label>
-        <TextInput
-          style={[styles.input, styles.barInput]}
-          value={totalLoadDraft}
-          onFocus={() => setEditingTotalLoad(true)}
-          onBlur={() => setEditingTotalLoad(false)}
-          onChangeText={(value) => {
-            setTotalLoadDraft(value);
-            onTotalLoad(value);
-          }}
-          keyboardType="decimal-pad"
-          inputMode="decimal"
-          placeholder="135"
-        />
-        <Body>lb</Body>
-      </View>
-      <View style={styles.calculatorInputRow}>
-        <Label>Bar</Label>
-        <TextInput style={[styles.input, styles.barInput]} value={barWeight} onChangeText={onBarWeight} inputMode="decimal" placeholder="45" />
-        <Body>lb</Body>
-      </View>
-      <View style={styles.loadedBar}>
-        <View style={styles.plateStack}>{[...plateWeights].reverse().flatMap((plate) => Array.from({ length: Number(plateCounts[plate] ?? 0) }, (_, index) => <View key={`left-${plate}-${index}`} style={[styles.plate, plateVisuals[plate]]} />))}</View>
-        <View style={styles.sleeve} /><View style={styles.shaft} /><View style={styles.sleeve} />
-        <View style={styles.plateStack}>{plateWeights.flatMap((plate) => Array.from({ length: Number(plateCounts[plate] ?? 0) }, (_, index) => <View key={`right-${plate}-${index}`} style={[styles.plate, plateVisuals[plate]]} />))}</View>
-      </View>
-      <View style={styles.chips}>
-        {plateWeights.map((plate) => (
-          <View key={plate} style={styles.plateControl}>
-            <View style={[styles.swatch, { backgroundColor: plateVisuals[plate].backgroundColor }]} />
-            <Body>{plate}</Body>
-            <Pressable onPress={() => onPlateCount(plate, -1)} style={pressableFeedback(styles.countButton)}><Body>-</Body></Pressable>
-            <Body>{plateCounts[plate] ?? 0}</Body>
-            <Pressable onPress={() => onPlateCount(plate, 1)} style={pressableFeedback(styles.countButton)}><Body>+</Body></Pressable>
-          </View>
-        ))}
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View style={styles.actions}>
-          {Array.from({ length: setCount }, (_, index) => (
-            <Pressable key={index} onPress={() => onApply(index)} style={pressableFeedback(styles.secondaryButton)}>
-              <Body style={styles.buttonText}>Use for set {index + 1} ({formatWeightInput(loadedBarWeight, unitSystem)})</Body>
-            </Pressable>
-          ))}
-        </View>
-      </ScrollView>
-    </View>
-  );
-}
+  for (const target of recommendation.targets) {
+    if (target.increaseWeight) continue;
+    const sourceWeight = target.priorWeight ?? recommendation.latest?.sets[target.workingSetNumber - 1]?.weight;
+    if (Number.isFinite(sourceWeight)) {
+      nextSets[target.draftIndex] = {
+        ...nextSets[target.draftIndex],
+        weight: formatWeightInput(Number(sourceWeight), input.unitSystem)
+      };
+    }
+  }
 
-function calculateLoadedBarWeight(barWeight: string, counts: Record<string, number>) {
-  const bar = parseWeight(barWeight);
-  return bar + plateWeights.reduce((total, plate) => total + plate * Number(counts[plate] ?? 0) * 2, 0);
-}
-
-function calculatePlateCounts(totalLoad: string, barWeight: string) {
-  let remainingPerSide = Math.max(0, (parseWeight(totalLoad) - parseWeight(barWeight)) / 2);
-  return plateWeights.reduce<PlateCounts>((counts, plate) => {
-    const count = Math.floor((remainingPerSide + Number.EPSILON) / plate);
-    counts[plate] = count;
-    remainingPerSide -= count * plate;
-    return counts;
-  }, emptyPlateCounts());
-}
-
-function parseWeight(value: string) {
-  const parsed = Number(value.trim().replace(",", "."));
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
-}
-
-function formatLoadedBarWeight(weight: number) {
-  return weight.toFixed(1).replace(".0", "");
+  return nextSets;
 }
 
 function loadInstruction(loadType: ExerciseLoadType, bodyWeight?: number) {
@@ -694,13 +611,6 @@ function loadInstruction(loadType: ExerciseLoadType, bodyWeight?: number) {
 function loadChangeInstruction(loadType: ExerciseLoadType) {
   if (loadType === "machine_stack") return "Choose a higher stack";
   return loadType === "bodyweight_minus_assistance" ? "Choose less assistance" : "Choose a heavier load";
-}
-
-function loadPlaceholder(loadType: ExerciseLoadType, unitSystem: string) {
-  if (loadType === "machine_stack") return "stack";
-  if (loadType === "bodyweight_plus_load") return `added ${unitSystem}`;
-  if (loadType === "bodyweight_minus_assistance") return `assist ${unitSystem}`;
-  return unitSystem;
 }
 
 function hasEnteredSets(sets: LoggedSetDraft[]) {

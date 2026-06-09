@@ -147,6 +147,23 @@ export function suggestedMachineLoads(profile: MachineProfile | null | undefined
   return [...new Set(values)].sort((left, right) => left - right);
 }
 
+export function machineLoadToWorkoutInput(load: number, profile: MachineProfile | null | undefined, unitSystem: UnitSystem) {
+  if (!profile || profile.stackUnit === "plate" || profile.stackUnit === unitSystem) return String(formatMachineNumber(load));
+  if (profile.stackUnit === "kg" && unitSystem === "lb") return String(formatMachineNumber(load * 2.2046226218));
+  if (profile.stackUnit === "lb" && unitSystem === "kg") return String(formatMachineNumber(load / 2.2046226218));
+  return String(formatMachineNumber(load));
+}
+
+export function workoutInputToMachineLoad(load: number | string, profile: MachineProfile | null | undefined, unitSystem: UnitSystem) {
+  if (typeof load === "string" && !load.trim()) return null;
+  const parsed = typeof load === "number" ? load : Number(load.trim().replace(",", "."));
+  if (!Number.isFinite(parsed)) return null;
+  if (!profile || profile.stackUnit === "plate" || profile.stackUnit === unitSystem) return Number(formatMachineNumber(parsed));
+  if (profile.stackUnit === "kg" && unitSystem === "lb") return Number(formatMachineNumber(parsed / 2.2046226218));
+  if (profile.stackUnit === "lb" && unitSystem === "kg") return Number(formatMachineNumber(parsed * 2.2046226218));
+  return Number(formatMachineNumber(parsed));
+}
+
 export function inferMachineDraftFromModel(modelName: string, unitSystem: UnitSystem): Partial<MachineProfileDraft> {
   const text = modelName.toLowerCase();
   const stackUnit = text.includes("kg") ? "kg" : text.includes("plate") ? "plate" : unitSystem;
@@ -205,6 +222,10 @@ function normalizeExerciseIds(value: unknown) {
 
 function roundToStep(value: number, step: number) {
   return Number((Math.round(value / step) * step).toFixed(2));
+}
+
+function formatMachineNumber(value: number) {
+  return Number(value.toFixed(1).replace(".0", ""));
 }
 
 function createId() {

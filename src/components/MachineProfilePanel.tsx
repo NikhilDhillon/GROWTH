@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, TextInput, View } from "react-native";
 import { Check, Plus } from "lucide-react-native";
 
 import { Body, Label, SectionTitle } from "@/components/Text";
-import { formatMachineLoad, inferMachineDraftFromModel, machineProfileTypeOptions, machineTypeLabel, MachineProfileDraft, pulleyRatioOptions, stackUnitLabel, suggestedMachineLoads } from "@/constants/machineProfiles";
+import { formatMachineLoad, inferMachineDraftFromModel, machineLoadToWorkoutInput, machineProfileTypeOptions, machineTypeLabel, MachineProfileDraft, pulleyRatioOptions, stackUnitLabel, suggestedMachineLoads } from "@/constants/machineProfiles";
 import { MachineProfile, MachineProfileType, MachineStackUnit, UnitSystem } from "@/types";
 import { palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
@@ -19,7 +19,7 @@ type Props = {
   lastLoad?: number | null;
   onSelectProfile: (profileId: string | null) => void;
   onSaveProfile: (profile: MachineProfileDraft) => Promise<MachineProfile>;
-  onApplyLoad: (load: string, mode: ApplyMode) => void;
+  onApplyLoad?: (load: string, mode: ApplyMode) => void;
 };
 
 export function MachineProfilePanel({
@@ -79,6 +79,7 @@ export function MachineProfilePanel({
   }
 
   function applyLoad(mode: ApplyMode) {
+    if (!onApplyLoad) return;
     const parsed = Number(loadDraft.trim().replace(",", "."));
     if (!Number.isFinite(parsed) || parsed <= 0) return;
     onApplyLoad(machineLoadToWorkoutInput(parsed, selectedProfile, unitSystem), mode);
@@ -113,7 +114,7 @@ export function MachineProfilePanel({
         </View>
       ) : null}
 
-      {selectedProfile ? (
+      {selectedProfile && onApplyLoad ? (
         <View style={styles.quickLoadBox}>
           <View style={styles.machineVisualRow}>
             <MachineVisual type={selectedProfile.machineType} />
@@ -260,13 +261,6 @@ function machineProfileSummary(profile: MachineProfile, unitSystem: UnitSystem) 
     profile.location
   ].filter(Boolean);
   return parts.join(" · ");
-}
-
-function machineLoadToWorkoutInput(load: number, profile: MachineProfile | null, unitSystem: UnitSystem) {
-  if (!profile || profile.stackUnit === "plate" || profile.stackUnit === unitSystem) return String(load);
-  if (profile.stackUnit === "kg" && unitSystem === "lb") return String(Number((load * 2.2046226218).toFixed(1)));
-  if (profile.stackUnit === "lb" && unitSystem === "kg") return String(Number((load / 2.2046226218).toFixed(1)));
-  return String(load);
 }
 
 const styles = StyleSheet.create({

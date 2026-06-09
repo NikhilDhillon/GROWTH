@@ -1,35 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from "react-native";
-import { Check, Copy, Plus, Save, Trash2 } from "lucide-react-native";
+import { Check, Copy, Save } from "lucide-react-native";
 
 import { DatePickerField } from "@/components/DatePickerField";
 import { MachineProfilePanel } from "@/components/MachineProfilePanel";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
+import { SetComposerTarget, VisualSetComposer } from "@/components/VisualSetComposer";
 import { ExerciseLoadType, getExerciseLoadType, isBodyweightLoadType, isMachineLoadType, supportsBarbellCalculator } from "@/constants/exercises";
 import { preferredMachineProfile, profileAppliesToExercise } from "@/constants/machineProfiles";
 import { getClosestBodyweightForDate } from "@/services/analytics/bulkAnalyticsService";
 import { calculateSessionPerformance, findStrengthReference } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { LoggedSetDraft, MachineProfile, MuscleGroup } from "@/types";
+import { LoggedSetDraft, MachineProfile, MuscleGroup, WorkoutSet } from "@/types";
 import { todayIso } from "@/utils/date";
 import { muscles, palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { bodyWeightDisplayUnit, formatBodyWeight, formatWeightInput, weightFromStorageUnit, weightToStorageUnit } from "@/utils/units";
 
 const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
-const plateWeights = [45, 35, 25, 10, 5] as const;
-type PlateWeight = typeof plateWeights[number];
-type PlateCounts = Record<PlateWeight, number>;
-const emptyPlateCounts = (): PlateCounts => ({ 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 });
-const plateVisuals: Record<PlateWeight, { backgroundColor: string; height: number; width: number }> = {
-  45: { backgroundColor: "#2563eb", height: 52, width: 11 },
-  35: { backgroundColor: "#eab308", height: 46, width: 10 },
-  25: { backgroundColor: "#16a34a", height: 40, width: 9 },
-  10: { backgroundColor: "#64748b", height: 32, width: 8 },
-  5: { backgroundColor: "#dc2626", height: 24, width: 7 }
-};
+const emptyPlateCounts = () => ({ 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 });
 type SaveState = "idle" | "saving" | "saved";
 
 export function WorkoutScreen() {
@@ -47,10 +38,10 @@ export function WorkoutScreen() {
   const [selectedKind, setSelectedKind] = useState<"exercise" | "weight">("exercise");
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleGroup>(exercises[0]?.primary_muscle ?? "Chest");
   const [exerciseId, setExerciseId] = useState<number | null>(exercises[0]?.id ?? null);
+  const [seededExerciseId, setSeededExerciseId] = useState<number | null>(null);
   const [draftSets, setDraftSets] = useState<LoggedSetDraft[]>([emptySet(), emptySet(), emptySet()]);
   const [barWeight, setBarWeight] = useState("45");
-  const [plateCounts, setPlateCounts] = useState<PlateCounts>(emptyPlateCounts());
-  const [totalLoadDraft, setTotalLoadDraft] = useState("45");
+  const [plateCounts, setPlateCounts] = useState<Record<string, number>>(emptyPlateCounts());
   const [weightDraft, setWeightDraft] = useState("");
   const [workoutDate, setWorkoutDate] = useState(todayIso());
   const [notes, setNotes] = useState("");
@@ -80,7 +71,6 @@ export function WorkoutScreen() {
   const showBarbellCalculator = supportsBarbellCalculator(selectedExercise?.name ?? "");
   const selectedBodyWeight = isBodyweightLoadType(selectedLoadType) ? getClosestBodyweightForDate(workoutDate, bodyWeightLogs) : null;
   const selectedMachineProfile = machineProfiles.find((profile) => profile.id === selectedMachineProfileId) ?? null;
-  const loadedBarWeight = calculateLoadedBarWeight(barWeight, plateCounts);
   const previousSets = useMemo(() => {
     if (!selectedExercise) return [];
     const matching = sets.filter((set) => set.exercise_id === selectedExercise.id);
@@ -100,6 +90,22 @@ export function WorkoutScreen() {
       });
     return storageWeightToMachineLoad(matchingSets.at(-1)?.weight, selectedMachineProfile, unitSystem);
   }, [selectedExercise, selectedLoadType, selectedMachineProfile, selectedMachineProfileId, sessions, sets, unitSystem]);
+  const composerTargets = useMemo<SetComposerTarget[]>(() => {
+    return previousSets.map((set, index) => ({
+      draftIndex: index,
+      weight: set.weight,
+      targetReps: set.reps,
+      label: "last"
+    }));
+  }, [previousSets]);
+
+  useEffect(() => {
+    if (selectedKind !== "exercise" || !selectedExercise || seededExerciseId === selectedExercise.id) return;
+    setDraftSets(buildSmartWorkoutSets(previousSets, unitSystem));
+    setBarWeight("45");
+    setPlateCounts(emptyPlateCounts());
+    setSeededExerciseId(selectedExercise.id);
+  }, [previousSets, seededExerciseId, selectedExercise, selectedKind, unitSystem]);
 
   useEffect(() => {
     if (!selectedExercise || !isMachineLoadType(selectedLoadType)) {
@@ -158,41 +164,7 @@ export function WorkoutScreen() {
 
   function duplicatePrevious() {
     if (!previousSets.length) return;
-    setDraftSets(previousSets.map((set) => ({ reps: String(set.reps), weight: formatWeightInput(set.weight, unitSystem), isWarmup: Boolean(set.is_warmup) })));
-  }
-
-  function changePlateCount(plate: PlateWeight, increment: number) {
-    const next = { ...plateCounts, [plate]: Math.max(0, plateCounts[plate] + increment) };
-    setPlateCounts(next);
-    setTotalLoadDraft(formatLoadedBarWeight(calculateLoadedBarWeight(barWeight, next)));
-  }
-
-  function updateBarWeight(value: string) {
-    setBarWeight(value);
-    setTotalLoadDraft(formatLoadedBarWeight(calculateLoadedBarWeight(value, plateCounts)));
-  }
-
-  function updateTotalLoad(value: string) {
-    setTotalLoadDraft(value);
-    setPlateCounts(calculatePlateCounts(value, barWeight));
-  }
-
-  function applyLoadedBarWeight(index: number) {
-    const weight = formatWeightInput(loadedBarWeight, unitSystem);
-    setDraftSets((current) => current.map((set, itemIndex) => (itemIndex === index ? { ...set, weight } : set)));
-  }
-
-  function resetLoadedBar() {
-    setBarWeight("45");
-    setPlateCounts(emptyPlateCounts());
-    setTotalLoadDraft("45");
-  }
-
-  function applyMachineLoad(load: string, mode: "blank" | "all") {
-    setDraftSets((current) => current.map((set) => {
-      if (mode === "blank" && set.weight.trim()) return set;
-      return { ...set, weight: load };
-    }));
+    setDraftSets(previousSets.map((set) => ({ reps: "", weight: formatWeightInput(set.weight, unitSystem), isWarmup: Boolean(set.is_warmup) })));
   }
 
   return (
@@ -299,105 +271,24 @@ export function WorkoutScreen() {
             lastLoad={lastMachineLoad}
             onSelectProfile={setSelectedMachineProfileId}
             onSaveProfile={saveMachineProfile}
-            onApplyLoad={applyMachineLoad}
           />
         ) : null}
 
-        {showBarbellCalculator ? (
-          <View style={styles.barCalculator}>
-            <View style={styles.rowBetween}>
-              <View>
-                <Label>Plate calculator</Label>
-                <Body>Loaded bar: {formatLoadedBarWeight(loadedBarWeight)} lb</Body>
-              </View>
-              <Pressable hitSlop={touchHitSlop} onPress={resetLoadedBar} style={pressableFeedback(styles.resetButton)}>
-                <Body style={styles.buttonText}>Reset</Body>
-              </Pressable>
-            </View>
-            <View style={styles.barWeightRow}>
-              <Label>Total load</Label>
-              <TextInput
-                style={[styles.input, styles.barWeightInput]}
-                value={totalLoadDraft}
-                onChangeText={updateTotalLoad}
-                onBlur={() => setTotalLoadDraft(formatLoadedBarWeight(loadedBarWeight))}
-                keyboardType="decimal-pad"
-                inputMode="decimal"
-                placeholder="135"
-              />
-              <Body>lb</Body>
-            </View>
-            <View style={styles.barWeightRow}>
-              <Label>Bar weight</Label>
-              <TextInput
-                style={[styles.input, styles.barWeightInput]}
-                value={barWeight}
-                onChangeText={updateBarWeight}
-                keyboardType="decimal-pad"
-                inputMode="decimal"
-                placeholder="45"
-              />
-              <Body>lb</Body>
-            </View>
-            <View style={styles.loadedBar}>
-              <View style={styles.plateStack}>
-                {[...plateWeights].reverse().flatMap((plate) => Array.from({ length: plateCounts[plate] }, (_, index) => <View key={`left-${plate}-${index}`} style={[styles.plate, plateVisuals[plate]]} />))}
-              </View>
-              <View style={styles.barSleeve} />
-              <View style={styles.barShaft} />
-              <View style={styles.barSleeve} />
-              <View style={[styles.plateStack, styles.rightPlateStack]}>
-                {plateWeights.flatMap((plate) => Array.from({ length: plateCounts[plate] }, (_, index) => <View key={`right-${plate}-${index}`} style={[styles.plate, plateVisuals[plate]]} />))}
-              </View>
-            </View>
-            <View style={styles.plateControls}>
-              {plateWeights.map((plate) => (
-                <View key={plate} style={styles.plateControl}>
-                  <View style={styles.plateLabel}>
-                    <View style={[styles.plateSwatch, { backgroundColor: plateVisuals[plate].backgroundColor }]} />
-                    <Body style={styles.plateText}>{plate} lb</Body>
-                  </View>
-                  <View style={styles.countControls}>
-                    <Pressable hitSlop={touchHitSlop} onPress={() => changePlateCount(plate, -1)} style={pressableFeedback(styles.countButton)}>
-                      <Body style={styles.buttonText}>-</Body>
-                    </Pressable>
-                    <Body style={styles.countText}>{plateCounts[plate]}</Body>
-                    <Pressable hitSlop={touchHitSlop} onPress={() => changePlateCount(plate, 1)} style={pressableFeedback(styles.countButton)}>
-                      <Body style={styles.buttonText}>+</Body>
-                    </Pressable>
-                  </View>
-                </View>
-              ))}
-            </View>
-            <Body style={styles.loadHint}>Counts are plates per side. Apply {formatWeightInput(loadedBarWeight, unitSystem)} {unitSystem} only to the set you are loading.</Body>
-            <View style={styles.applySetButtons}>
-              {draftSets.map((_, index) => (
-                <Pressable key={index} hitSlop={touchHitSlop} onPress={() => applyLoadedBarWeight(index)} style={pressableFeedback(styles.secondaryButton)}>
-                  <Body style={styles.buttonText}>Use for set {index + 1}</Body>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        ) : null}
-
-        {draftSets.map((set, index) => (
-          <View key={index} style={styles.setRow}>
-            <Label style={styles.setNumber}>{index + 1}</Label>
-            <TextInput style={[styles.input, styles.setInput]} value={set.weight} onChangeText={(value) => updateSet(index, "weight", value)} keyboardType="decimal-pad" inputMode="decimal" placeholder={loadPlaceholder(selectedLoadType, unitSystem)} />
-            <TextInput style={[styles.input, styles.setInput]} value={set.reps} onChangeText={(value) => updateSet(index, "reps", value)} keyboardType="number-pad" inputMode="numeric" placeholder="reps" />
-            <Pressable onPress={() => setDraftSets((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, isWarmup: !item.isWarmup } : item))} style={pressableFeedback([styles.kindButton, set.isWarmup && styles.kindButtonActive])}>
-              <Body style={[styles.kindText, set.isWarmup && styles.kindTextActive]}>{set.isWarmup ? "Warm-up" : "Working"}</Body>
-            </Pressable>
-            <Pressable accessibilityLabel="Remove set" hitSlop={touchHitSlop} onPress={() => setDraftSets((current) => current.filter((_, itemIndex) => itemIndex !== index))} style={pressableFeedback([styles.iconButton, styles.removeButton])}>
-              <Trash2 size={16} color={palette.danger} />
-            </Pressable>
-          </View>
-        ))}
-
-        <Pressable hitSlop={touchHitSlop} style={pressableFeedback(styles.secondaryButton)} onPress={() => setDraftSets((current) => [...current, emptySet()])}>
-          <Plus size={18} color={palette.ink} />
-          <Body style={styles.buttonText}>Add set</Body>
-        </Pressable>
+        <VisualSetComposer
+          sets={draftSets}
+          loadType={selectedLoadType}
+          unitSystem={unitSystem}
+          supportsBarbell={showBarbellCalculator}
+          machineProfile={selectedMachineProfile}
+          machineLabel={selectedMachineProfile?.label ?? null}
+          machineLastLoad={lastMachineLoad}
+          barWeight={barWeight}
+          plateCounts={plateCounts}
+          targets={composerTargets}
+          onBarWeightChange={setBarWeight}
+          onPlateCountsChange={setPlateCounts}
+          onSetsChange={setDraftSets}
+        />
 
         <TextInput style={[styles.input, styles.notes]} value={notes} onChangeText={setNotes} multiline placeholder="Notes" />
         {projectedPerformance ? (
@@ -416,21 +307,11 @@ export function WorkoutScreen() {
     </Screen>
   );
 
-  function updateSet(index: number, field: "weight" | "reps", value: string) {
-    setDraftSets((current) => current.map((set, itemIndex) => (itemIndex === index ? { ...set, [field]: value } : set)));
-  }
 }
 
 function showSaved(setState: (state: SaveState) => void) {
   setState("saved");
   setTimeout(() => setState("idle"), 900);
-}
-
-function loadPlaceholder(loadType: ExerciseLoadType, unitSystem: string) {
-  if (loadType === "machine_stack") return "stack";
-  if (loadType === "bodyweight_plus_load") return `added ${unitSystem}`;
-  if (loadType === "bodyweight_minus_assistance") return `assist ${unitSystem}`;
-  return unitSystem;
 }
 
 function loadInstruction(loadType: ExerciseLoadType, bodyWeight?: number) {
@@ -446,28 +327,13 @@ function storageWeightToMachineLoad(weight: number | undefined, profile: Machine
   return Number(Number(weight).toFixed(1));
 }
 
-function calculateLoadedBarWeight(barWeight: string, plateCounts: PlateCounts) {
-  const bar = parseWeight(barWeight);
-  return bar + plateWeights.reduce((total, plate) => total + plate * plateCounts[plate] * 2, 0);
-}
-
-function calculatePlateCounts(totalLoad: string, barWeight: string) {
-  let remainingPerSide = Math.max(0, (parseWeight(totalLoad) - parseWeight(barWeight)) / 2);
-  return plateWeights.reduce<PlateCounts>((counts, plate) => {
-    const count = Math.floor((remainingPerSide + Number.EPSILON) / plate);
-    counts[plate] = count;
-    remainingPerSide -= count * plate;
-    return counts;
-  }, emptyPlateCounts());
-}
-
-function parseWeight(value: string) {
-  const parsed = Number(value.trim().replace(",", "."));
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
-}
-
-function formatLoadedBarWeight(weight: number) {
-  return weight.toFixed(1).replace(".0", "");
+function buildSmartWorkoutSets(previousSets: WorkoutSet[], unitSystem: "lb" | "kg") {
+  if (!previousSets.length) return [emptySet(), emptySet(), emptySet()];
+  return previousSets.map((set) => ({
+    reps: "",
+    weight: formatWeightInput(set.weight, unitSystem),
+    isWarmup: Boolean(set.is_warmup)
+  }));
 }
 
 const styles = StyleSheet.create({
