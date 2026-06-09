@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { GestureResponderEvent, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { Copy, Dumbbell, Minus, Plus, RotateCcw, Trash2 } from "lucide-react-native";
 
 import { Body, Label } from "@/components/Text";
@@ -14,10 +14,6 @@ const plateWeights = [45, 35, 25, 10, 5] as const;
 type PlateWeight = typeof plateWeights[number];
 type PlateCounts = Record<PlateWeight, number>;
 type ApplyMode = "one" | "working" | "down";
-type LaneLayout = { y: number; height: number };
-type DragCopyState = { sourceIndex: number; targetIndex: number; load: string };
-type PlateDragMode = "add" | "remove";
-type PlateDragState = { plate: PlateWeight; mode: PlateDragMode; ready: boolean };
 
 const emptyPlateCounts = (): PlateCounts => ({ 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 });
 const plateVisuals: Record<PlateWeight, { backgroundColor: string; height: number; width: number }> = {
@@ -72,25 +68,11 @@ export function VisualSetComposer({
   const [editorTotalLoad, setEditorTotalLoad] = useState("45");
   const [editorBarWeight, setEditorBarWeight] = useState(barWeight || "45");
   const [editorPlateCounts, setEditorPlateCounts] = useState<PlateCounts>(normalizePlateCounts(plateCounts));
-  const [dragCopy, setDragCopy] = useState<DragCopyState | null>(null);
-  const dragCopyRef = useRef<DragCopyState | null>(null);
-  const laneLayoutsRef = useRef<Record<number, LaneLayout>>({});
-  const setsRef = useRef(sets);
-  const pressStartPageYRef = useRef(0);
-  const suppressNextPressRef = useRef(false);
   const targetByIndex = useMemo(() => new Map(targets.map((target) => [target.draftIndex, target])), [targets]);
-
-  useEffect(() => {
-    setsRef.current = sets;
-  }, [sets]);
 
   useEffect(() => {
     if (activeIndex !== null && activeIndex >= sets.length) setActiveIndex(null);
   }, [activeIndex, sets.length]);
-
-  useEffect(() => {
-    if (dragCopy !== null && dragCopy.sourceIndex >= sets.length) setDragCopyState(null);
-  }, [dragCopy, sets.length]);
 
   useEffect(() => {
     if (activeIndex === null) return;
@@ -167,6 +149,14 @@ export function VisualSetComposer({
     applyLoad(index, previous, "one");
   }
 
+  function copyLoadDown(index: number, load: string) {
+    if (!load.trim()) {
+      setActiveIndex(index);
+      return;
+    }
+    applyLoad(index, load, "down");
+  }
+
   function changeEditorPlateCount(plate: PlateWeight, amount: number) {
     const next = { ...editorPlateCounts, [plate]: Math.max(0, editorPlateCounts[plate] + amount) };
     setEditorPlateCounts(next);
@@ -195,66 +185,6 @@ export function VisualSetComposer({
     setEditorLoad(String(formatMachineNumber(next)));
   }
 
-  function setDragCopyState(state: DragCopyState | null) {
-    dragCopyRef.current = state;
-    setDragCopy(state);
-  }
-
-  function recordLaneLayout(index: number, event: LayoutChangeEvent) {
-    const { height, y } = event.nativeEvent.layout;
-    const existing = laneLayoutsRef.current[index];
-    if (existing?.height === height && existing.y === y) return;
-    laneLayoutsRef.current = { ...laneLayoutsRef.current, [index]: { height, y } };
-  }
-
-  function beginDragCopy(index: number, load: string) {
-    if (!load.trim()) {
-      setActiveIndex(index);
-      return;
-    }
-    setActiveIndex(null);
-    setDragCopyState({ sourceIndex: index, targetIndex: index, load });
-  }
-
-  function updateDragTarget(event: GestureResponderEvent) {
-    const currentDrag = dragCopyRef.current;
-    if (!currentDrag) return;
-    const sourceLayout = laneLayoutsRef.current[currentDrag.sourceIndex];
-    if (!sourceLayout) return;
-    const dragDistance = event.nativeEvent.pageY - pressStartPageYRef.current;
-    const dragY = sourceLayout.y + sourceLayout.height / 2 + dragDistance;
-    const nextTargetIndex = Object.entries(laneLayoutsRef.current).reduce((targetIndex, [key, layout]) => {
-      const rowIndex = Number(key);
-      if (!Number.isInteger(rowIndex) || rowIndex < currentDrag.sourceIndex || rowIndex >= setsRef.current.length) return targetIndex;
-      const rowCenter = layout.y + layout.height / 2;
-      return dragY >= rowCenter ? Math.max(targetIndex, rowIndex) : targetIndex;
-    }, currentDrag.sourceIndex);
-    if (nextTargetIndex !== currentDrag.targetIndex) {
-      setDragCopyState({ ...currentDrag, targetIndex: nextTargetIndex });
-    }
-  }
-
-  function finishDragCopy() {
-    const currentDrag = dragCopyRef.current;
-    if (!currentDrag) return;
-    const { load, sourceIndex, targetIndex } = currentDrag;
-    const nextSets = setsRef.current.map((set, index) => {
-      const shouldCopy = index >= sourceIndex && index <= targetIndex && (index === sourceIndex || !set.isWarmup);
-      return shouldCopy ? { ...set, weight: load } : set;
-    });
-    onSetsChange(nextSets);
-    setDragCopyState(null);
-    suppressNextPressRef.current = true;
-    setTimeout(() => {
-      suppressNextPressRef.current = false;
-    }, 0);
-  }
-
-  function handleLoadCellPress(index: number, active: boolean) {
-    if (dragCopyRef.current || suppressNextPressRef.current) return;
-    setActiveIndex(active ? null : index);
-  }
-
   return (
     <View style={styles.composer}>
       <View style={styles.headerRow}>
@@ -268,13 +198,10 @@ export function VisualSetComposer({
         const target = targetByIndex.get(index);
         const targetDisplay = target?.weight !== undefined ? formatWeightInput(target.weight, unitSystem) : "";
         const displayLoad = set.weight.trim() || targetDisplay;
-        const dragHighlighted = Boolean(dragCopy && index >= dragCopy.sourceIndex && index <= dragCopy.targetIndex && (index === dragCopy.sourceIndex || !set.isWarmup));
-        const dragSource = dragCopy?.sourceIndex === index;
         return (
           <View
             key={index}
-            onLayout={(event) => recordLaneLayout(index, event)}
-            style={[styles.setLane, active && styles.setLaneActive, dragHighlighted && styles.setLaneDragTarget, dragSource && styles.setLaneDragSource]}
+            style={[styles.setLane, active && styles.setLaneActive]}
           >
             <View style={styles.setRow}>
               <View style={styles.setBadge}>
@@ -283,14 +210,7 @@ export function VisualSetComposer({
               <Pressable
                 accessibilityLabel={`Edit load for set ${index + 1}`}
                 hitSlop={touchHitSlop}
-                delayLongPress={180}
-                onLongPress={() => beginDragCopy(index, displayLoad)}
-                onPress={() => handleLoadCellPress(index, active)}
-                onPressIn={(event) => {
-                  pressStartPageYRef.current = event.nativeEvent.pageY;
-                }}
-                onTouchMove={updateDragTarget}
-                onPressOut={finishDragCopy}
+                onPress={() => setActiveIndex(active ? null : index)}
                 style={pressableFeedback([styles.loadCell, active && styles.loadCellActive])}
               >
                 {targetDisplay ? <View style={styles.targetRail} /> : null}
@@ -309,6 +229,9 @@ export function VisualSetComposer({
                 {target?.targetReps ? <Label style={styles.targetLabel}>target {target.targetReps}</Label> : target?.increaseWeight ? <Label style={styles.targetLabel}>heavier attempt</Label> : null}
                 {machineLabel && isMachineLoadType(loadType) ? <Label style={styles.targetLabel}>{machineLabel}</Label> : null}
               </View>
+              <Pressable accessibilityLabel={`Copy load from set ${index + 1} down`} hitSlop={touchHitSlop} onPress={() => copyLoadDown(index, displayLoad)} style={pressableFeedback([styles.copyDownButton, !displayLoad.trim() && styles.disabledButton])}>
+                <Copy size={14} color={displayLoad.trim() ? palette.ink : palette.muted} />
+              </Pressable>
               <View style={styles.repsStepper}>
                 <Pressable accessibilityLabel={`Decrease reps for set ${index + 1}`} hitSlop={touchHitSlop} onPress={() => adjustReps(index, -1)} style={pressableFeedback(styles.repsStepButton)}>
                   <Minus size={14} color={palette.ink} />
@@ -331,7 +254,6 @@ export function VisualSetComposer({
               <Pressable accessibilityLabel="Remove set" hitSlop={touchHitSlop} onPress={() => onSetsChange(sets.filter((_, itemIndex) => itemIndex !== index))} style={pressableFeedback(styles.iconButton)}>
                 <Trash2 size={16} color={palette.danger} />
               </Pressable>
-              {dragHighlighted ? <Label style={styles.copyBadge}>{dragSource ? "copying" : "will copy"}</Label> : null}
             </View>
 
             {active ? (
@@ -444,41 +366,6 @@ function BarbellEditor({
   onAdjustTotal: (amount: number) => void;
   onReset: () => void;
 }) {
-  const [plateDrag, setPlateDrag] = useState<PlateDragState | null>(null);
-  const plateDragRef = useRef<PlateDragState | null>(null);
-  const plateDragStartPageYRef = useRef(0);
-
-  function setPlateDragState(state: PlateDragState | null) {
-    plateDragRef.current = state;
-    setPlateDrag(state);
-  }
-
-  function recordPlatePressStart(event: GestureResponderEvent) {
-    plateDragStartPageYRef.current = event.nativeEvent.pageY;
-  }
-
-  function beginPlateDrag(plate: PlateWeight, mode: PlateDragMode) {
-    setPlateDragState({ plate, mode, ready: false });
-  }
-
-  function updatePlateDrag(event: GestureResponderEvent) {
-    const currentDrag = plateDragRef.current;
-    if (!currentDrag) return;
-    const deltaY = event.nativeEvent.pageY - plateDragStartPageYRef.current;
-    const ready = currentDrag.mode === "add" ? deltaY < -20 : deltaY > 20;
-    if (ready !== currentDrag.ready) setPlateDragState({ ...currentDrag, ready });
-  }
-
-  function finishPlateDrag() {
-    const currentDrag = plateDragRef.current;
-    if (!currentDrag) return;
-    if (currentDrag.ready) onPlateCount(currentDrag.plate, currentDrag.mode === "add" ? 1 : -1);
-    setPlateDragState(null);
-  }
-
-  const addDragReady = plateDrag?.mode === "add" && plateDrag.ready;
-  const removeDragReady = plateDrag?.mode === "remove" && plateDrag.ready;
-
   return (
     <>
       <View style={styles.editorHeader}>
@@ -490,15 +377,11 @@ function BarbellEditor({
           <RotateCcw size={16} color={palette.ink} />
         </Pressable>
       </View>
-      <View style={[styles.barDropZone, plateDrag?.mode === "add" && styles.barDropZoneActive, addDragReady && styles.barDropZoneReady, removeDragReady && styles.barDropZoneRemoveReady]}>
+      <View style={styles.barDropZone}>
         <LoadedBar
           counts={plateCounts}
           large
-          draggedPlate={plateDrag?.mode === "remove" ? plateDrag.plate : null}
-          onPlatePressIn={recordPlatePressStart}
-          onPlateLongPress={(plate) => beginPlateDrag(plate, "remove")}
-          onPlateTouchMove={updatePlateDrag}
-          onPlatePressOut={finishPlateDrag}
+          onPlatePress={(plate) => onPlateCount(plate, -1)}
         />
       </View>
       <View style={styles.editorInputRow}>
@@ -519,14 +402,10 @@ function BarbellEditor({
         {plateWeights.map((plate) => (
           <View key={plate} style={styles.plateControl}>
             <Pressable
-              accessibilityLabel={`Drag ${plate} lb plate to bar`}
+              accessibilityLabel={`Add ${plate} lb plate to bar`}
               hitSlop={touchHitSlop}
-              delayLongPress={140}
-              onPressIn={recordPlatePressStart}
-              onLongPress={() => beginPlateDrag(plate, "add")}
-              onTouchMove={updatePlateDrag}
-              onPressOut={finishPlateDrag}
-              style={pressableFeedback([styles.plateDragHandle, plateDrag?.mode === "add" && plateDrag.plate === plate && styles.plateDragHandleActive])}
+              onPress={() => onPlateCount(plate, 1)}
+              style={pressableFeedback(styles.plateTapHandle)}
             >
               <View style={[styles.plateSwatch, { backgroundColor: plateVisuals[plate].backgroundColor }]} />
               <Body style={styles.plateText}>{plate}</Body>
@@ -604,33 +483,21 @@ function SimpleLoadEditor({
 function LoadedBar({
   counts,
   large = false,
-  draggedPlate,
-  onPlatePressIn,
-  onPlateLongPress,
-  onPlateTouchMove,
-  onPlatePressOut
+  onPlatePress
 }: {
   counts: PlateCounts;
   large?: boolean;
-  draggedPlate?: PlateWeight | null;
-  onPlatePressIn?: (event: GestureResponderEvent) => void;
-  onPlateLongPress?: (plate: PlateWeight) => void;
-  onPlateTouchMove?: (event: GestureResponderEvent) => void;
-  onPlatePressOut?: () => void;
+  onPlatePress?: (plate: PlateWeight) => void;
 }) {
   function renderPlate(side: "left" | "right", plate: PlateWeight, index: number) {
-    const plateView = <View style={[styles.plate, plateVisuals[plate], large && styles.plateLarge, draggedPlate === plate && styles.draggedLoadedPlate]} />;
-    if (!onPlateLongPress) return <View key={`${side}-${plate}-${index}`}>{plateView}</View>;
+    const plateView = <View style={[styles.plate, plateVisuals[plate], large && styles.plateLarge]} />;
+    if (!onPlatePress) return <View key={`${side}-${plate}-${index}`}>{plateView}</View>;
     return (
       <Pressable
         key={`${side}-${plate}-${index}`}
-        accessibilityLabel={`Drag ${plate} lb plate off bar`}
+        accessibilityLabel={`Remove ${plate} lb plate from bar`}
         hitSlop={touchHitSlop}
-        delayLongPress={140}
-        onPressIn={onPlatePressIn}
-        onLongPress={() => onPlateLongPress(plate)}
-        onTouchMove={onPlateTouchMove}
-        onPressOut={onPlatePressOut}
+        onPress={() => onPlatePress(plate)}
         style={pressableFeedback(styles.loadedPlateHandle)}
       >
         {plateView}
@@ -772,14 +639,6 @@ const styles = StyleSheet.create({
     borderColor: palette.accent,
     backgroundColor: palette.accentSoft
   },
-  setLaneDragTarget: {
-    borderColor: palette.blue,
-    backgroundColor: "#e8eef7"
-  },
-  setLaneDragSource: {
-    borderColor: palette.ink,
-    borderWidth: 2
-  },
   setRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -839,16 +698,20 @@ const styles = StyleSheet.create({
     color: palette.muted,
     fontSize: 11
   },
-  copyBadge: {
-    minHeight: 24,
-    borderRadius: 6,
-    backgroundColor: palette.ink,
-    color: palette.surface,
-    fontSize: 10,
-    fontWeight: "900",
-    paddingHorizontal: spacing.sm,
-    paddingTop: 5,
-    overflow: "hidden"
+  copyDownButton: {
+    width: 36,
+    height: 40,
+    flexShrink: 0,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: palette.surface,
+    ...fastTouchStyle
+  },
+  disabledButton: {
+    opacity: 0.45
   },
   input: {
     minHeight: 42,
@@ -1046,18 +909,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center"
   },
-  barDropZoneActive: {
-    borderColor: palette.blue,
-    backgroundColor: "#eef4ff"
-  },
-  barDropZoneReady: {
-    borderColor: palette.success,
-    backgroundColor: "#e7f4ec"
-  },
-  barDropZoneRemoveReady: {
-    borderColor: palette.warning,
-    backgroundColor: "#f8efe5"
-  },
   plateStack: {
     minWidth: 28,
     flexDirection: "row",
@@ -1075,9 +926,6 @@ const styles = StyleSheet.create({
   },
   plateLarge: {
     transform: [{ scaleY: 1.18 }]
-  },
-  draggedLoadedPlate: {
-    opacity: 0.5
   },
   loadedPlateHandle: {
     borderRadius: 4,
@@ -1112,7 +960,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.surface,
     paddingHorizontal: spacing.sm
   },
-  plateDragHandle: {
+  plateTapHandle: {
     minHeight: 32,
     flexDirection: "row",
     alignItems: "center",
@@ -1120,9 +968,6 @@ const styles = StyleSheet.create({
     borderRadius: 7,
     paddingHorizontal: spacing.xs,
     ...fastTouchStyle
-  },
-  plateDragHandleActive: {
-    backgroundColor: palette.accentSoft
   },
   plateSwatch: {
     width: 10,
