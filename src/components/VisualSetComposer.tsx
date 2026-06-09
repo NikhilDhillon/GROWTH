@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { GestureResponderEvent, LayoutChangeEvent, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
-import { Copy, Dumbbell, Plus, RotateCcw, Trash2 } from "lucide-react-native";
+import { Copy, Dumbbell, Minus, Plus, RotateCcw, Trash2 } from "lucide-react-native";
 
 import { Body, Label } from "@/components/Text";
 import { ExerciseLoadType, isBodyweightLoadType, isMachineLoadType } from "@/constants/exercises";
@@ -121,6 +121,13 @@ export function VisualSetComposer({
 
   function updateSet(index: number, patch: Partial<LoggedSetDraft>) {
     onSetsChange(sets.map((set, itemIndex) => (itemIndex === index ? { ...set, ...patch } : set)));
+  }
+
+  function adjustReps(index: number, amount: number) {
+    const parsed = Number.parseInt(sets[index]?.reps ?? "", 10);
+    const current = Number.isFinite(parsed) ? parsed : 0;
+    const next = Math.max(0, current + amount);
+    updateSet(index, { reps: next > 0 ? String(next) : "" });
   }
 
   function applyLoad(index: number, load: string, mode: ApplyMode) {
@@ -302,14 +309,22 @@ export function VisualSetComposer({
                 {target?.targetReps ? <Label style={styles.targetLabel}>target {target.targetReps}</Label> : target?.increaseWeight ? <Label style={styles.targetLabel}>heavier attempt</Label> : null}
                 {machineLabel && isMachineLoadType(loadType) ? <Label style={styles.targetLabel}>{machineLabel}</Label> : null}
               </View>
-              <TextInput
-                style={[styles.input, styles.repsInput]}
-                value={set.reps}
-                onChangeText={(reps) => updateSet(index, { reps })}
-                keyboardType="number-pad"
-                inputMode="numeric"
-                placeholder={target?.targetReps ? `${target.targetReps}` : "reps"}
-              />
+              <View style={styles.repsStepper}>
+                <Pressable accessibilityLabel={`Decrease reps for set ${index + 1}`} hitSlop={touchHitSlop} onPress={() => adjustReps(index, -1)} style={pressableFeedback(styles.repsStepButton)}>
+                  <Minus size={14} color={palette.ink} />
+                </Pressable>
+                <TextInput
+                  style={[styles.input, styles.repsInput]}
+                  value={set.reps}
+                  onChangeText={(reps) => updateSet(index, { reps })}
+                  keyboardType="number-pad"
+                  inputMode="numeric"
+                  placeholder={target?.targetReps ? `${target.targetReps}` : "reps"}
+                />
+                <Pressable accessibilityLabel={`Increase reps for set ${index + 1}`} hitSlop={touchHitSlop} onPress={() => adjustReps(index, 1)} style={pressableFeedback(styles.repsStepButton)}>
+                  <Plus size={14} color={palette.ink} />
+                </Pressable>
+              </View>
               <Pressable onPress={() => updateSet(index, { isWarmup: !set.isWarmup })} style={pressableFeedback([styles.kindButton, set.isWarmup && styles.kindButtonActive])}>
                 <Body style={[styles.kindText, set.isWarmup && styles.kindTextActive]}>{set.isWarmup ? "Warm-up" : "Working"}</Body>
               </Pressable>
@@ -625,13 +640,13 @@ function LoadedBar({
 
   return (
     <View style={[styles.loadedBar, large && styles.loadedBarLarge]}>
-      <View style={styles.plateStack}>
+      <View style={[styles.plateStack, styles.plateStackLeft]}>
         {[...plateWeights].reverse().flatMap((plate) => plateCopies(counts[plate]).map((_, index) => renderPlate("left", plate, index)))}
       </View>
       <View style={styles.sleeve} />
       <View style={[styles.shaft, large && styles.shaftLarge]} />
       <View style={styles.sleeve} />
-      <View style={styles.plateStack}>
+      <View style={[styles.plateStack, styles.plateStackRight]}>
         {plateWeights.flatMap((plate) => plateCopies(counts[plate]).map((_, index) => renderPlate("right", plate, index)))}
       </View>
     </View>
@@ -847,9 +862,26 @@ const styles = StyleSheet.create({
     fontWeight: "800"
   },
   repsInput: {
-    width: 58,
-    flexShrink: 0,
+    width: 48,
     textAlign: "center"
+  },
+  repsStepper: {
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 0,
+    gap: 4
+  },
+  repsStepButton: {
+    width: 34,
+    height: 40,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: palette.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    ...fastTouchStyle
   },
   kindButton: {
     minHeight: 40,
@@ -1030,8 +1062,13 @@ const styles = StyleSheet.create({
     minWidth: 28,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "flex-end",
     gap: 1
+  },
+  plateStackLeft: {
+    justifyContent: "flex-end"
+  },
+  plateStackRight: {
+    justifyContent: "flex-start"
   },
   plate: {
     borderRadius: 2
