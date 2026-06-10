@@ -19,7 +19,8 @@ export function LineGraph({
   suffix = "",
   emptyMessage = "Log more workouts to draw a trend.",
   xLabels,
-  maxPoints = 8
+  maxPoints = 8,
+  showTrendLine = false
 }: {
   points: Point[];
   height?: number;
@@ -27,6 +28,7 @@ export function LineGraph({
   emptyMessage?: string;
   xLabels?: string[];
   maxPoints?: number;
+  showTrendLine?: boolean;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const width = 340;
@@ -69,6 +71,7 @@ export function LineGraph({
     const y = padding.top + (1 - (point.value - min) / span) * plotHeight;
     return { x, y, point };
   });
+  const trendLine = showTrendLine && coordinates.length > 1 ? buildTrendLine(coordinates) : null;
   const timeTicks = timeStart !== null && timeEnd !== null ? buildTimeTicks(timeStart, timeEnd) : [];
   const activePoint = activeIndex === null ? null : coordinates[activeIndex];
   const tooltipLines = activePoint ? [activePoint.point.label, `${activePoint.point.value.toFixed(1)}${suffix}`, ...(activePoint.point.details ?? [])] : [];
@@ -98,6 +101,18 @@ export function LineGraph({
         })}
         {coordinates.length > 1 ? (
           <Polyline points={coordinates.map((item) => `${item.x},${item.y}`).join(" ")} fill="none" stroke={palette.accent} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" />
+        ) : null}
+        {trendLine ? (
+          <Line
+            x1={trendLine.x1}
+            y1={trendLine.y1}
+            x2={trendLine.x2}
+            y2={trendLine.y2}
+            stroke={palette.blue}
+            strokeWidth={2}
+            strokeDasharray="6 5"
+            strokeLinecap="round"
+          />
         ) : null}
         {coordinates.map((item, index) => (
           <Circle key={`${item.x}-${item.y}-${index}`} cx={item.x} cy={item.y} r={4} fill={palette.ink} />
@@ -153,6 +168,26 @@ function buildTimeTicks(start: number, end: number) {
   if (start === end) return [start];
   if (end - start < 2 * 24 * 60 * 60 * 1000) return [start, end];
   return [start, start + (end - start) / 2, end];
+}
+
+function buildTrendLine(points: Array<{ x: number; y: number }>) {
+  const count = points.length;
+  const sumX = points.reduce((total, point) => total + point.x, 0);
+  const sumY = points.reduce((total, point) => total + point.y, 0);
+  const sumXY = points.reduce((total, point) => total + point.x * point.y, 0);
+  const sumXX = points.reduce((total, point) => total + point.x * point.x, 0);
+  const denominator = count * sumXX - sumX * sumX;
+  if (denominator === 0) return null;
+  const slope = (count * sumXY - sumX * sumY) / denominator;
+  const intercept = (sumY - slope * sumX) / count;
+  const x1 = points[0].x;
+  const x2 = points[count - 1].x;
+  return {
+    x1,
+    y1: slope * x1 + intercept,
+    x2,
+    y2: slope * x2 + intercept
+  };
 }
 
 function formatTimeTick(timestamp: number, span: number) {

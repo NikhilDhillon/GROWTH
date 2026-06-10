@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { Copy, Dumbbell, Minus, Plus, RotateCcw, Trash2 } from "lucide-react-native";
 
@@ -69,10 +69,25 @@ export function VisualSetComposer({
   const [editorBarWeight, setEditorBarWeight] = useState(barWeight || "45");
   const [editorPlateCounts, setEditorPlateCounts] = useState<PlateCounts>(normalizePlateCounts(plateCounts));
   const targetByIndex = useMemo(() => new Map(targets.map((target) => [target.draftIndex, target])), [targets]);
+  const targetRepsPrefillKey = useMemo(() => targets.map((target) => `${target.draftIndex}:${target.targetReps ?? ""}`).join("|"), [targets]);
+  const appliedTargetRepsPrefillKeyRef = useRef("");
 
   useEffect(() => {
     if (activeIndex !== null && activeIndex >= sets.length) setActiveIndex(null);
   }, [activeIndex, sets.length]);
+
+  useEffect(() => {
+    if (!targetRepsPrefillKey || appliedTargetRepsPrefillKeyRef.current === targetRepsPrefillKey) return;
+    const nextSets = sets.map((set, index) => {
+      if (set.reps.trim()) return set;
+      const targetReps = targetByIndex.get(index)?.targetReps;
+      return isPositiveInteger(targetReps) ? { ...set, reps: String(targetReps) } : set;
+    });
+    appliedTargetRepsPrefillKeyRef.current = targetRepsPrefillKey;
+    if (nextSets.some((set, index) => set !== sets[index])) {
+      onSetsChange(nextSets);
+    }
+  }, [onSetsChange, sets, targetByIndex, targetRepsPrefillKey]);
 
   useEffect(() => {
     if (activeIndex === null) return;
@@ -107,7 +122,8 @@ export function VisualSetComposer({
 
   function adjustReps(index: number, amount: number) {
     const parsed = Number.parseInt(sets[index]?.reps ?? "", 10);
-    const current = Number.isFinite(parsed) ? parsed : 0;
+    const targetReps = targetByIndex.get(index)?.targetReps;
+    const current = Number.isFinite(parsed) ? parsed : isPositiveInteger(targetReps) ? Number(targetReps) : 0;
     const next = Math.max(0, current + amount);
     updateSet(index, { reps: next > 0 ? String(next) : "" });
   }
@@ -608,6 +624,10 @@ function formatMachineNumber(value: number) {
 
 function plateCopies(count: number) {
   return Array.from({ length: Math.min(5, Math.max(0, Number(count) || 0)) });
+}
+
+function isPositiveInteger(value: unknown) {
+  return Number.isInteger(value) && Number(value) > 0;
 }
 
 const styles = StyleSheet.create({

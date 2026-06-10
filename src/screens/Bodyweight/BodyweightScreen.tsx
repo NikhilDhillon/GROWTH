@@ -34,12 +34,14 @@ export function BodyweightScreen() {
   const [loggedDate, setLoggedDate] = useState(todayIso());
   const [weight, setWeight] = useState("");
   const [range, setRange] = useState<BodyweightRange>("month");
+  const [showTrendLine, setShowTrendLine] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const latest = logs[0];
   const isCompact = width < 430;
   const sortedLogs = [...logs].sort((a, b) => a.logged_at.localeCompare(b.logged_at) || a.created_at.localeCompare(b.created_at));
   const filteredLogs = filterLogsByRange(sortedLogs, range);
+  const rangeAverage = averageBodyWeight(filteredLogs);
   const graphPoints = range === "year" || range === "all"
     ? buildMonthlyAveragePoints(filteredLogs)
     : filteredLogs.map((log) => ({
@@ -105,7 +107,10 @@ export function BodyweightScreen() {
             <Label>Latest</Label>
             <SectionTitle>{latest ? formatBodyWeight(latest.weight) : "--"}</SectionTitle>
           </View>
-          <Body>{latest ? formatShortDate(latest.logged_at.slice(0, 10)) : "Bodyweight data required"}</Body>
+          <View style={styles.summaryMetric}>
+            <Label>{rangeAverageLabel(range)}</Label>
+            <SectionTitle>{rangeAverage !== null ? formatBodyWeight(rangeAverage) : "--"}</SectionTitle>
+          </View>
         </View>
         <View style={styles.chipRow}>
           {ranges.map((item) => (
@@ -113,8 +118,11 @@ export function BodyweightScreen() {
               <Body style={[styles.chipText, range === item.key && styles.chipTextActive]}>{item.label}</Body>
             </Pressable>
           ))}
+          <Pressable accessibilityLabel="Toggle bodyweight trendline" onPress={() => setShowTrendLine((value) => !value)} style={[styles.chip, showTrendLine && styles.trendChipActive]}>
+            <Body style={[styles.chipText, showTrendLine && styles.trendChipTextActive]}>Trend</Body>
+          </Pressable>
         </View>
-        <LineGraph points={graphPoints} maxPoints={graphPoints.length || 1} suffix={` ${bodyWeightDisplayUnit}`} emptyMessage={`Bodyweight data required for this ${rangeLabel(range)}.`} />
+        <LineGraph points={graphPoints} maxPoints={graphPoints.length || 1} suffix={` ${bodyWeightDisplayUnit}`} emptyMessage={`Bodyweight data required for this ${rangeLabel(range)}.`} showTrendLine={showTrendLine} />
       </Panel>
 
       <Panel>
@@ -188,6 +196,11 @@ function rangeLabel(range: BodyweightRange) {
   return range;
 }
 
+function rangeAverageLabel(range: BodyweightRange) {
+  if (range === "all") return "All average";
+  return `${rangeLabel(range)} average`;
+}
+
 function buildMonthlyAveragePoints(logs: BodyWeightLog[]) {
   const buckets = logs.reduce<Map<string, BodyWeightLog[]>>((groups, log) => {
     const key = log.logged_at.slice(0, 7);
@@ -206,6 +219,11 @@ function buildMonthlyAveragePoints(logs: BodyWeightLog[]) {
   });
 }
 
+function averageBodyWeight(logs: BodyWeightLog[]) {
+  if (!logs.length) return null;
+  return logs.reduce((total, log) => total + log.weight, 0) / logs.length;
+}
+
 function formatMonthLabel(month: string) {
   const date = new Date(`${month}-01T00:00:00`);
   return date.toLocaleDateString(undefined, { month: "short", year: "numeric" });
@@ -221,7 +239,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    flexWrap: "wrap",
     gap: spacing.md
+  },
+  summaryMetric: {
+    alignItems: "flex-end",
+    minWidth: 120
   },
   chipRow: {
     flexDirection: "row",
@@ -240,11 +263,18 @@ const styles = StyleSheet.create({
     backgroundColor: palette.ink,
     borderColor: palette.ink
   },
+  trendChipActive: {
+    backgroundColor: palette.blue,
+    borderColor: palette.blue
+  },
   chipText: {
     color: palette.ink,
     fontWeight: "800"
   },
   chipTextActive: {
+    color: palette.surface
+  },
+  trendChipTextActive: {
     color: palette.surface
   },
   inputRow: {

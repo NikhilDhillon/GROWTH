@@ -583,13 +583,20 @@ function buildSmartGuidedSets(input: {
 
   if (recommendation.category === "unguided" && recommendation.latest?.sets.length) {
     return recommendation.latest.sets.map((set) => ({
-      reps: "",
+      reps: String(set.reps),
       weight: formatWeightInput(set.weight, input.unitSystem),
       isWarmup: Boolean(set.is_warmup)
     }));
   }
 
   for (const target of recommendation.targets) {
+    const targetReps = Number(target.targetReps);
+    if (Number.isInteger(targetReps) && targetReps > 0) {
+      nextSets[target.draftIndex] = {
+        ...nextSets[target.draftIndex],
+        reps: String(targetReps)
+      };
+    }
     if (target.increaseWeight) continue;
     const sourceWeight = target.priorWeight ?? recommendation.latest?.sets[target.workingSetNumber - 1]?.weight;
     if (Number.isFinite(sourceWeight)) {

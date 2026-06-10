@@ -164,7 +164,7 @@ export function WorkoutScreen() {
 
   function duplicatePrevious() {
     if (!previousSets.length) return;
-    setDraftSets(previousSets.map((set) => ({ reps: "", weight: formatWeightInput(set.weight, unitSystem), isWarmup: Boolean(set.is_warmup) })));
+    setDraftSets(previousSets.map((set) => ({ reps: String(set.reps), weight: formatWeightInput(set.weight, unitSystem), isWarmup: Boolean(set.is_warmup) })));
   }
 
   return (
@@ -330,7 +330,7 @@ function storageWeightToMachineLoad(weight: number | undefined, profile: Machine
 function buildSmartWorkoutSets(previousSets: WorkoutSet[], unitSystem: "lb" | "kg") {
   if (!previousSets.length) return [emptySet(), emptySet(), emptySet()];
   return previousSets.map((set) => ({
-    reps: "",
+    reps: String(set.reps),
     weight: formatWeightInput(set.weight, unitSystem),
     isWarmup: Boolean(set.is_warmup)
   }));
