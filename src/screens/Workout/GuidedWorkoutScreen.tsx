@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, StyleSheet, TextInput, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
-import { Check, ChevronRight, Timer, X } from "lucide-react-native";
+import { Check, ChevronRight, Plus, Timer, X } from "lucide-react-native";
 
 import { MachineProfilePanel } from "@/components/MachineProfilePanel";
 import { Panel } from "@/components/Panel";
@@ -38,6 +38,7 @@ export function GuidedWorkoutScreen() {
   const guidedWorkoutPreferences = useFitnessStore((state) => state.guidedWorkoutPreferences);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
   const saveMachineProfile = useFitnessStore((state) => state.saveMachineProfile);
+  const deleteMachineProfile = useFitnessStore((state) => state.deleteMachineProfile);
   const saveTrainingSplit = useFitnessStore((state) => state.saveTrainingSplit);
   const updateActiveWorkout = useFitnessStore((state) => state.updateActiveWorkout);
   const finishActiveWorkout = useFitnessStore((state) => state.finishActiveWorkout);
@@ -326,7 +327,7 @@ export function GuidedWorkoutScreen() {
       <View style={styles.titleRow}>
         <View>
           <Label>Guided workout</Label>
-          <Title>{sourceDay?.label ?? "Today's"} training</Title>
+          <Title>{activeWorkout.workoutLabel ?? sourceDay?.label ?? "Today's"} training</Title>
           <Body>{activeWorkout.plannedMuscles.join(" + ")}</Body>
         </View>
         <TimerDisplay startedAt={activeWorkout.startedAt} now={clock} />
@@ -346,7 +347,7 @@ export function GuidedWorkoutScreen() {
 
       <Panel>
         <SectionTitle>Exercise {activeWorkout.completedExercises.length + 1}</SectionTitle>
-        <Body>Choose one of today's muscle groups for your current exercise.</Body>
+        <Body>Choose one of this workout's muscle groups for your current exercise.</Body>
         <View style={styles.chips}>
           {displayedMuscles.map((muscle) => (
             <Pressable key={muscle} onPress={() => selectMuscle(muscle)} style={pressableFeedback([styles.chip, current.muscle === muscle && styles.chipActive])}>
@@ -355,7 +356,8 @@ export function GuidedWorkoutScreen() {
           ))}
         </View>
         <Pressable onPress={() => setShowAlternateMuscles((visible) => !visible)} style={pressableFeedback(styles.secondaryButton)}>
-          <Body style={styles.buttonText}>{showAlternateMuscles ? "Hide other muscle groups" : "Choose a different muscle group"}</Body>
+          <Plus size={17} color={palette.ink} />
+          <Body style={styles.buttonText}>{showAlternateMuscles ? "Hide other muscle groups" : "Add another muscle"}</Body>
         </Pressable>
         {pendingMuscle ? (
           <View style={styles.prompt}>
@@ -452,6 +454,7 @@ export function GuidedWorkoutScreen() {
               lastLoad={lastMachineLoad}
               onSelectProfile={(machineProfileId) => updateDraft({ machineProfileId })}
               onSaveProfile={saveMachineProfile}
+              onDeleteProfile={deleteMachineProfile}
             />
           ) : null}
 
@@ -460,9 +463,6 @@ export function GuidedWorkoutScreen() {
             loadType={loadType}
             unitSystem={unitSystem}
             supportsBarbell={supportsBarbellCalculator(selectedExercise.name)}
-            machineProfile={selectedMachineProfile}
-            machineLabel={selectedMachineProfile?.label ?? null}
-            machineLastLoad={lastMachineLoad}
             barWeight={current.barWeight}
             plateCounts={current.plateCounts}
             targets={composerTargets}
@@ -616,7 +616,6 @@ function loadInstruction(loadType: ExerciseLoadType, bodyWeight?: number) {
 }
 
 function loadChangeInstruction(loadType: ExerciseLoadType) {
-  if (loadType === "machine_stack") return "Choose a higher stack";
   return loadType === "bodyweight_minus_assistance" ? "Choose less assistance" : "Choose a heavier load";
 }
 

@@ -64,6 +64,7 @@ type FitnessState = {
   finishActiveWorkout: (summary?: CompletedGuidedWorkout) => Promise<void>;
   saveGuidedWorkoutPreferences: (preferences: GuidedWorkoutPreferences) => Promise<void>;
   saveMachineProfile: (profile: MachineProfileDraft) => Promise<MachineProfile>;
+  deleteMachineProfile: (profileId: string) => Promise<void>;
   setConfigWeight: (id: number, weightFactor: number) => Promise<void>;
 };
 
@@ -356,6 +357,18 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
       return saved.find((item) => item.id === profile.id) ?? profile;
     } catch (error) {
       set({ machineProfiles: previous, authError: error instanceof Error ? error.message : "Could not save machine profile." });
+      throw error;
+    }
+  },
+  deleteMachineProfile: async (profileId) => {
+    const previous = get().machineProfiles;
+    const machineProfiles = previous.filter((profile) => profile.id !== profileId);
+    set({ machineProfiles });
+    try {
+      const saved = await saveStoredMachineProfiles(machineProfiles);
+      set({ machineProfiles: saved });
+    } catch (error) {
+      set({ machineProfiles: previous, authError: error instanceof Error ? error.message : "Could not delete machine tag." });
       throw error;
     }
   },

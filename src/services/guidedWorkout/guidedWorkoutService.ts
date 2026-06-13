@@ -112,7 +112,7 @@ export function buildGuidedRecommendation(input: {
   const requiredSetCount = prescribedWorkingSetCount;
   const allSummaries = exerciseSessions(input.exercise.id, input.sessions, input.sets);
   const sameMachineSummaries = input.machineProfileId ? allSummaries.filter((summary) => summary.machineProfileId === input.machineProfileId) : [];
-  const summaries = sameMachineSummaries.length ? sameMachineSummaries : allSummaries;
+  const summaries = input.machineProfileId ? sameMachineSummaries : allSummaries;
   const latest = summaries.at(-1);
   const inactive = latest ? daysBetween(latest.date, input.workoutDate) > input.preferences.inactivityDays : false;
   const latestWorking = latest?.sets ?? [];

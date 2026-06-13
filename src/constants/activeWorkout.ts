@@ -20,12 +20,13 @@ export function todaySplitDay(days: TrainingSplitDay[]) {
   return days.find((day) => day.key === dayKey) ?? days[0];
 }
 
-export function createActiveWorkout(day: TrainingSplitDay): ActiveWorkout {
+export function createActiveWorkout(day: TrainingSplitDay, workoutLabel?: string): ActiveWorkout {
   return {
     startedAt: new Date().toISOString(),
     workoutDate: todayIso(),
     todayDayKey: day.key,
     sourceDayKey: day.key,
+    workoutLabel,
     plannedMuscles: [...day.muscles],
     completedExercises: [],
     currentExercise: emptyActiveExercise(),
@@ -57,12 +58,17 @@ export function normalizeActiveWorkout(value: unknown): ActiveWorkout | null {
     typeof input.sourceDayKey !== "string" ||
     !Array.isArray(input.plannedMuscles)
   ) return null;
+  const plannedMuscles = input.plannedMuscles as SplitMuscle[];
+  const normalizedPlannedMuscles = input.workoutLabel === "Legs / Shoulders / Traps" && !plannedMuscles.includes("Traps")
+    ? [...plannedMuscles, "Traps" as const]
+    : plannedMuscles;
   return {
     startedAt: input.startedAt,
     workoutDate: input.workoutDate,
     todayDayKey: input.todayDayKey,
     sourceDayKey: input.sourceDayKey,
-    plannedMuscles: input.plannedMuscles as SplitMuscle[],
+    workoutLabel: typeof input.workoutLabel === "string" ? input.workoutLabel : undefined,
+    plannedMuscles: normalizedPlannedMuscles,
     completedExercises: Array.isArray(input.completedExercises) ? input.completedExercises : [],
     currentExercise: normalizeActiveExercise(input.currentExercise),
     pendingMuscle: input.pendingMuscle ?? null,

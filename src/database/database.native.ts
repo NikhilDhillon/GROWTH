@@ -119,7 +119,7 @@ async function ensureExerciseCatalog(db: Database) {
 
 async function ensureCatalogAdditions(db: Database) {
   const version = await db.getFirstAsync<{ user_version: number }>("PRAGMA user_version");
-  if ((version?.user_version ?? 0) >= 4) return;
+  if ((version?.user_version ?? 0) >= 6) return;
 
   const timestamp = new Date().toISOString();
   for (const exercise of catalogExercises) {
@@ -134,7 +134,7 @@ async function ensureCatalogAdditions(db: Database) {
     }
   }
 
-  await db.execAsync("PRAGMA user_version = 4");
+  await db.execAsync("PRAGMA user_version = 6");
 }
 
 export async function loadAllData() {

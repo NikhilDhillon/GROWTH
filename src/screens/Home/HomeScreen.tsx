@@ -1,37 +1,38 @@
 import { useEffect, useState } from "react";
-import { Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Modal, Pressable, StyleSheet, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
-import { Check, Dumbbell, Pencil, Timer, X } from "lucide-react-native";
+import { ChevronRight, Dumbbell, Timer, X } from "lucide-react-native";
 
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
-import { createActiveWorkout, todaySplitDay } from "@/constants/activeWorkout";
-import { cloneTrainingSplitDays } from "@/constants/trainingSplit";
+import { createActiveWorkout } from "@/constants/activeWorkout";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { formatShortDate } from "@/utils/date";
+import { SplitMuscle } from "@/types";
 import { palette, spacing } from "@/utils/theme";
 import { pressableFeedback } from "@/utils/touch";
 
-type MuscleLocation = { dayIndex: number; muscleIndex: number };
+type WorkoutOption = {
+  key: string;
+  label: string;
+  detail: string;
+  muscles: SplitMuscle[];
+};
+
+const workoutOptions: WorkoutOption[] = [
+  { key: "chest-shoulders", label: "Chest / Shoulders", detail: "Chest, front delts and side delts", muscles: ["Chest", "Shoulders"] },
+  { key: "back-rear-delts", label: "Back / Rear delts", detail: "Back and rear delts", muscles: ["Back", "Shoulders"] },
+  { key: "legs-shoulders-traps", label: "Legs / Shoulders / Traps", detail: "Legs, shoulders and traps", muscles: ["Legs", "Shoulders", "Traps"] },
+  { key: "arms", label: "Arms", detail: "Biceps, triceps and forearms", muscles: ["Biceps", "Triceps", "Forearms"] }
+];
 
 export function HomeScreen() {
-  const trainingSplit = useFitnessStore((state) => state.trainingSplit);
-  const saveTrainingSplit = useFitnessStore((state) => state.saveTrainingSplit);
   const activeWorkout = useFitnessStore((state) => state.activeWorkout);
   const startActiveWorkout = useFitnessStore((state) => state.startActiveWorkout);
   const navigation = useNavigation<{ navigate: (route: string) => void }>();
-  const [isEditing, setIsEditing] = useState(false);
-  const [draftDays, setDraftDays] = useState(() => cloneTrainingSplitDays(trainingSplit.days));
-  const [selectedMuscle, setSelectedMuscle] = useState<MuscleLocation | null>(null);
-  const [draggedMuscle, setDraggedMuscle] = useState<MuscleLocation | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+  const [showWorkoutPicker, setShowWorkoutPicker] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
   const [clock, setClock] = useState(Date.now());
-
-  useEffect(() => {
-    if (!isEditing) setDraftDays(cloneTrainingSplitDays(trainingSplit.days));
-  }, [isEditing, trainingSplit.days]);
 
   useEffect(() => {
     if (!activeWorkout) return;
@@ -39,185 +40,100 @@ export function HomeScreen() {
     return () => clearInterval(interval);
   }, [activeWorkout]);
 
-  const displayedDays = isEditing ? draftDays : trainingSplit.days;
-
-  function beginEdit() {
-    setDraftDays(cloneTrainingSplitDays(trainingSplit.days));
-    setSelectedMuscle(null);
-    setSaveError(null);
-    setIsEditing(true);
-  }
-
-  function cancelEdit() {
-    setDraftDays(cloneTrainingSplitDays(trainingSplit.days));
-    setSelectedMuscle(null);
-    setSaveError(null);
-    setIsEditing(false);
-  }
-
-  function chooseMuscle(location: MuscleLocation) {
-    if (selectedMuscle?.dayIndex === location.dayIndex && selectedMuscle.muscleIndex === location.muscleIndex) {
-      setSelectedMuscle(null);
+  function openWorkout() {
+    if (activeWorkout) {
+      navigation.navigate("ActiveWorkout");
       return;
     }
-    setSelectedMuscle(location);
+    setShowWorkoutPicker(true);
   }
 
-  function moveMuscle(targetDayIndex: number, source = selectedMuscle) {
-    if (!source || source.dayIndex === targetDayIndex) return;
-    setDraftDays((days) => {
-      const next = cloneTrainingSplitDays(days);
-      const [muscle] = next[source.dayIndex].muscles.splice(source.muscleIndex, 1);
-      if (muscle) next[targetDayIndex].muscles.push(muscle);
-      return next;
-    });
-    setSelectedMuscle(null);
-    setDraggedMuscle(null);
-  }
-
-  async function saveSplit() {
-    setIsSaving(true);
-    setSaveError(null);
+  async function startWorkout(option: WorkoutOption) {
+    if (isStarting) return;
+    setIsStarting(true);
     try {
-      await saveTrainingSplit(draftDays);
-      setIsEditing(false);
-      setSelectedMuscle(null);
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not save the split.");
+      await startActiveWorkout(createActiveWorkout({
+        key: option.key,
+        label: option.label,
+        muscles: option.muscles
+      }, option.label));
+      setShowWorkoutPicker(false);
+      navigation.navigate("ActiveWorkout");
     } finally {
-      setIsSaving(false);
+      setIsStarting(false);
     }
-  }
-
-  async function openWorkout() {
-    if (!activeWorkout) {
-      await startActiveWorkout(createActiveWorkout(todaySplitDay(trainingSplit.days)));
-    }
-    navigation.navigate("ActiveWorkout");
-  }
-
-  function dragProps(location: MuscleLocation) {
-    if (Platform.OS !== "web") return {};
-    return {
-      draggable: true,
-      onDragStart: () => setDraggedMuscle(location)
-    } as object;
-  }
-
-  function dropProps(dayIndex: number) {
-    if (Platform.OS !== "web") return {};
-    return {
-      onDragOver: (event: { preventDefault: () => void }) => event.preventDefault(),
-      onDrop: (event: { preventDefault: () => void }) => {
-        event.preventDefault();
-        moveMuscle(dayIndex, draggedMuscle);
-      }
-    } as object;
   }
 
   return (
     <Screen>
       <View>
-        <Label>Weekly training plan</Label>
-        <Title>Current split</Title>
+        <Label>Guided training</Label>
+        <Title>Ready to train?</Title>
       </View>
 
-      <Panel>
+      <Panel style={styles.heroPanel}>
         <View style={styles.headerRow}>
           <View style={styles.headerCopy}>
-            <SectionTitle>Weekly split</SectionTitle>
-            <Body>
-              {trainingSplit.updated_at && trainingSplit.updated_by
-                ? `Last updated ${formatShortDate(trainingSplit.updated_at.slice(0, 10))} by ${trainingSplit.updated_by}.`
-                : "Default schedule. Save an edit to establish your plan."}
-            </Body>
-          </View>
-          {!isEditing ? (
-            <Pressable accessibilityLabel="Edit weekly split" onPress={beginEdit} style={pressableFeedback(styles.actionButton)}>
-              <Pencil size={16} color={palette.ink} />
-              <Body style={styles.actionText}>Edit</Body>
-            </Pressable>
-          ) : null}
-        </View>
-
-        {isEditing ? <Body>Drag muscle blocks between days on desktop, or select a muscle and tap its destination day.</Body> : null}
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View style={styles.splitTable}>
-            {displayedDays.map((day, dayIndex) => (
-              <Pressable
-                key={day.key}
-                {...dropProps(dayIndex)}
-                onPress={() => {
-                  if (isEditing) moveMuscle(dayIndex);
-                }}
-                style={[styles.dayColumn, selectedMuscle && isEditing && styles.dayDropTarget]}
-              >
-                <Label style={styles.dayHeader}>{day.label}</Label>
-                <View style={styles.dayMuscles}>
-                  {day.muscles.length ? day.muscles.map((muscle, muscleIndex) => {
-                    const isSelected = selectedMuscle?.dayIndex === dayIndex && selectedMuscle.muscleIndex === muscleIndex;
-                    return isEditing ? (
-                      <Pressable
-                        key={`${muscle}-${muscleIndex}`}
-                        {...dragProps({ dayIndex, muscleIndex })}
-                        onPress={(event) => {
-                          event.stopPropagation();
-                          chooseMuscle({ dayIndex, muscleIndex });
-                        }}
-                        style={[styles.muscleChip, styles.editableChip, isSelected && styles.muscleChipSelected]}
-                      >
-                        <Body style={[styles.muscleText, isSelected && styles.muscleTextSelected]}>{muscle}</Body>
-                      </Pressable>
-                    ) : (
-                      <View key={`${muscle}-${muscleIndex}`} style={styles.muscleChip}>
-                        <Body style={styles.muscleText}>{muscle}</Body>
-                      </View>
-                    );
-                  }) : <Body style={styles.restText}>Rest</Body>}
-                </View>
-              </Pressable>
-            ))}
-          </View>
-        </ScrollView>
-
-        {isEditing ? (
-          <>
-            <Body>Saving updates this schedule for friends who accepted split synchronization.</Body>
-            {saveError ? <Body style={styles.errorText}>{saveError}</Body> : null}
-            <View style={styles.editActions}>
-              <Pressable disabled={isSaving} onPress={cancelEdit} style={pressableFeedback(styles.actionButton)}>
-                <X size={17} color={palette.ink} />
-                <Body style={styles.actionText}>Cancel</Body>
-              </Pressable>
-              <Pressable disabled={isSaving} onPress={() => void saveSplit()} style={pressableFeedback(styles.saveButton)}>
-                <Check size={17} color={palette.surface} />
-                <Body style={styles.saveText}>{isSaving ? "Saving" : "Save split"}</Body>
-              </Pressable>
-            </View>
-          </>
-        ) : (
-          <Body>Use Social to request split synchronization with specific friends.</Body>
-        )}
-      </Panel>
-
-      <Panel>
-        <View style={styles.headerRow}>
-          <View style={styles.headerCopy}>
-            <Label>Guided training</Label>
-            <SectionTitle>{activeWorkout ? "Workout in progress" : "Ready to train?"}</SectionTitle>
+            <SectionTitle>{activeWorkout ? "Workout in progress" : "Choose your workout when you start"}</SectionTitle>
             <Body>
               {activeWorkout
-                ? `Elapsed time ${formatElapsed(activeWorkout.startedAt, clock)}. Continue where you left off.`
-                : "Follow today's split and build on your previous performance."}
+                ? `${activeWorkout.workoutLabel ?? activeWorkout.plannedMuscles.join(" / ")} · ${formatElapsed(activeWorkout.startedAt, clock)} elapsed`
+                : "Pick one of your four sessions, then add another muscle group whenever you want."}
             </Body>
           </View>
-          {activeWorkout ? <Timer size={22} color={palette.accent} /> : <Dumbbell size={22} color={palette.accent} />}
+          {activeWorkout ? <Timer size={24} color={palette.accent} /> : <Dumbbell size={24} color={palette.accent} />}
         </View>
-        <Pressable onPress={() => void openWorkout()} style={pressableFeedback(styles.startButton)}>
+
+        <Pressable onPress={openWorkout} style={pressableFeedback(styles.startButton)}>
           <Body style={styles.startText}>{activeWorkout ? "Resume workout" : "Start workout"}</Body>
+          <ChevronRight size={21} color={palette.surface} />
         </Pressable>
       </Panel>
+
+      {!activeWorkout ? (
+        <View style={styles.preview}>
+          <Label>Your split</Label>
+          {workoutOptions.map((option) => (
+            <View key={option.key} style={styles.previewRow}>
+              <Body style={styles.previewTitle}>{option.label}</Body>
+              <Body style={styles.previewDetail}>{option.detail}</Body>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      <Modal visible={showWorkoutPicker} transparent animationType="fade" onRequestClose={() => setShowWorkoutPicker(false)}>
+        <View style={styles.modalLayer}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View style={styles.headerCopy}>
+                <Label>Start workout</Label>
+                <SectionTitle>What are you training?</SectionTitle>
+              </View>
+              <Pressable accessibilityLabel="Close workout picker" onPress={() => setShowWorkoutPicker(false)} style={pressableFeedback(styles.closeButton)}>
+                <X size={20} color={palette.ink} />
+              </Pressable>
+            </View>
+
+            <View style={styles.workoutList}>
+              {workoutOptions.map((option) => (
+                  <Pressable
+                    key={option.key}
+                    disabled={isStarting}
+                    onPress={() => void startWorkout(option)}
+                    style={pressableFeedback(styles.workoutOption)}
+                  >
+                    <View style={styles.optionCopy}>
+                      <Body style={styles.optionTitle}>{option.label}</Body>
+                      <Body style={styles.optionDetail}>{option.detail}</Body>
+                    </View>
+                    <ChevronRight size={20} color={palette.muted} />
+                  </Pressable>
+                ))}
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -230,119 +146,31 @@ function formatElapsed(startedAt: string, now: number) {
 }
 
 const styles = StyleSheet.create({
-  headerRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: spacing.md
-  },
-  headerCopy: {
-    flex: 1,
-    gap: spacing.xs
-  },
-  actionButton: {
-    minHeight: 40,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: palette.border,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: spacing.xs,
-    paddingHorizontal: spacing.md
-  },
-  actionText: {
-    color: palette.ink,
-    fontWeight: "900"
-  },
-  splitTable: {
-    flexDirection: "row",
-    borderWidth: 1,
-    borderColor: palette.border,
-    borderRadius: 8,
-    overflow: "hidden"
-  },
-  dayColumn: {
-    width: 112,
-    minHeight: 152,
-    borderRightWidth: 1,
-    borderRightColor: palette.border,
-    backgroundColor: palette.surfaceAlt,
-    padding: spacing.sm,
-    gap: spacing.sm
-  },
-  dayDropTarget: {
-    backgroundColor: palette.accentSoft
-  },
-  dayHeader: {
-    textAlign: "center"
-  },
-  dayMuscles: {
-    gap: spacing.xs,
-    alignItems: "stretch"
-  },
-  muscleChip: {
-    borderRadius: 7,
-    backgroundColor: palette.surface,
-    borderWidth: 1,
-    borderColor: palette.border,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs
-  },
-  editableChip: {
-    backgroundColor: palette.accentSoft
-  },
-  muscleChipSelected: {
-    backgroundColor: palette.ink,
-    borderColor: palette.ink
-  },
-  muscleText: {
-    color: palette.ink,
-    fontWeight: "800",
-    textAlign: "center"
-  },
-  muscleTextSelected: {
-    color: palette.surface
-  },
-  restText: {
-    color: palette.muted,
-    fontWeight: "800",
-    textAlign: "center",
-    paddingVertical: spacing.sm
-  },
-  editActions: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    gap: spacing.sm
-  },
-  saveButton: {
-    minHeight: 40,
-    borderRadius: 8,
-    backgroundColor: palette.ink,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: spacing.xs,
-    paddingHorizontal: spacing.md
-  },
-  saveText: {
-    color: palette.surface,
-    fontWeight: "900"
-  },
-  errorText: {
-    color: palette.danger,
-    fontWeight: "800"
-  },
+  heroPanel: { gap: spacing.lg },
+  headerRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.md },
+  headerCopy: { flex: 1, gap: spacing.xs },
   startButton: {
-    minHeight: 48,
+    minHeight: 52,
     borderRadius: 10,
     backgroundColor: palette.ink,
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
+    flexDirection: "row",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg
   },
-  startText: {
-    color: palette.surface,
-    fontWeight: "900",
-    fontSize: 16
-  }
+  startText: { color: palette.surface, fontWeight: "900", fontSize: 16 },
+  preview: { gap: spacing.sm },
+  previewRow: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md, borderBottomWidth: 1, borderBottomColor: palette.border, paddingVertical: spacing.sm },
+  previewTitle: { color: palette.ink, fontWeight: "900" },
+  previewDetail: { color: palette.muted, textAlign: "right", flex: 1 },
+  modalLayer: { flex: 1, backgroundColor: "rgba(23, 32, 28, 0.48)", alignItems: "center", justifyContent: "center", padding: spacing.lg },
+  modalCard: { width: "100%", maxWidth: 560, maxHeight: "92%", backgroundColor: palette.surface, borderRadius: 12, padding: spacing.lg, gap: spacing.md },
+  modalHeader: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md },
+  closeButton: { width: 42, height: 42, borderRadius: 8, borderWidth: 1, borderColor: palette.border, alignItems: "center", justifyContent: "center" },
+  workoutList: { gap: spacing.sm },
+  workoutOption: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, borderRadius: 9, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surfaceAlt },
+  optionCopy: { flex: 1, gap: spacing.xs },
+  optionTitle: { color: palette.ink, fontWeight: "900" },
+  optionDetail: { color: palette.muted },
 });

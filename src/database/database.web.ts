@@ -71,9 +71,13 @@ type ScoreSnapshotRow = {
   exercise_id: number;
   exercise_name: string;
   best_score: number;
+  best_sets?: unknown;
   achieved_at: string;
   updated_at: string;
 };
+
+type SocialWorkoutSessionRow = WorkoutSession & { user_id: string };
+type SocialWorkoutSetRow = WorkoutSet & { user_id: string };
 
 type SharedTrainingSplitRow = {
   split_days: TrainingSplitDay[];
@@ -153,8 +157,8 @@ async function loadCloudData(client: SupabaseClient) {
     client.from("profiles").select("*").eq("id", user.id).maybeSingle<ProfileRow>(),
     client.from("exercises").select("*").order("name"),
     client.from("user_exercise_preferences").select("*").eq("user_id", user.id),
-    client.from("workout_sessions").select("*").order("workout_date", { ascending: false }),
-    client.from("workout_sets").select("*").order("created_at").order("set_number"),
+    client.from("workout_sessions").select("*").eq("user_id", user.id).order("workout_date", { ascending: false }),
+    client.from("workout_sets").select("*").eq("user_id", user.id).order("created_at").order("set_number"),
     client.from("body_weight_logs").select("*").order("logged_date", { ascending: false }).order("created_at", { ascending: false }),
     client.from("muscle_strength_config").select("*").order("muscle_group"),
     client.from("app_settings").select("value").eq("key", "unit_system").maybeSingle<{ value: UnitSystem }>(),
@@ -830,16 +834,20 @@ export async function loadSocialData(): Promise<SocialData> {
   const friendships = (friendshipsResult.data ?? []) as FriendshipRow[];
   const friendIds = [...new Set(friendships.map((friendship) => otherFriendId(friendship, user.id)).filter(Boolean))];
   const profileIds = [...new Set([user.id, ...friendIds])];
-  const [profilesResult, invitesResult, snapshotsResult, splitSyncResult] = await Promise.all([
+  const [profilesResult, invitesResult, snapshotsResult, splitSyncResult, socialSessionsResult, socialSetsResult] = await Promise.all([
     supabase.from("profiles").select("id,name,email,created_at").in("id", profileIds),
     supabase.from("friend_invites").select("*").eq("owner_id", user.id).is("accepted_by", null).order("created_at", { ascending: false }),
     supabase.from("leaderboard_score_snapshots").select("*").order("best_score", { ascending: false }),
-    supabase.from("split_sync_requests").select("*").order("updated_at", { ascending: false })
+    supabase.from("split_sync_requests").select("*").order("updated_at", { ascending: false }),
+    supabase.from("workout_sessions").select("*").in("user_id", profileIds),
+    supabase.from("workout_sets").select("*").in("user_id", profileIds).order("set_number")
   ]);
 
   throwIfSupabaseError(profilesResult.error);
   throwIfSupabaseError(invitesResult.error);
   throwIfSupabaseError(snapshotsResult.error);
+  throwIfSupabaseError(socialSessionsResult.error);
+  throwIfSupabaseError(socialSetsResult.error);
   if (splitSyncResult.error && isMissingTrainingSplitError(splitSyncResult.error)) {
     throw new Error("Shared training splits need the Supabase schema update before they can sync.");
   }
@@ -880,14 +888,18 @@ export async function loadSocialData(): Promise<SocialData> {
     created_at: invite.created_at
   }));
 
+  const socialSessions = (socialSessionsResult.data ?? []) as SocialWorkoutSessionRow[];
+  const socialSets = (socialSetsResult.data ?? []) as SocialWorkoutSetRow[];
   const leaderboard = ((snapshotsResult.data ?? []) as ScoreSnapshotRow[]).map((snapshot) => {
     const profile = profiles.get(snapshot.user_id);
+    const snapshotSets = normalizeLeaderboardSets(snapshot.best_sets);
     return {
       user_id: snapshot.user_id,
       name: snapshot.user_id === user.id ? profileDisplayName(currentProfile, "You") : profileDisplayName(profile, "Friend"),
       exercise_id: snapshot.exercise_id,
       exercise_name: snapshot.exercise_name,
       best_estimated_1rm: Number(snapshot.best_score),
+      best_sets: snapshotSets.length ? snapshotSets : findSnapshotSets(snapshot, socialSessions, socialSets),
       achieved_at: snapshot.achieved_at
     };
   });
@@ -995,6 +1007,7 @@ export async function syncScoreSnapshots(points: ExerciseScorePoint[]) {
     exercise_id: point.exerciseId,
     exercise_name: point.exerciseName,
     best_score: point.estimated1RM,
+    best_sets: point.workingSets,
     achieved_at: point.date,
     updated_at: now()
   }));
@@ -1009,6 +1022,39 @@ export async function syncScoreSnapshots(points: ExerciseScorePoint[]) {
   const insertResult = await supabase.from("leaderboard_score_snapshots").insert(rows);
   if (insertResult.error && isMissingSocialTableError(insertResult.error)) return;
   throwIfSupabaseError(insertResult.error);
+}
+
+function normalizeLeaderboardSets(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((set) => {
+    if (!set || typeof set !== "object") return [];
+    const input = set as { weight?: unknown; reps?: unknown };
+    const weight = Number(input.weight);
+    const reps = Number(input.reps);
+    return Number.isFinite(weight) && Number.isFinite(reps) && reps > 0 ? [{ weight, reps }] : [];
+  });
+}
+
+function findSnapshotSets(snapshot: ScoreSnapshotRow, sessions: SocialWorkoutSessionRow[], sets: SocialWorkoutSetRow[]) {
+  const sessionIds = new Set(
+    sessions
+      .filter((session) => session.user_id === snapshot.user_id && session.workout_date === snapshot.achieved_at)
+      .map((session) => session.id)
+  );
+  const grouped = sets
+    .filter((set) => set.user_id === snapshot.user_id && set.exercise_id === snapshot.exercise_id && sessionIds.has(set.session_id) && !set.is_warmup)
+    .reduce<Map<number, SocialWorkoutSetRow[]>>((output, set) => {
+      output.set(set.session_id, [...(output.get(set.session_id) ?? []), set]);
+      return output;
+    }, new Map());
+  const winningSets = [...grouped.values()].reduce<SocialWorkoutSetRow[]>((best, candidate) => {
+    const candidateBest = Math.max(0, ...candidate.map((set) => set.weight * (1 + Math.min(set.reps, 10) / 30)));
+    const currentBest = Math.max(0, ...best.map((set) => set.weight * (1 + Math.min(set.reps, 10) / 30)));
+    return candidateBest > currentBest ? candidate : best;
+  }, []);
+  return winningSets
+    .sort((left, right) => left.set_number - right.set_number)
+    .map((set) => ({ weight: Number(set.weight), reps: Number(set.reps) }));
 }
 
 async function requireCloudUser(client: SupabaseClient, throwOnMissing = true) {

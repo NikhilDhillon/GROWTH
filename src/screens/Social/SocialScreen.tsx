@@ -326,10 +326,19 @@ function LeaderboardRow({ entry, rank, isCurrentUser }: { entry: LeaderboardEntr
       <View style={styles.leaderboardName}>
         <Body style={styles.friendName}>{isCurrentUser ? "You" : entry.name}</Body>
         <Body>{formatShortDate(entry.achieved_at)}</Body>
+        {entry.best_sets?.length ? (
+          <Body style={styles.setSummary}>
+            {entry.best_sets.map((set) => `${formatLeaderboardWeight(set.weight)} lb × ${set.reps}`).join(" · ")}
+          </Body>
+        ) : null}
       </View>
       <SectionTitle>{Math.round(entry.best_estimated_1rm)} e1RM</SectionTitle>
     </View>
   );
+}
+
+function formatLeaderboardWeight(weight: number) {
+  return Number(weight.toFixed(1)).toString();
 }
 
 function splitSyncStatusText(status: "none" | "sent" | "received" | "synced" | undefined) {
@@ -438,7 +447,12 @@ const styles = StyleSheet.create({
     fontWeight: "900"
   },
   leaderboardName: {
-    flex: 1
+    flex: 1,
+    gap: 2
+  },
+  setSummary: {
+    color: palette.muted,
+    fontWeight: "700"
   },
   friendRow: {
     minHeight: 50,

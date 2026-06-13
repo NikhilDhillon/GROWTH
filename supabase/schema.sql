@@ -102,10 +102,14 @@ create table if not exists public.leaderboard_score_snapshots (
   exercise_id bigint not null references public.exercises(id) on delete cascade,
   exercise_name text not null,
   best_score numeric not null,
+  best_sets jsonb not null default '[]'::jsonb,
   achieved_at date not null,
   updated_at timestamptz not null default now(),
   primary key (user_id, exercise_id)
 );
+
+alter table public.leaderboard_score_snapshots
+  add column if not exists best_sets jsonb not null default '[]'::jsonb;
 
 create table if not exists public.shared_training_splits (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -150,6 +154,8 @@ drop policy if exists "standard exercises are readable by authenticated users" o
 drop policy if exists "exercise preferences are owned by their user" on public.user_exercise_preferences;
 drop policy if exists "workout sessions are owned by their user" on public.workout_sessions;
 drop policy if exists "workout sets are owned by their user" on public.workout_sets;
+drop policy if exists "workout sessions are visible to accepted friends" on public.workout_sessions;
+drop policy if exists "workout sets are visible to accepted friends" on public.workout_sets;
 drop policy if exists "body weight logs are owned by their user" on public.body_weight_logs;
 drop policy if exists "muscle configs are owned by their user" on public.muscle_strength_config;
 drop policy if exists "settings are owned by their user" on public.app_settings;
@@ -198,6 +204,32 @@ create policy "workout sessions are owned by their user" on public.workout_sessi
 
 create policy "workout sets are owned by their user" on public.workout_sets
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "workout sessions are visible to accepted friends" on public.workout_sessions
+  for select using (
+    exists (
+      select 1
+      from public.friendships
+      where status = 'accepted'
+        and (
+          (requester_id = auth.uid() and addressee_id = workout_sessions.user_id)
+          or (addressee_id = auth.uid() and requester_id = workout_sessions.user_id)
+        )
+    )
+  );
+
+create policy "workout sets are visible to accepted friends" on public.workout_sets
+  for select using (
+    exists (
+      select 1
+      from public.friendships
+      where status = 'accepted'
+        and (
+          (requester_id = auth.uid() and addressee_id = workout_sets.user_id)
+          or (addressee_id = auth.uid() and requester_id = workout_sets.user_id)
+        )
+    )
+  );
 
 create policy "body weight logs are owned by their user" on public.body_weight_logs
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -517,8 +549,13 @@ insert into public.exercises (name, primary_muscle, secondary_muscle, is_strengt
   ('Seated Dumbbell Shoulder Press', 'Shoulders', null, 0),
   ('Arnold Press', 'Shoulders', null, 0),
   ('Lateral Raise', 'Shoulders', null, 0),
+  ('Cable Lateral Raise', 'Shoulders', null, 0),
   ('Rear Delt Fly', 'Shoulders', null, 0),
+  ('Cable Rear Delt Fly', 'Shoulders', null, 0),
   ('Face Pull', 'Shoulders', 'Back', 0),
+  ('Barbell Shrug', 'Traps', null, 0),
+  ('Dumbbell Shrug', 'Traps', null, 0),
+  ('Cable Shrug', 'Traps', null, 0),
   ('Barbell Curl', 'Biceps', null, 0),
   ('Dumbbell Curl', 'Biceps', null, 0),
   ('Incline Dumbbell Curl', 'Biceps', null, 0),

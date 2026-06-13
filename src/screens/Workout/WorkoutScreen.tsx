@@ -32,6 +32,7 @@ export function WorkoutScreen() {
   const machineProfiles = useFitnessStore((state) => state.machineProfiles);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
   const saveMachineProfile = useFitnessStore((state) => state.saveMachineProfile);
+  const deleteMachineProfile = useFitnessStore((state) => state.deleteMachineProfile);
   const saveBodyWeightLog = useFitnessStore((state) => state.saveBodyWeightLog);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const exercises = useMemo(() => allExercises.filter((exercise) => exercise.is_strength_exercise), [allExercises]);
@@ -271,6 +272,7 @@ export function WorkoutScreen() {
             lastLoad={lastMachineLoad}
             onSelectProfile={setSelectedMachineProfileId}
             onSaveProfile={saveMachineProfile}
+            onDeleteProfile={deleteMachineProfile}
           />
         ) : null}
 
@@ -279,9 +281,6 @@ export function WorkoutScreen() {
           loadType={selectedLoadType}
           unitSystem={unitSystem}
           supportsBarbell={showBarbellCalculator}
-          machineProfile={selectedMachineProfile}
-          machineLabel={selectedMachineProfile?.label ?? null}
-          machineLastLoad={lastMachineLoad}
           barWeight={barWeight}
           plateCounts={plateCounts}
           targets={composerTargets}

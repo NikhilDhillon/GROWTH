@@ -117,7 +117,11 @@ export function buildExerciseScorePoints(exercises: Exercise[], sessions: Workou
       ...metrics,
       score: metrics.performancePoints,
       volume: metrics.failureVolume,
-      topSet: metrics.estimated1RM
+      topSet: metrics.estimated1RM,
+      workingSets: session.sets
+        .filter((set) => !set.is_warmup)
+        .sort((left, right) => left.set_number - right.set_number)
+        .map((set) => ({ weight: set.weight, reps: set.reps }))
     });
   }
 

@@ -22,4 +22,4 @@ export const spacing = {
   xxl: 32
 };
 
-export const muscles = ["Chest", "Back", "Shoulders", "Biceps", "Triceps", "Legs", "Core", "Forearms"] as const;
+export const muscles = ["Chest", "Back", "Shoulders", "Traps", "Biceps", "Triceps", "Legs", "Core", "Forearms"] as const;

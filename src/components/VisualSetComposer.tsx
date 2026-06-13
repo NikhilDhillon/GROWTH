@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
-import { Copy, Dumbbell, Minus, Plus, RotateCcw, Trash2 } from "lucide-react-native";
+import { Copy, Minus, Plus, RotateCcw, Trash2 } from "lucide-react-native";
 
 import { Body, Label } from "@/components/Text";
-import { ExerciseLoadType, isBodyweightLoadType, isMachineLoadType } from "@/constants/exercises";
-import { formatMachineLoad, machineLoadToWorkoutInput, stackUnitLabel, suggestedMachineLoads, workoutInputToMachineLoad } from "@/constants/machineProfiles";
-import { LoggedSetDraft, MachineProfile, UnitSystem } from "@/types";
+import { ExerciseLoadType } from "@/constants/exercises";
+import { LoggedSetDraft, UnitSystem } from "@/types";
 import { palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { formatWeightInput, weightToStorageUnit } from "@/utils/units";
@@ -37,9 +36,6 @@ type Props = {
   loadType: ExerciseLoadType;
   unitSystem: UnitSystem;
   supportsBarbell: boolean;
-  machineProfile?: MachineProfile | null;
-  machineLabel?: string | null;
-  machineLastLoad?: number | null;
   barWeight: string;
   plateCounts: Record<string, number>;
   targets?: SetComposerTarget[];
@@ -53,9 +49,6 @@ export function VisualSetComposer({
   loadType,
   unitSystem,
   supportsBarbell,
-  machineProfile,
-  machineLabel,
-  machineLastLoad,
   barWeight,
   plateCounts,
   targets = [],
@@ -64,7 +57,6 @@ export function VisualSetComposer({
   onSetsChange
 }: Props) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  const [editorLoad, setEditorLoad] = useState("");
   const [editorTotalLoad, setEditorTotalLoad] = useState("45");
   const [editorBarWeight, setEditorBarWeight] = useState(barWeight || "45");
   const [editorPlateCounts, setEditorPlateCounts] = useState<PlateCounts>(normalizePlateCounts(plateCounts));
@@ -107,14 +99,7 @@ export function VisualSetComposer({
       return;
     }
 
-    if (isMachineLoadType(loadType)) {
-      const stackLoad = workoutInputToMachineLoad(displayLoad, machineProfile, unitSystem);
-      setEditorLoad(stackLoad !== null ? String(formatMachineNumber(stackLoad)) : "");
-      return;
-    }
-
-    setEditorLoad(displayLoad);
-  }, [activeIndex, barWeight, loadType, machineProfile, plateCounts, sets, supportsBarbell, targetByIndex, unitSystem]);
+  }, [activeIndex, barWeight, plateCounts, sets, supportsBarbell, targetByIndex, unitSystem]);
 
   function updateSet(index: number, patch: Partial<LoggedSetDraft>) {
     onSetsChange(sets.map((set, itemIndex) => (itemIndex === index ? { ...set, ...patch } : set)));
@@ -149,13 +134,6 @@ export function VisualSetComposer({
       applyLoad(activeIndex, formatWeightInput(parseLoad(editorTotalLoad), unitSystem), mode);
       return;
     }
-    if (isMachineLoadType(loadType)) {
-      const parsed = parseLoad(editorLoad);
-      if (!Number.isFinite(parsed) || parsed <= 0) return;
-      applyLoad(activeIndex, machineLoadToWorkoutInput(parsed, machineProfile, unitSystem), mode);
-      return;
-    }
-    applyLoad(activeIndex, editorLoad, mode);
   }
 
   function copyPrevious(index: number) {
@@ -195,12 +173,6 @@ export function VisualSetComposer({
     setEditorPlateCounts(calculatePlateCounts(String(next), editorBarWeight));
   }
 
-  function adjustEditorLoad(amount: number) {
-    const minimumLoad = isBodyweightLoadType(loadType) ? 0 : (machineProfile?.minLoad ?? 0);
-    const next = Math.max(minimumLoad, parseLoad(editorLoad) + amount);
-    setEditorLoad(String(formatMachineNumber(next)));
-  }
-
   return (
     <View style={styles.composer}>
       <View style={styles.headerRow}>
@@ -223,31 +195,41 @@ export function VisualSetComposer({
               <View style={styles.setBadge}>
                 <Label style={styles.setBadgeText}>{index + 1}</Label>
               </View>
-              <Pressable
-                accessibilityLabel={`Edit load for set ${index + 1}`}
-                hitSlop={touchHitSlop}
-                onPress={() => setActiveIndex(active ? null : index)}
-                style={pressableFeedback([styles.loadCell, active && styles.loadCellActive])}
-              >
-                {targetDisplay ? <View style={styles.targetRail} /> : null}
-                <LoadVisual
-                  loadType={loadType}
-                  supportsBarbell={supportsBarbell}
-                  displayLoad={displayLoad}
-                  targetDisplayLoad={targetDisplay}
-                  unitSystem={unitSystem}
-                  barWeight={barWeight}
-                  machineProfile={machineProfile}
-                />
-              </Pressable>
-              <View style={styles.loadMeta}>
-                <Body style={styles.loadValue}>{displayLoad ? loadLabel(displayLoad, loadType, unitSystem, machineProfile) : "Load"}</Body>
-                {target?.targetReps ? <Label style={styles.targetLabel}>target {target.targetReps}</Label> : target?.increaseWeight ? <Label style={styles.targetLabel}>heavier attempt</Label> : null}
-                {machineLabel && isMachineLoadType(loadType) ? <Label style={styles.targetLabel}>{machineLabel}</Label> : null}
-              </View>
-              <Pressable accessibilityLabel={`Copy load from set ${index + 1} down`} hitSlop={touchHitSlop} onPress={() => copyLoadDown(index, displayLoad)} style={pressableFeedback([styles.copyDownButton, !displayLoad.trim() && styles.disabledButton])}>
-                <Copy size={14} color={displayLoad.trim() ? palette.ink : palette.muted} />
-              </Pressable>
+              {supportsBarbell ? (
+                <>
+                  <Pressable
+                    accessibilityLabel={`Edit load for set ${index + 1}`}
+                    hitSlop={touchHitSlop}
+                    onPress={() => setActiveIndex(active ? null : index)}
+                    style={pressableFeedback([styles.loadCell, active && styles.loadCellActive])}
+                  >
+                    {targetDisplay ? <View style={styles.targetRail} /> : null}
+                    <LoadedBar
+                      counts={displayLoad ? calculatePlateCounts(String(weightToStorageUnit(parseLoad(displayLoad), unitSystem)), barWeight) : emptyPlateCounts()}
+                    />
+                  </Pressable>
+                  <View style={styles.loadMeta}>
+                    <Body style={styles.loadValue}>{displayLoad ? `${displayLoad} ${unitSystem}` : "Load"}</Body>
+                    {target?.targetReps ? <Label style={styles.targetLabel}>target {target.targetReps}</Label> : target?.increaseWeight ? <Label style={styles.targetLabel}>heavier attempt</Label> : null}
+                  </View>
+                  <Pressable accessibilityLabel={`Copy load from set ${index + 1} down`} hitSlop={touchHitSlop} onPress={() => copyLoadDown(index, displayLoad)} style={pressableFeedback([styles.copyDownButton, !displayLoad.trim() && styles.disabledButton])}>
+                    <Copy size={14} color={displayLoad.trim() ? palette.ink : palette.muted} />
+                  </Pressable>
+                </>
+              ) : (
+                <View style={styles.directWeight}>
+                  <TextInput
+                    accessibilityLabel={`Weight for set ${index + 1}`}
+                    style={[styles.input, styles.weightInput]}
+                    value={set.weight}
+                    onChangeText={(weight) => updateSet(index, { weight })}
+                    keyboardType="decimal-pad"
+                    inputMode="decimal"
+                    placeholder={targetDisplay || "Weight"}
+                  />
+                  <Body style={styles.unitText}>{unitSystem}</Body>
+                </View>
+              )}
               <View style={styles.repsStepper}>
                 <Pressable accessibilityLabel={`Decrease reps for set ${index + 1}`} hitSlop={touchHitSlop} onPress={() => adjustReps(index, -1)} style={pressableFeedback(styles.repsStepButton)}>
                   <Minus size={14} color={palette.ink} />
@@ -272,34 +254,22 @@ export function VisualSetComposer({
               </Pressable>
             </View>
 
-            {active ? (
+            {active && supportsBarbell ? (
               <View style={styles.editor}>
-                {supportsBarbell ? (
-                  <BarbellEditor
-                    barWeight={editorBarWeight}
-                    totalLoad={editorTotalLoad}
-                    plateCounts={editorPlateCounts}
-                    onBarWeight={changeEditorBarWeight}
-                    onTotalLoad={changeEditorTotalLoad}
-                    onPlateCount={changeEditorPlateCount}
-                    onAdjustTotal={adjustEditorTotal}
-                    onReset={() => {
-                      setEditorBarWeight("45");
-                      setEditorTotalLoad("45");
-                      setEditorPlateCounts(emptyPlateCounts());
-                    }}
-                  />
-                ) : (
-                  <SimpleLoadEditor
-                    loadType={loadType}
-                    load={editorLoad}
-                    unitSystem={unitSystem}
-                    machineProfile={machineProfile}
-                    machineLastLoad={machineLastLoad}
-                    onLoad={setEditorLoad}
-                    onAdjust={adjustEditorLoad}
-                  />
-                )}
+                <BarbellEditor
+                  barWeight={editorBarWeight}
+                  totalLoad={editorTotalLoad}
+                  plateCounts={editorPlateCounts}
+                  onBarWeight={changeEditorBarWeight}
+                  onTotalLoad={changeEditorTotalLoad}
+                  onPlateCount={changeEditorPlateCount}
+                  onAdjustTotal={adjustEditorTotal}
+                  onReset={() => {
+                    setEditorBarWeight("45");
+                    setEditorTotalLoad("45");
+                    setEditorPlateCounts(emptyPlateCounts());
+                  }}
+                />
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
                   <View style={styles.editorActions}>
                     <Pressable hitSlop={touchHitSlop} onPress={() => applyEditorLoad("one")} style={pressableFeedback(styles.actionButton)}>
@@ -329,38 +299,6 @@ export function VisualSetComposer({
       </Pressable>
     </View>
   );
-}
-
-function LoadVisual({
-  loadType,
-  supportsBarbell,
-  displayLoad,
-  targetDisplayLoad,
-  unitSystem,
-  barWeight,
-  machineProfile
-}: {
-  loadType: ExerciseLoadType;
-  supportsBarbell: boolean;
-  displayLoad: string;
-  targetDisplayLoad: string;
-  unitSystem: UnitSystem;
-  barWeight: string;
-  machineProfile?: MachineProfile | null;
-}) {
-  if (supportsBarbell) {
-    const load = displayLoad || targetDisplayLoad;
-    const counts = load ? calculatePlateCounts(String(weightToStorageUnit(parseLoad(load), unitSystem)), barWeight) : emptyPlateCounts();
-    return <LoadedBar counts={counts} />;
-  }
-  if (isMachineLoadType(loadType)) {
-    const load = workoutInputToMachineLoad(displayLoad || targetDisplayLoad, machineProfile, unitSystem);
-    return <MachineStack load={load} profile={machineProfile} />;
-  }
-  if (isBodyweightLoadType(loadType)) {
-    return <BodyweightBadge load={displayLoad || targetDisplayLoad} assisted={loadType === "bodyweight_minus_assistance"} />;
-  }
-  return <DumbbellPair />;
 }
 
 function BarbellEditor({
@@ -440,62 +378,6 @@ function BarbellEditor({
   );
 }
 
-function SimpleLoadEditor({
-  loadType,
-  load,
-  unitSystem,
-  machineProfile,
-  machineLastLoad,
-  onLoad,
-  onAdjust
-}: {
-  loadType: ExerciseLoadType;
-  load: string;
-  unitSystem: UnitSystem;
-  machineProfile?: MachineProfile | null;
-  machineLastLoad?: number | null;
-  onLoad: (value: string) => void;
-  onAdjust: (amount: number) => void;
-}) {
-  const machine = isMachineLoadType(loadType);
-  const step = machine ? machineProfile?.increment ?? 5 : 5;
-  const unit = machine ? stackUnitLabel(machineProfile?.stackUnit ?? unitSystem, unitSystem) : unitSystem;
-  const machineSuggestions = machine ? suggestedMachineLoads(machineProfile, machineLastLoad) : [];
-  return (
-    <>
-      <View style={styles.editorHeader}>
-        <View style={styles.flex}>
-          <Label>{machine ? "Stack pin" : isBodyweightLoadType(loadType) ? "Bodyweight load" : "Dumbbells"}</Label>
-          <Body style={styles.hintText}>{machine ? "Move the pin by plate steps or type the stack value." : "Adjust the actual load for this set."}</Body>
-        </View>
-      </View>
-      <View style={styles.simpleEditorVisual}>
-        {machine ? <MachineStack load={parseLoad(load)} profile={machineProfile} large /> : isBodyweightLoadType(loadType) ? <BodyweightBadge load={load} assisted={loadType === "bodyweight_minus_assistance"} large /> : <DumbbellPair large />}
-      </View>
-      <View style={styles.editorInputRow}>
-        <TextInput style={[styles.input, styles.loadInput]} value={load} onChangeText={onLoad} keyboardType="decimal-pad" inputMode="decimal" placeholder={unit} />
-        <Body>{unit}</Body>
-      </View>
-      <View style={styles.quickButtons}>
-        {[-step, step].map((amount) => (
-          <Pressable key={amount} hitSlop={touchHitSlop} onPress={() => onAdjust(amount)} style={pressableFeedback(styles.quickButton)}>
-            <Body style={styles.buttonText}>{amount > 0 ? `+${formatMachineNumber(amount)}` : `-${formatMachineNumber(Math.abs(amount))}`}</Body>
-          </Pressable>
-        ))}
-      </View>
-      {machineSuggestions.length ? (
-        <View style={styles.loadChips}>
-          {machineSuggestions.map((suggestion) => (
-            <Pressable key={suggestion} hitSlop={touchHitSlop} onPress={() => onLoad(String(formatMachineNumber(suggestion)))} style={pressableFeedback([styles.loadChip, parseLoad(load) === suggestion && styles.loadChipActive])}>
-              <Body style={[styles.loadChipText, parseLoad(load) === suggestion && styles.loadChipTextActive]}>{formatMachineLoad(suggestion, machineProfile, unitSystem)}</Body>
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
-    </>
-  );
-}
-
 function LoadedBar({
   counts,
   large = false,
@@ -536,57 +418,6 @@ function LoadedBar({
   );
 }
 
-function MachineStack({ load, profile, large = false }: { load: number | null; profile?: MachineProfile | null; large?: boolean }) {
-  const min = profile?.minLoad ?? 0;
-  const max = Math.max(profile?.maxLoad ?? 100, min + 1);
-  const value = Number.isFinite(load) ? Number(load) : min;
-  const ratio = Math.max(0, Math.min(1, (value - min) / (max - min)));
-  const activeIndex = 5 - Math.round(ratio * 5);
-  return (
-    <View style={[styles.stackVisual, large && styles.stackVisualLarge]}>
-      {Array.from({ length: 6 }, (_, index) => (
-        <View key={index} style={[styles.stackPlate, index === activeIndex && styles.stackPlateActive]}>
-          {index === activeIndex ? <View style={styles.stackPin} /> : null}
-        </View>
-      ))}
-    </View>
-  );
-}
-
-function DumbbellPair({ large = false }: { large?: boolean }) {
-  return (
-    <View style={styles.dumbbellPair}>
-      {[0, 1].map((item) => (
-        <View key={item} style={[styles.dumbbell, large && styles.dumbbellLarge]}>
-          <View style={styles.dumbbellEnd} />
-          <View style={styles.dumbbellHandle} />
-          <View style={styles.dumbbellEnd} />
-        </View>
-      ))}
-      <Dumbbell size={large ? 22 : 16} color={palette.ink} />
-    </View>
-  );
-}
-
-function BodyweightBadge({ load, assisted, large = false }: { load: string; assisted: boolean; large?: boolean }) {
-  const value = load.trim() || "0";
-  return (
-    <View style={[styles.bodyweightBadge, large && styles.bodyweightBadgeLarge]}>
-      <Body style={styles.bodyweightText}>{assisted ? "assist" : "+"}</Body>
-      <Body style={styles.bodyweightNumber}>{value}</Body>
-    </View>
-  );
-}
-
-function loadLabel(displayLoad: string, loadType: ExerciseLoadType, unitSystem: UnitSystem, machineProfile?: MachineProfile | null) {
-  if (isMachineLoadType(loadType)) {
-    const stackLoad = workoutInputToMachineLoad(displayLoad, machineProfile, unitSystem);
-    return stackLoad !== null ? formatMachineLoad(stackLoad, machineProfile, unitSystem) : "Stack";
-  }
-  if (isBodyweightLoadType(loadType)) return loadType === "bodyweight_minus_assistance" ? `${displayLoad} assist` : `+${displayLoad}`;
-  return `${displayLoad} ${unitSystem}`;
-}
-
 function normalizePlateCounts(counts: Record<string, number>): PlateCounts {
   return plateWeights.reduce<PlateCounts>((output, plate) => {
     output[plate] = Math.max(0, Number(counts[plate] ?? 0));
@@ -616,10 +447,6 @@ function parseLoad(value: string) {
 
 function formatLoadedBarWeight(weight: number) {
   return weight.toFixed(1).replace(".0", "");
-}
-
-function formatMachineNumber(value: number) {
-  return Number(value.toFixed(1).replace(".0", ""));
 }
 
 function plateCopies(count: number) {
@@ -708,6 +535,22 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 68,
     gap: 2
+  },
+  directWeight: {
+    flexGrow: 1,
+    flexBasis: 150,
+    minWidth: 140,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs
+  },
+  weightInput: {
+    flex: 1,
+    minWidth: 90
+  },
+  unitText: {
+    color: palette.muted,
+    fontWeight: "800"
   },
   loadValue: {
     color: palette.ink,
@@ -831,33 +674,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "wrap",
     gap: spacing.sm
-  },
-  loadChips: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
-  },
-  loadChip: {
-    minHeight: 36,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: palette.surface,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.md,
-    ...fastTouchStyle
-  },
-  loadChipActive: {
-    backgroundColor: palette.accent,
-    borderColor: palette.accent
-  },
-  loadChipText: {
-    color: palette.ink,
-    fontWeight: "900"
-  },
-  loadChipTextActive: {
-    color: palette.surface
   },
   quickButton: {
     minHeight: 36,
@@ -1015,80 +831,4 @@ const styles = StyleSheet.create({
     color: palette.ink,
     fontWeight: "900"
   },
-  stackVisual: {
-    width: 54,
-    gap: 2
-  },
-  stackVisualLarge: {
-    width: 96,
-    gap: 3
-  },
-  stackPlate: {
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: palette.border,
-    alignItems: "flex-end",
-    justifyContent: "center"
-  },
-  stackPlateActive: {
-    backgroundColor: palette.accent
-  },
-  stackPin: {
-    width: 14,
-    height: 8,
-    borderRadius: 5,
-    backgroundColor: palette.ink,
-    marginRight: -5
-  },
-  simpleEditorVisual: {
-    minHeight: 56,
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  dumbbellPair: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs
-  },
-  dumbbell: {
-    flexDirection: "row",
-    alignItems: "center"
-  },
-  dumbbellLarge: {
-    transform: [{ scale: 1.2 }]
-  },
-  dumbbellEnd: {
-    width: 8,
-    height: 24,
-    borderRadius: 3,
-    backgroundColor: palette.ink
-  },
-  dumbbellHandle: {
-    width: 20,
-    height: 5,
-    backgroundColor: palette.muted
-  },
-  bodyweightBadge: {
-    minWidth: 68,
-    minHeight: 34,
-    borderRadius: 8,
-    backgroundColor: palette.ink,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.sm
-  },
-  bodyweightBadgeLarge: {
-    minWidth: 112,
-    minHeight: 48
-  },
-  bodyweightText: {
-    color: palette.surface,
-    fontSize: 11,
-    fontWeight: "900"
-  },
-  bodyweightNumber: {
-    color: palette.surface,
-    fontWeight: "900",
-    fontVariant: ["tabular-nums"]
-  }
 });

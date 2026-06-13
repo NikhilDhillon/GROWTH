@@ -1,4 +1,4 @@
-export type MuscleGroup = "Chest" | "Back" | "Shoulders" | "Biceps" | "Triceps" | "Legs" | "Core" | "Forearms";
+export type MuscleGroup = "Chest" | "Back" | "Shoulders" | "Traps" | "Biceps" | "Triceps" | "Legs" | "Core" | "Forearms";
 
 export type TrendStatus = "Increasing" | "Stable" | "Decreasing";
 export type UnitSystem = "lb" | "kg";
@@ -120,6 +120,7 @@ export type LeaderboardEntry = {
   exercise_id: number;
   exercise_name: string;
   best_estimated_1rm: number;
+  best_sets?: Array<{ weight: number; reps: number }>;
   achieved_at: string;
 };
 
@@ -130,7 +131,7 @@ export type SocialData = {
   notice?: string | null;
 };
 
-export type SplitMuscle = "Chest" | "Triceps" | "Back" | "Biceps" | "Legs" | "Shoulders" | "Forearms" | "Abs";
+export type SplitMuscle = "Chest" | "Triceps" | "Back" | "Biceps" | "Legs" | "Shoulders" | "Traps" | "Forearms" | "Abs";
 
 export type TrainingSplitDay = {
   key: string;
@@ -190,6 +191,7 @@ export type ActiveWorkout = {
   workoutDate: string;
   todayDayKey: string;
   sourceDayKey: string;
+  workoutLabel?: string;
   plannedMuscles: SplitMuscle[];
   completedExercises: CompletedWorkoutExercise[];
   currentExercise: ActiveWorkoutExerciseDraft;
@@ -227,6 +229,7 @@ export type ExerciseScorePoint = {
   score: number;
   volume: number;
   topSet: number;
+  workingSets: Array<{ weight: number; reps: number }>;
 };
 
 export type MuscleScorePoint = {

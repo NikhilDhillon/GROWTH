@@ -20,7 +20,7 @@ const defaultMuscles: Record<string, SplitMuscle[]> = {
   sun: ["Legs", "Shoulders", "Forearms", "Abs"]
 };
 
-const validMuscles = new Set<SplitMuscle>(["Chest", "Triceps", "Back", "Biceps", "Legs", "Shoulders", "Forearms", "Abs"]);
+const validMuscles = new Set<SplitMuscle>(["Chest", "Triceps", "Back", "Biceps", "Legs", "Shoulders", "Traps", "Forearms", "Abs"]);
 
 export function createDefaultTrainingSplit(): TrainingSplit {
   return {

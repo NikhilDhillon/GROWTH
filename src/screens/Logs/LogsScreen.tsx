@@ -43,6 +43,7 @@ export function LogsScreen() {
   const deleteBodyWeightLog = useFitnessStore((state) => state.deleteBodyWeightLog);
   const logs = buildPreviousLogs({ exercises, sessions, sets, points, unitSystem, machineProfiles });
   const groupedLogs = useMemo(() => groupLogsByMuscle(logs, exercises), [exercises, logs]);
+  const [guidedWorkoutsCollapsed, setGuidedWorkoutsCollapsed] = useState(false);
   const [bodyWeightCollapsed, setBodyWeightCollapsed] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [collapsedMuscles, setCollapsedMuscles] = useState<Record<string, boolean>>({});
@@ -119,8 +120,18 @@ export function LogsScreen() {
       </View>
 
       <Panel>
-        <SectionTitle>Completed guided workouts</SectionTitle>
-        {completedGuidedWorkouts.length ? completedGuidedWorkouts.map((workout) => {
+        <Pressable
+          accessibilityLabel={`${guidedWorkoutsCollapsed ? "Expand" : "Collapse"} completed guided workouts`}
+          onPress={() => setGuidedWorkoutsCollapsed((current) => !current)}
+          style={styles.muscleHeader}
+        >
+          <View style={styles.exerciseHeaderTitle}>
+            {guidedWorkoutsCollapsed ? <ChevronRight size={20} color={palette.ink} /> : <ChevronDown size={20} color={palette.ink} />}
+            <SectionTitle style={styles.muscleTitle}>Completed guided workouts</SectionTitle>
+          </View>
+          <Body style={styles.countText}>{completedGuidedWorkouts.length} workouts</Body>
+        </Pressable>
+        {!guidedWorkoutsCollapsed && completedGuidedWorkouts.length ? completedGuidedWorkouts.map((workout) => {
           const achievements = workout.completedExercises.filter((exercise) => exercise.guidedOutcome?.celebrated).length;
           return (
             <View key={workout.id} style={styles.completedWorkoutRow}>
@@ -138,7 +149,7 @@ export function LogsScreen() {
               </Pressable>
             </View>
           );
-        }) : <Body>Finish a guided workout to see its summary here.</Body>}
+        }) : !guidedWorkoutsCollapsed ? <Body>Finish a guided workout to see its summary here.</Body> : null}
       </Panel>
 
       <Panel>
