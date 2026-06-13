@@ -18,6 +18,8 @@ export const catalogExercises: CatalogExercise[] = [
   { name: "Machine Chest Press", primary_muscle: "Chest", loadType: "machine_stack" },
   { name: "Weighted Dip", primary_muscle: "Chest", secondary_muscle: "Triceps", loadType: "bodyweight_plus_load" },
   { name: "Cable Fly", primary_muscle: "Chest", loadType: "machine_stack" },
+  { name: "High to Low Cable Fly", primary_muscle: "Chest", loadType: "machine_stack" },
+  { name: "Low to High Cable Fly", primary_muscle: "Chest", loadType: "machine_stack" },
   { name: "Pin Press", primary_muscle: "Chest", secondary_muscle: "Triceps", supportsBarbellCalculator: true },
   { name: "Conventional Deadlift", primary_muscle: "Back", secondary_muscle: "Legs", supportsBarbellCalculator: true },
   { name: "Barbell Row", primary_muscle: "Back", supportsBarbellCalculator: true },

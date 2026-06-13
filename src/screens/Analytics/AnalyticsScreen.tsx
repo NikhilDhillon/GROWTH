@@ -5,7 +5,7 @@ import { LineGraph } from "@/components/LineGraph";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
-import { comparePerformancePeriods, detectPersonalRecords, monthlyScoreAverages, weeklyScoreAverages, weeklyVolume } from "@/services/analytics/analyticsService";
+import { detectPersonalRecords, monthlyScoreAverages, weeklyScoreAverages } from "@/services/analytics/analyticsService";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { BodyWeightLog, ExerciseScorePoint } from "@/types";
 import { formatShortDate, todayIso } from "@/utils/date";
@@ -13,10 +13,9 @@ import { buildPreviousLogs } from "@/utils/logs";
 import { muscles, palette, spacing } from "@/utils/theme";
 import { bodyWeightDisplayUnit, bodyWeightFromStorageUnit, formatBodyWeight } from "@/utils/units";
 
-type ProgressRange = "week" | "month" | "year" | "all";
+type ProgressRange = "month" | "year" | "all";
 
 const ranges: Array<{ key: ProgressRange; label: string }> = [
-  { key: "week", label: "Week" },
   { key: "month", label: "Month" },
   { key: "year", label: "Year" },
   { key: "all", label: "All Time" }
@@ -50,18 +49,18 @@ export function AnalyticsScreen() {
   const rangedSelectedPoints = filterPointsByRange(selectedPoints, range);
   const rangedBodyWeightLogs = filterBodyWeightLogsByRange(bodyWeightLogs, range);
   const previousLogs = useMemo(() => buildPreviousLogs({ exerciseId: selected?.id, exercises, sessions, sets, points: selectedPoints, unitSystem }), [exercises, selected?.id, selectedPoints, sessions, sets, unitSystem]);
+  const rangedPreviousLogs = filterLogsByRange(previousLogs, range);
   const weeklyExercisePoints = weeklyScoreAverages(selectedPoints).map((point) => ({ date: point.date, label: formatShortDate(point.date), value: point.score }));
   const monthlyExercisePoints = monthlyScoreAverages(selectedPoints).map((point) => ({ date: point.date, label: formatMonthLabel(point.date), value: point.score }));
   const bodyWeightByDate = new Map(bodyWeightLogs.map((log) => [log.logged_at.slice(0, 10), log]));
   const strengthPointByDate = new Map(selectedPoints.map((point) => [point.date, point]));
   const logByDate = new Map(previousLogs.map((log) => [log.date, log]));
-  const weightPoints = buildBodyWeightGraphPoints(rangedBodyWeightLogs, range, strengthPointByDate, logByDate);
-  const comparisonStrengthPoints = buildStrengthGraphPoints(rangedSelectedPoints, range, bodyWeightByDate, previousLogs);
+  const weightPoints = buildBodyWeightGraphPoints(rangedBodyWeightLogs, strengthPointByDate, logByDate);
+  const comparisonStrengthPoints = buildStrengthGraphPoints(rangedSelectedPoints, bodyWeightByDate, previousLogs);
   const comparisonDates = [...new Set([...weightPoints.map((point) => point.date), ...comparisonStrengthPoints.map((point) => point.date)])].sort();
-  const progressGraphPoints = buildStrengthGraphPoints(rangedSelectedPoints, range, bodyWeightByDate, previousLogs);
+  const progressGraphPoints = buildStrengthGraphPoints(rangedSelectedPoints, bodyWeightByDate, previousLogs);
   const prs = useMemo(() => detectPersonalRecords(selectedPoints), [selectedPoints]);
-  const periodComparison = range === "all" ? null : comparePerformancePeriods(selectedPoints, range);
-  const volume = weeklyVolume(sets, unitSystem).slice(-6);
+  const sessionComparison = compareLatestSessions(rangedSelectedPoints);
 
   return (
     <Screen>
@@ -127,21 +126,25 @@ export function AnalyticsScreen() {
               <Label>{selected.primary_muscle}</Label>
               <SectionTitle>{selected.name}</SectionTitle>
               <Body>
-                {periodComparison
-                  ? `${formatPoints(periodComparison.currentAverage)} current vs ${formatPoints(periodComparison.previousAverage)} prior`
+                {sessionComparison
+                  ? `${formatPoints(sessionComparison.current.score)} latest vs ${formatPoints(sessionComparison.previous?.score)} previous`
                   : `${formatPoints(prs.bestPerformance?.score ?? null)} all-time peak`}
               </Body>
             </View>
             <View style={styles.bigScore}>
-              <SectionTitle>{periodComparison ? formatPercentChange(periodComparison.changePercent) : formatPoints(prs.bestPerformance?.score ?? null)}</SectionTitle>
+              <SectionTitle>{sessionComparison?.changePercent !== null && sessionComparison?.changePercent !== undefined
+                ? formatPercentChange(sessionComparison.changePercent)
+                : formatPoints(sessionComparison?.current.score ?? prs.bestPerformance?.score ?? null)}</SectionTitle>
             </View>
           </View>
-          <LineGraph points={progressGraphPoints} maxPoints={progressGraphPoints.length || 1} suffix=" pts" emptyMessage={`Performance Points data required for this ${rangeLabel(range)}.`} />
-          <Body>
-            {periodComparison
-              ? `Progress compares the current ${periodWindowLabel(range)} average with the preceding ${periodWindowLabel(range)} average.`
-              : "All Time shows the peak Performance Points session. Points combine best e1RM, failure-set volume, and resistance."}
-          </Body>
+          <LineGraph
+            points={progressGraphPoints}
+            maxPoints={progressGraphPoints.length || 1}
+            suffix=" pts"
+            emptyMessage={`Performance Points data required for this ${rangeLabel(range)}.`}
+            scrollable
+          />
+          <Body>Each point is an individual workout score. Scroll horizontally to review older sessions.</Body>
         </Panel>
       ) : null}
 
@@ -155,21 +158,32 @@ export function AnalyticsScreen() {
         </Panel>
       ) : null}
 
-      {viewMode === "progress" ? (
-      <Panel>
-        <SectionTitle>Weekly volume ({unitSystem})</SectionTitle>
-        <View style={styles.bars}>
-          {volume.map((item) => {
-            const max = Math.max(...volume.map((entry) => entry.volume), 1);
-            return (
-              <View key={item.date} style={styles.barColumn}>
-                <View style={[styles.bar, { height: 28 + (item.volume / max) * 92 }]} />
-                <Body style={styles.barLabel}>{formatShortDate(item.date)}</Body>
+      {selected && viewMode === "progress" ? (
+        <Panel>
+          <View style={styles.logsHeader}>
+            <View>
+              <SectionTitle>Workout logs</SectionTitle>
+              <Body>{selected.name}</Body>
+            </View>
+            <Body style={styles.logCount}>{rangedPreviousLogs.length} logs</Body>
+          </View>
+          {rangedPreviousLogs.length ? rangedPreviousLogs.map((log) => (
+            <View key={log.sessionId} style={styles.logRow}>
+              <View style={styles.logHeading}>
+                <Body style={styles.logDate}>{formatShortDate(log.date)}</Body>
+                <Body style={styles.logScore}>{log.score ? `${log.score.toFixed(1)} pts` : "No score"}</Body>
               </View>
-            );
-          })}
-        </View>
-      </Panel>
+              <Body>{log.sets.join("  |  ")}</Body>
+              {log.point ? (
+                <Body style={styles.logDetails}>
+                  e1RM {log.point.estimated1RM.toFixed(1)} · Volume {log.point.failureVolume.toFixed(1)} · Resistance {(log.point.fatigueResistance * 100).toFixed(0)}%
+                </Body>
+              ) : null}
+            </View>
+          )) : (
+            <Body>No workout logs in this {rangeLabel(range)}.</Body>
+          )}
+        </Panel>
       ) : null}
     </Screen>
   );
@@ -196,16 +210,23 @@ function filterBodyWeightLogsByRange(logs: BodyWeightLog[], range: ProgressRange
   });
 }
 
-function buildStrengthGraphPoints(points: ExerciseScorePoint[], range: ProgressRange, bodyWeightByDate: Map<string, BodyWeightLog>, previousLogs: ReturnType<typeof buildPreviousLogs>) {
-  if (usesMonthlyAverages(range)) {
-    return monthlyAveragePoints(points, (point) => point.date, (point) => point.score, "Score");
-  }
+function filterLogsByRange(logs: ReturnType<typeof buildPreviousLogs>, range: ProgressRange) {
+  if (range === "all") return logs;
+  const cutoff = cutoffDate(range);
+  const today = todayDate();
+  return logs.filter((log) => {
+    const date = toDate(log.date);
+    return date >= cutoff && date <= today;
+  });
+}
 
+function buildStrengthGraphPoints(points: ExerciseScorePoint[], bodyWeightByDate: Map<string, BodyWeightLog>, previousLogs: ReturnType<typeof buildPreviousLogs>) {
   return points.map((point) => {
     const weightLog = bodyWeightByDate.get(point.date);
     const workoutLog = previousLogs.find((item) => item.sessionId === point.sessionId);
     return {
       date: point.date,
+      key: String(point.sessionId),
       label: formatShortDate(point.date),
       value: point.score,
       details: [
@@ -216,11 +237,7 @@ function buildStrengthGraphPoints(points: ExerciseScorePoint[], range: ProgressR
   });
 }
 
-function buildBodyWeightGraphPoints(logs: BodyWeightLog[], range: ProgressRange, strengthPointByDate: Map<string, ExerciseScorePoint>, logByDate: Map<string, ReturnType<typeof buildPreviousLogs>[number]>) {
-  if (usesMonthlyAverages(range)) {
-    return monthlyAveragePoints(logs, (log) => log.logged_at.slice(0, 10), (log) => bodyWeightFromStorageUnit(log.weight), "Body weight");
-  }
-
+function buildBodyWeightGraphPoints(logs: BodyWeightLog[], strengthPointByDate: Map<string, ExerciseScorePoint>, logByDate: Map<string, ReturnType<typeof buildPreviousLogs>[number]>) {
   return logs.map((log) => {
     const loggedDate = log.logged_at.slice(0, 10);
     const strengthPoint = strengthPointByDate.get(loggedDate);
@@ -235,25 +252,6 @@ function buildBodyWeightGraphPoints(logs: BodyWeightLog[], range: ProgressRange,
       ]
     };
   });
-}
-
-function monthlyAveragePoints<T>(items: T[], getDate: (item: T) => string, getValue: (item: T) => number, label: string) {
-  const buckets = items.reduce<Map<string, number[]>>((groups, item) => {
-    const key = getDate(item).slice(0, 7);
-    groups.set(key, [...(groups.get(key) ?? []), getValue(item)]);
-    return groups;
-  }, new Map());
-
-  return [...buckets.entries()].map(([month, values]) => ({
-    date: month,
-    label: formatMonthLabel(month),
-    value: values.reduce((total, value) => total + value, 0) / values.length,
-    details: [`${label}: ${values.length} ${values.length === 1 ? "entry" : "entries"} averaged`]
-  }));
-}
-
-function usesMonthlyAverages(range: ProgressRange) {
-  return range === "year" || range === "all";
 }
 
 function cutoffDate(range: Exclude<ProgressRange, "all">) {
@@ -271,7 +269,6 @@ function toDate(value: string) {
 }
 
 function rangeDays(range: Exclude<ProgressRange, "all">) {
-  if (range === "week") return 7;
   if (range === "month") return 30;
   return 365;
 }
@@ -281,14 +278,19 @@ function rangeLabel(range: ProgressRange) {
   return range;
 }
 
-function periodWindowLabel(range: ProgressRange) {
-  if (range === "week") return "7 days";
-  if (range === "month") return "30 days";
-  return range === "year" ? "365 days" : "all time";
-}
-
 function formatPoints(value: number | null | undefined) {
   return Number.isFinite(value) ? `${Number(value).toFixed(1)} pts` : "--";
+}
+
+function compareLatestSessions(points: ExerciseScorePoint[]) {
+  const ordered = [...points].sort((left, right) => left.date.localeCompare(right.date) || left.sessionId - right.sessionId);
+  const current = ordered.at(-1);
+  if (!current) return null;
+  const previous = ordered.at(-2);
+  const changePercent = previous?.score
+    ? ((current.score - previous.score) / previous.score) * 100
+    : null;
+  return { current, previous, changePercent };
 }
 
 function formatPercentChange(value: number | null | undefined) {
@@ -370,24 +372,35 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: spacing.sm
   },
-  bars: {
-    minHeight: 160,
+  logsHeader: {
     flexDirection: "row",
-    alignItems: "flex-end",
+    justifyContent: "space-between",
+    alignItems: "center",
     gap: spacing.md
   },
-  barColumn: {
-    flex: 1,
+  logCount: {
+    fontWeight: "800"
+  },
+  logRow: {
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
+    paddingTop: spacing.md,
+    gap: spacing.xs
+  },
+  logHeading: {
+    flexDirection: "row",
+    justifyContent: "space-between",
     alignItems: "center",
-    gap: spacing.sm
+    gap: spacing.md
   },
-  bar: {
-    width: "100%",
-    borderRadius: 6,
-    backgroundColor: palette.blue
+  logDate: {
+    fontWeight: "900"
   },
-  barLabel: {
-    fontSize: 11,
-    textAlign: "center"
+  logScore: {
+    fontWeight: "900",
+    color: palette.accent
+  },
+  logDetails: {
+    color: palette.muted
   },
 });

@@ -35,6 +35,8 @@ insert into public.exercises (name, primary_muscle, secondary_muscle, is_strengt
   ('Machine Chest Press', 'Chest', null, 0),
   ('Weighted Dip', 'Chest', 'Triceps', 0),
   ('Cable Fly', 'Chest', null, 0),
+  ('High to Low Cable Fly', 'Chest', null, 0),
+  ('Low to High Cable Fly', 'Chest', null, 0),
   ('Pin Press', 'Chest', 'Triceps', 0),
   ('Conventional Deadlift', 'Back', 'Legs', 0),
   ('Barbell Row', 'Back', null, 0),
