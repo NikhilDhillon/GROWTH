@@ -25,8 +25,28 @@ import { formatBodyWeight, formatWeight, formatWeightInput, weightFromStorageUni
 const emptyPlateCounts = () => ({ 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 });
 
 export function GuidedWorkoutScreen() {
-  const navigation = useNavigation<{ navigate: (route: string, params?: object) => void }>();
   const activeWorkout = useFitnessStore((state) => state.activeWorkout);
+  const navigation = useNavigation<{ navigate: (route: string, params?: object) => void }>();
+
+  if (!activeWorkout) {
+    return (
+      <Screen>
+        <Panel>
+          <SectionTitle>No workout in progress</SectionTitle>
+          <Body>Start a guided workout from Home.</Body>
+          <Pressable onPress={() => navigation.navigate("Home")} style={pressableFeedback(styles.primaryButton)}>
+            <Body style={styles.primaryText}>Return home</Body>
+          </Pressable>
+        </Panel>
+      </Screen>
+    );
+  }
+
+  return <ActiveGuidedWorkoutScreen activeWorkout={activeWorkout} />;
+}
+
+function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWorkout }) {
+  const navigation = useNavigation<{ navigate: (route: string, params?: object) => void }>();
   const exercises = useFitnessStore((state) => state.exercises);
   const sessions = useFitnessStore((state) => state.sessions);
   const sets = useFitnessStore((state) => state.sets);
@@ -52,20 +72,6 @@ export function GuidedWorkoutScreen() {
     const interval = setInterval(() => setClock(Date.now()), 1000);
     return () => clearInterval(interval);
   }, []);
-
-  if (!activeWorkout) {
-    return (
-      <Screen>
-        <Panel>
-          <SectionTitle>No workout in progress</SectionTitle>
-          <Body>Start a guided workout from Home.</Body>
-          <Pressable onPress={() => navigation.navigate("Home")} style={pressableFeedback(styles.primaryButton)}>
-            <Body style={styles.primaryText}>Return home</Body>
-          </Pressable>
-        </Panel>
-      </Screen>
-    );
-  }
 
   const workout = activeWorkout;
   const current = workout.currentExercise;
