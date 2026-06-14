@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from "react-native";
 import { Copy, Minus, Plus, RotateCcw, Trash2 } from "lucide-react-native";
 
 import { Body, Label } from "@/components/Text";
@@ -56,6 +56,8 @@ export function VisualSetComposer({
   onPlateCountsChange,
   onSetsChange
 }: Props) {
+  const { width } = useWindowDimensions();
+  const compact = width < 600;
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [editorTotalLoad, setEditorTotalLoad] = useState("45");
   const [editorBarWeight, setEditorBarWeight] = useState(barWeight || "45");
@@ -217,10 +219,10 @@ export function VisualSetComposer({
                   </Pressable>
                 </>
               ) : (
-                <View style={styles.directWeight}>
+                <View style={[styles.directWeight, compact && styles.directWeightCompact]}>
                   <TextInput
                     accessibilityLabel={`Weight for set ${index + 1}`}
-                    style={[styles.input, styles.weightInput]}
+                    style={[styles.input, styles.weightInput, compact && styles.weightInputCompact]}
                     value={set.weight}
                     onChangeText={(weight) => updateSet(index, { weight })}
                     keyboardType="decimal-pad"
@@ -246,12 +248,14 @@ export function VisualSetComposer({
                   <Plus size={14} color={palette.ink} />
                 </Pressable>
               </View>
-              <Pressable onPress={() => updateSet(index, { isWarmup: !set.isWarmup })} style={pressableFeedback([styles.kindButton, set.isWarmup && styles.kindButtonActive])}>
-                <Body style={[styles.kindText, set.isWarmup && styles.kindTextActive]}>{set.isWarmup ? "Warm-up" : "Working"}</Body>
-              </Pressable>
-              <Pressable accessibilityLabel="Remove set" hitSlop={touchHitSlop} onPress={() => onSetsChange(sets.filter((_, itemIndex) => itemIndex !== index))} style={pressableFeedback(styles.iconButton)}>
-                <Trash2 size={16} color={palette.danger} />
-              </Pressable>
+              <View style={[styles.setActions, compact && styles.setActionsCompact]}>
+                <Pressable onPress={() => updateSet(index, { isWarmup: !set.isWarmup })} style={pressableFeedback([styles.kindButton, set.isWarmup && styles.kindButtonActive])}>
+                  <Body style={[styles.kindText, set.isWarmup && styles.kindTextActive]}>{set.isWarmup ? "Warm-up" : "Working"}</Body>
+                </Pressable>
+                <Pressable accessibilityLabel="Remove set" hitSlop={touchHitSlop} onPress={() => onSetsChange(sets.filter((_, itemIndex) => itemIndex !== index))} style={pressableFeedback(styles.iconButton)}>
+                  <Trash2 size={16} color={palette.danger} />
+                </Pressable>
+              </View>
             </View>
 
             {active && supportsBarbell ? (
@@ -544,9 +548,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: spacing.xs
   },
+  directWeightCompact: {
+    flexGrow: 0,
+    flexBasis: "auto",
+    width: 126,
+    minWidth: 0
+  },
   weightInput: {
     flex: 1,
     minWidth: 90
+  },
+  weightInputCompact: {
+    minWidth: 0
   },
   unitText: {
     color: palette.muted,
@@ -608,6 +621,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     ...fastTouchStyle
+  },
+  setActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs
+  },
+  setActionsCompact: {
+    width: "100%",
+    paddingLeft: 34
   },
   kindButton: {
     minHeight: 40,

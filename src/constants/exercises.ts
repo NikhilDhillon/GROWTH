@@ -34,7 +34,7 @@ export const catalogExercises: CatalogExercise[] = [
   { name: "Arnold Press", primary_muscle: "Shoulders" },
   { name: "Lateral Raise", primary_muscle: "Shoulders" },
   { name: "Cable Lateral Raise", primary_muscle: "Shoulders", loadType: "machine_stack" },
-  { name: "Rear Delt Fly", primary_muscle: "Shoulders" },
+  { name: "Rear Delt Fly", primary_muscle: "Shoulders", loadType: "machine_stack" },
   { name: "Cable Rear Delt Fly", primary_muscle: "Shoulders", loadType: "machine_stack" },
   { name: "Face Pull", primary_muscle: "Shoulders", secondary_muscle: "Back", loadType: "machine_stack" },
   { name: "Barbell Shrug", primary_muscle: "Traps", supportsBarbellCalculator: true },
