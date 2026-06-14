@@ -293,7 +293,7 @@ export function GuidedWorkoutScreen() {
     return (
       <Screen>
         <View style={styles.titleRow}>
-          <View>
+          <View style={styles.titleCopy}>
             <Label>Guided workout</Label>
             <Title>Rest day override</Title>
           </View>
@@ -325,7 +325,7 @@ export function GuidedWorkoutScreen() {
   return (
     <Screen>
       <View style={styles.titleRow}>
-        <View>
+        <View style={styles.titleCopy}>
           <Label>Guided workout</Label>
           <Title>{activeWorkout.workoutLabel ?? sourceDay?.label ?? "Today's"} training</Title>
           <Body>{activeWorkout.plannedMuscles.join(" + ")}</Body>
@@ -668,8 +668,9 @@ function latestMachineLoadForExercise(input: {
 
 const styles = StyleSheet.create({
   titleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: spacing.md },
+  titleCopy: { flex: 1, minWidth: 0 },
   flex: { flex: 1, gap: spacing.xs },
-  timer: { flexDirection: "row", alignItems: "center", gap: spacing.xs, backgroundColor: palette.accentSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: 12 },
+  timer: { flexShrink: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs, backgroundColor: palette.accentSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: 12 },
   timerText: { color: palette.ink, fontWeight: "900", fontVariant: ["tabular-nums"] },
   summaryRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },

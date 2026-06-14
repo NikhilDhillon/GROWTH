@@ -15,15 +15,14 @@ import { pressableFeedback } from "@/utils/touch";
 type WorkoutOption = {
   key: string;
   label: string;
-  detail: string;
   muscles: SplitMuscle[];
 };
 
 const workoutOptions: WorkoutOption[] = [
-  { key: "chest-shoulders", label: "Chest / Shoulders", detail: "Chest, front delts and side delts", muscles: ["Chest", "Shoulders"] },
-  { key: "back-rear-delts", label: "Back / Rear delts", detail: "Back and rear delts", muscles: ["Back", "Shoulders"] },
-  { key: "legs-shoulders-traps", label: "Legs / Shoulders / Traps", detail: "Legs, shoulders and traps", muscles: ["Legs", "Shoulders", "Traps"] },
-  { key: "arms", label: "Arms", detail: "Biceps, triceps and forearms", muscles: ["Biceps", "Triceps", "Forearms"] }
+  { key: "chest-shoulders", label: "Chest / Shoulders", muscles: ["Chest", "Shoulders"] },
+  { key: "back-rear-delts", label: "Back / Rear delts", muscles: ["Back", "Shoulders"] },
+  { key: "legs-shoulders-traps", label: "Legs / Shoulders / Traps", muscles: ["Legs", "Shoulders", "Traps"] },
+  { key: "arms", label: "Arms", muscles: ["Biceps", "Triceps", "Forearms"] }
 ];
 
 export function HomeScreen() {
@@ -96,7 +95,6 @@ export function HomeScreen() {
           {workoutOptions.map((option) => (
             <View key={option.key} style={styles.previewRow}>
               <Body style={styles.previewTitle}>{option.label}</Body>
-              <Body style={styles.previewDetail}>{option.detail}</Body>
             </View>
           ))}
         </View>
@@ -125,7 +123,6 @@ export function HomeScreen() {
                   >
                     <View style={styles.optionCopy}>
                       <Body style={styles.optionTitle}>{option.label}</Body>
-                      <Body style={styles.optionDetail}>{option.detail}</Body>
                     </View>
                     <ChevronRight size={20} color={palette.muted} />
                   </Pressable>
@@ -161,16 +158,14 @@ const styles = StyleSheet.create({
   },
   startText: { color: palette.surface, fontWeight: "900", fontSize: 16 },
   preview: { gap: spacing.sm },
-  previewRow: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md, borderBottomWidth: 1, borderBottomColor: palette.border, paddingVertical: spacing.sm },
+  previewRow: { borderBottomWidth: 1, borderBottomColor: palette.border, paddingVertical: spacing.sm },
   previewTitle: { color: palette.ink, fontWeight: "900" },
-  previewDetail: { color: palette.muted, textAlign: "right", flex: 1 },
   modalLayer: { flex: 1, backgroundColor: "rgba(23, 32, 28, 0.48)", alignItems: "center", justifyContent: "center", padding: spacing.lg },
   modalCard: { width: "100%", maxWidth: 560, maxHeight: "92%", backgroundColor: palette.surface, borderRadius: 12, padding: spacing.lg, gap: spacing.md },
   modalHeader: { flexDirection: "row", alignItems: "flex-start", gap: spacing.md },
   closeButton: { width: 42, height: 42, borderRadius: 8, borderWidth: 1, borderColor: palette.border, alignItems: "center", justifyContent: "center" },
   workoutList: { gap: spacing.sm },
   workoutOption: { minHeight: 68, flexDirection: "row", alignItems: "center", gap: spacing.md, padding: spacing.md, borderRadius: 9, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surfaceAlt },
-  optionCopy: { flex: 1, gap: spacing.xs },
+  optionCopy: { flex: 1 },
   optionTitle: { color: palette.ink, fontWeight: "900" },
-  optionDetail: { color: palette.muted },
 });
