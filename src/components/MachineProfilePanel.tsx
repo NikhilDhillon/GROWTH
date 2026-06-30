@@ -29,6 +29,7 @@ export function MachineProfilePanel({
   exerciseId,
   exerciseName,
   unitSystem,
+  lastLoad,
   onSelectProfile,
   onSaveProfile,
   onDeleteProfile
@@ -100,6 +101,9 @@ export function MachineProfilePanel({
           <Body style={styles.hintText}>
             Previous logs and guided targets use only the selected machine tag.
           </Body>
+          {selectedProfile && lastLoad !== null && lastLoad !== undefined ? (
+            <Body>Most recent load: {formatMachineLoad(lastLoad, selectedProfile, unitSystem)}</Body>
+          ) : null}
         </View>
         <Pressable
           accessibilityLabel={showForm ? "Close machine tag form" : "Add machine tag"}
@@ -182,6 +186,13 @@ export function MachineProfilePanel({
       ) : null}
     </View>
   );
+}
+
+function formatMachineLoad(load: number, profile: MachineProfile | null, unitSystem: UnitSystem) {
+  const formatted = Number.isInteger(load) ? String(load) : load.toFixed(1);
+  if (profile?.stackUnit === "kg") return `${formatted} kg`;
+  if (profile?.stackUnit === "plate") return `${formatted} plates`;
+  return `${formatted} ${unitSystem}`;
 }
 
 const styles = StyleSheet.create({

@@ -19,10 +19,9 @@ type WorkoutOption = {
 };
 
 const workoutOptions: WorkoutOption[] = [
-  { key: "chest-shoulders", label: "Chest / Shoulders", muscles: ["Chest", "Shoulders"] },
-  { key: "back-rear-delts", label: "Back / Rear delts", muscles: ["Back", "Shoulders"] },
-  { key: "legs-shoulders-traps", label: "Legs / Shoulders / Traps", muscles: ["Legs", "Shoulders", "Traps"] },
-  { key: "arms", label: "Arms", muscles: ["Biceps", "Triceps", "Forearms"] }
+  { key: "chest-triceps", label: "Chest / Triceps", muscles: ["Chest", "Triceps"] },
+  { key: "back-biceps-traps", label: "Back / Biceps / Traps", muscles: ["Back", "Biceps", "Traps"] },
+  { key: "legs-shoulders", label: "Legs / Shoulders", muscles: ["Legs", "Shoulders"] }
 ];
 
 export function HomeScreen() {

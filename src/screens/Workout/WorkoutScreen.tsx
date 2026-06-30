@@ -18,6 +18,7 @@ import { todayIso } from "@/utils/date";
 import { muscles, palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { bodyWeightDisplayUnit, formatBodyWeight, formatWeightInput, weightFromStorageUnit, weightToStorageUnit } from "@/utils/units";
+import { latestSetsForExercise } from "@/utils/workoutHistory";
 
 const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
 const emptyPlateCounts = () => ({ 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 });
@@ -39,7 +40,7 @@ export function WorkoutScreen() {
   const [selectedKind, setSelectedKind] = useState<"exercise" | "weight">("exercise");
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleGroup>(exercises[0]?.primary_muscle ?? "Chest");
   const [exerciseId, setExerciseId] = useState<number | null>(exercises[0]?.id ?? null);
-  const [seededExerciseId, setSeededExerciseId] = useState<number | null>(null);
+  const [seededHistoryKey, setSeededHistoryKey] = useState<string | null>(null);
   const [draftSets, setDraftSets] = useState<LoggedSetDraft[]>([emptySet(), emptySet(), emptySet()]);
   const [barWeight, setBarWeight] = useState("45");
   const [plateCounts, setPlateCounts] = useState<Record<string, number>>(emptyPlateCounts());
@@ -74,21 +75,24 @@ export function WorkoutScreen() {
   const selectedMachineProfile = machineProfiles.find((profile) => profile.id === selectedMachineProfileId) ?? null;
   const previousSets = useMemo(() => {
     if (!selectedExercise) return [];
-    const matching = sets.filter((set) => set.exercise_id === selectedExercise.id);
-    const lastDate = matching.at(-1)?.created_at.slice(0, 10);
-    return matching.filter((set) => set.created_at.slice(0, 10) === lastDate);
-  }, [selectedExercise, sets]);
+    return latestSetsForExercise({
+      exerciseId: selectedExercise.id,
+      sessions,
+      sets,
+      machineProfileId: isMachineLoadType(selectedLoadType) ? selectedMachineProfileId : null,
+      machineScoped: isMachineLoadType(selectedLoadType),
+      includeWarmups: true
+    });
+  }, [selectedExercise, selectedLoadType, selectedMachineProfileId, sessions, sets]);
   const lastMachineLoad = useMemo(() => {
     if (!selectedExercise || !isMachineLoadType(selectedLoadType)) return null;
-    const sessionById = new Map(sessions.map((session) => [session.id, session]));
-    const matchingSets = sets
-      .filter((set) => set.exercise_id === selectedExercise.id && !set.is_warmup)
-      .filter((set) => !selectedMachineProfileId || sessionById.get(set.session_id)?.machine_profile_id === selectedMachineProfileId)
-      .sort((a, b) => {
-        const left = sessionById.get(a.session_id)?.workout_date ?? a.created_at.slice(0, 10);
-        const right = sessionById.get(b.session_id)?.workout_date ?? b.created_at.slice(0, 10);
-        return left.localeCompare(right) || a.session_id - b.session_id || a.set_number - b.set_number;
-      });
+    const matchingSets = latestSetsForExercise({
+      exerciseId: selectedExercise.id,
+      sessions,
+      sets,
+      machineProfileId: selectedMachineProfileId,
+      machineScoped: true
+    });
     return storageWeightToMachineLoad(matchingSets.at(-1)?.weight, selectedMachineProfile, unitSystem);
   }, [selectedExercise, selectedLoadType, selectedMachineProfile, selectedMachineProfileId, sessions, sets, unitSystem]);
   const composerTargets = useMemo<SetComposerTarget[]>(() => {
@@ -101,12 +105,15 @@ export function WorkoutScreen() {
   }, [previousSets]);
 
   useEffect(() => {
-    if (selectedKind !== "exercise" || !selectedExercise || seededExerciseId === selectedExercise.id) return;
+    const historyKey = selectedExercise
+      ? `${selectedExercise.id}:${isMachineLoadType(selectedLoadType) ? selectedMachineProfileId ?? "no-machine" : "all"}`
+      : null;
+    if (selectedKind !== "exercise" || !selectedExercise || seededHistoryKey === historyKey) return;
     setDraftSets(buildSmartWorkoutSets(previousSets, unitSystem));
     setBarWeight("45");
     setPlateCounts(emptyPlateCounts());
-    setSeededExerciseId(selectedExercise.id);
-  }, [previousSets, seededExerciseId, selectedExercise, selectedKind, unitSystem]);
+    setSeededHistoryKey(historyKey);
+  }, [previousSets, seededHistoryKey, selectedExercise, selectedKind, selectedLoadType, selectedMachineProfileId, unitSystem]);
 
   useEffect(() => {
     if (!selectedExercise || !isMachineLoadType(selectedLoadType)) {

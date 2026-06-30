@@ -103,8 +103,14 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
     sets,
     workoutDate: workout.workoutDate,
     draftWarmups: current.sets.map((set) => Boolean(set.isWarmup)),
-    machineProfileId: isMachineLoadType(loadType) ? current.machineProfileId : null
+    machineProfileId: isMachineLoadType(loadType) ? current.machineProfileId : null,
+    machineScoped: isMachineLoadType(loadType)
   }) : null, [current.machineProfileId, current.sets, guidedWorkoutPreferences, loadType, selectedExercise, sessions, sets, workout.workoutDate]);
+  const previousLogScope = isMachineLoadType(loadType)
+    ? selectedMachineProfile
+      ? ` for ${selectedMachineProfile.label}`
+      : " for the selected machine tag"
+    : "";
   const composerTargets = useMemo<SetComposerTarget[]>(() => {
     return recommendation?.targets.map((target) => ({
       draftIndex: target.draftIndex,
@@ -434,10 +440,10 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
                         : `${row.targetReps} reps${row.role === "backoff" ? `, starting near ${guidedWorkoutPreferences.backoffPercentage}% of the top-set load` : ""}.`}
                   </Body>
                 ))}
-                {!recommendation?.latest ? <Body>No previous working sets logged yet.</Body> : null}
+                {!recommendation?.latest ? <Body>No previous working sets logged{previousLogScope} yet.</Body> : null}
               </>
             )}
-            {recommendation?.latest ? <Body>Last session ({recommendation.latest.date}): {formatSessionSets(recommendation.latest.sets, unitSystem)}</Body> : null}
+            {recommendation?.latest ? <Body>Most recent log{previousLogScope} ({recommendation.latest.date}): {formatSessionSets(recommendation.latest.sets, unitSystem)}</Body> : null}
             {recommendation?.category === "top_set" ? (
               <>
                 {recommendation.topSetBest ? <Body>Best top set ({recommendation.topSetBest.date}): {formatSessionSets(recommendation.topSetBest.sets.slice(0, 1), unitSystem)}</Body> : null}
@@ -547,6 +553,7 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
         sets,
         workoutDate: workout.workoutDate,
         machineProfileId: isMachineLoadType(nextLoadType) ? machineProfileId : null,
+        machineScoped: isMachineLoadType(nextLoadType),
         unitSystem
       }) : current.sets,
       barWeight: "45",
@@ -572,6 +579,7 @@ function buildSmartGuidedSets(input: {
   sets: WorkoutSet[];
   workoutDate: string;
   machineProfileId?: string | null;
+  machineScoped?: boolean;
   unitSystem: UnitSystem;
 }): LoggedSetDraft[] {
   const baseSets: LoggedSetDraft[] = [{ reps: "", weight: "" }, { reps: "", weight: "" }, { reps: "", weight: "" }];
@@ -582,7 +590,8 @@ function buildSmartGuidedSets(input: {
     sets: input.sets,
     workoutDate: input.workoutDate,
     draftWarmups: baseSets.map((set) => Boolean(set.isWarmup)),
-    machineProfileId: input.machineProfileId
+    machineProfileId: input.machineProfileId,
+    machineScoped: input.machineScoped
   });
   const targetCount = Math.max(3, recommendation.targets.reduce((max, target) => Math.max(max, target.draftIndex + 1), 0), recommendation.latest?.sets.length ?? 0);
   const nextSets = Array.from({ length: targetCount }, (): LoggedSetDraft => ({ reps: "", weight: "" }));
@@ -659,7 +668,7 @@ function latestMachineLoadForExercise(input: {
   const sessionById = new Map(input.sessions.map((session) => [session.id, session]));
   const matching = input.sets
     .filter((set) => set.exercise_id === input.exerciseId && !set.is_warmup)
-    .filter((set) => !input.machineProfileId || sessionById.get(set.session_id)?.machine_profile_id === input.machineProfileId)
+    .filter((set) => Boolean(input.machineProfileId) && sessionById.get(set.session_id)?.machine_profile_id === input.machineProfileId)
     .sort((left, right) => {
       const leftDate = sessionById.get(left.session_id)?.workout_date ?? left.created_at.slice(0, 10);
       const rightDate = sessionById.get(right.session_id)?.workout_date ?? right.created_at.slice(0, 10);

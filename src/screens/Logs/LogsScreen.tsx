@@ -4,10 +4,11 @@ import { useNavigation } from "@react-navigation/native";
 import { Check, ChevronDown, ChevronRight, Pencil, Plus, Save, Trash2, X } from "lucide-react-native";
 
 import { DatePickerField } from "@/components/DatePickerField";
+import { MachineProfilePanel } from "@/components/MachineProfilePanel";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
-import { ExerciseLoadType, getExerciseLoadType } from "@/constants/exercises";
+import { ExerciseLoadType, getExerciseLoadType, isMachineLoadType } from "@/constants/exercises";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { Exercise, LoggedSetDraft, MuscleGroup, WorkoutSession } from "@/types";
 import { formatShortDate } from "@/utils/date";
@@ -40,6 +41,9 @@ export function LogsScreen() {
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const deleteWorkoutLog = useFitnessStore((state) => state.deleteWorkoutLog);
   const updateWorkoutLog = useFitnessStore((state) => state.updateWorkoutLog);
+  const updateWorkoutMachineProfile = useFitnessStore((state) => state.updateWorkoutMachineProfile);
+  const saveMachineProfile = useFitnessStore((state) => state.saveMachineProfile);
+  const deleteMachineProfile = useFitnessStore((state) => state.deleteMachineProfile);
   const deleteBodyWeightLog = useFitnessStore((state) => state.deleteBodyWeightLog);
   const logs = buildPreviousLogs({ exercises, sessions, sets, points, unitSystem, machineProfiles });
   const groupedLogs = useMemo(() => groupLogsByMuscle(logs, exercises), [exercises, logs]);
@@ -49,6 +53,7 @@ export function LogsScreen() {
   const [collapsedMuscles, setCollapsedMuscles] = useState<Record<string, boolean>>({});
   const [editingWorkout, setEditingWorkout] = useState<EditingWorkout | null>(null);
   const [updateSaveState, setUpdateSaveState] = useState<SaveState>("idle");
+  const [machineSaveState, setMachineSaveState] = useState<SaveState>("idle");
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [deletingWorkoutId, setDeletingWorkoutId] = useState<number | null>(null);
   const [deletingBodyWeightId, setDeletingBodyWeightId] = useState<number | null>(null);
@@ -60,6 +65,7 @@ export function LogsScreen() {
       .sort((a, b) => a.set_number - b.set_number)
       .map((set) => ({ reps: String(set.reps), weight: formatWeightInput(set.weight, unitSystem), isWarmup: Boolean(set.is_warmup) }));
     setUpdateSaveState("idle");
+    setMachineSaveState("idle");
     setUpdateError(null);
     setEditingWorkout({
       sessionId: log.sessionId,
@@ -89,6 +95,27 @@ export function LogsScreen() {
     } catch (error) {
       setUpdateSaveState("idle");
       setUpdateError(error instanceof Error ? error.message : "Could not update scored workout.");
+    }
+  }
+
+  async function handleUpdateMachineTag() {
+    if (!editingWorkout || machineSaveState === "saving") return;
+    setMachineSaveState("saving");
+    setUpdateError(null);
+    try {
+      await updateWorkoutMachineProfile({
+        sessionId: editingWorkout.sessionId,
+        exerciseId: editingWorkout.exerciseId,
+        machineProfileId: editingWorkout.machineProfileId ?? null
+      });
+      setMachineSaveState("saved");
+      setTimeout(() => {
+        clearEditWorkout();
+        setMachineSaveState("idle");
+      }, 900);
+    } catch (error) {
+      setMachineSaveState("idle");
+      setUpdateError(error instanceof Error ? error.message : "Could not update machine tag.");
     }
   }
 
@@ -233,6 +260,41 @@ export function LogsScreen() {
                             </View>
                             <DatePickerField value={editingWorkout.workoutDate} onChange={(workoutDate) => setEditingWorkout((current) => current ? { ...current, workoutDate } : current)} />
                             {loadType !== "external" ? <Body style={styles.hintText}>{loadType === "machine_stack" ? "Enter the stack/load number shown on the machine." : loadType === "bodyweight_plus_load" ? "Enter added weight only; body weight is included in scoring." : "Enter assistance weight; it is subtracted from body weight for scoring."}</Body> : null}
+                            {isMachineLoadType(loadType) ? (
+                              <View style={styles.machineEdit}>
+                                <MachineProfilePanel
+                                  profiles={machineProfiles}
+                                  selectedProfileId={editingWorkout.machineProfileId}
+                                  exerciseId={editingWorkout.exerciseId}
+                                  exerciseName={log.exerciseName}
+                                  unitSystem={unitSystem}
+                                  onSelectProfile={(machineProfileId) => setEditingWorkout((current) => current ? { ...current, machineProfileId } : current)}
+                                  onSaveProfile={saveMachineProfile}
+                                  onDeleteProfile={deleteMachineProfile}
+                                />
+                                {editingWorkout.machineProfileId ? (
+                                  <Pressable
+                                    hitSlop={touchHitSlop}
+                                    onPress={() => setEditingWorkout((current) => current ? { ...current, machineProfileId: null } : current)}
+                                    style={pressableFeedback(styles.secondaryButton)}
+                                  >
+                                    <X size={17} color={palette.ink} />
+                                    <Body style={styles.secondaryButtonText}>Clear machine tag</Body>
+                                  </Pressable>
+                                ) : (
+                                  <Body style={styles.hintText}>Select a machine tag to attach this old log to that machine's future history.</Body>
+                                )}
+                                <Pressable
+                                  disabled={machineSaveState === "saving"}
+                                  hitSlop={touchHitSlop}
+                                  onPress={() => void handleUpdateMachineTag()}
+                                  style={pressableFeedback(styles.primaryButton)}
+                                >
+                                  {machineSaveState === "saving" ? <ActivityIndicator color={palette.surface} /> : machineSaveState === "saved" ? <Check size={18} color={palette.surface} /> : <Save size={18} color={palette.surface} />}
+                                  <Body style={styles.primaryButtonText}>{machineSaveState === "saving" ? "Saving" : machineSaveState === "saved" ? "Saved" : "Save machine tag"}</Body>
+                                </Pressable>
+                              </View>
+                            ) : null}
                             {editingWorkout.sets.map((set, index) => (
                               <View key={index} style={styles.setRow}>
                                 <Label style={styles.setNumber}>{index + 1}</Label>
@@ -286,7 +348,7 @@ export function LogsScreen() {
                           <View style={styles.historyHeader}>
                             <View style={styles.historyText}>
                               <Body style={styles.dateText}>{formatShortDate(log.date)} · {log.score ? `${log.score.toFixed(1)} Performance Points` : "Not eligible for points"}</Body>
-                              {log.machineProfileLabel ? <Label>{log.machineProfileLabel}</Label> : null}
+                              {isMachineLoadType(loadType) ? <Label>{log.machineProfileLabel ?? "No machine tag"}</Label> : null}
                               <Body>{log.sets.join("  |  ")}</Body>
                               {log.point ? <Body>e1RM {log.point.estimated1RM.toFixed(1)} | Volume {log.point.failureVolume.toFixed(1)} | Resistance {(log.point.fatigueResistance * 100).toFixed(0)}%</Body> : null}
                             </View>
@@ -469,6 +531,9 @@ const styles = StyleSheet.create({
   },
   editForm: {
     gap: spacing.md
+  },
+  machineEdit: {
+    gap: spacing.sm
   },
   summaryRow: {
     flexDirection: "row",

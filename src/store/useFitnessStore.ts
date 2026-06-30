@@ -5,7 +5,7 @@ import { createDefaultGuidedWorkoutPreferences } from "@/constants/guidedWorkout
 import { createMachineProfile, MachineProfileDraft, touchMachineProfile, upsertMachineProfile } from "@/constants/machineProfiles";
 import { createDefaultTrainingSplit } from "@/constants/trainingSplit";
 import { buildExerciseScorePoints, buildMuscleScorePoints, summarizeMuscles } from "@/services/strength/strengthService";
-import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, removeSplitSync as removeStoredSplitSync, requestPasswordReset, requestSplitSync as requestStoredSplitSync, respondSplitSync as respondStoredSplitSync, revokeFriendInvite as revokeStoredFriendInvite, saveActiveWorkout as saveStoredActiveWorkout, saveBodyWeightLog as saveStoredBodyWeightLog, saveCompletedGuidedWorkouts as saveStoredCompletedGuidedWorkouts, saveMachineProfiles as saveStoredMachineProfiles, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateGuidedWorkoutPreferences as updateStoredGuidedWorkoutPreferences, updateTrainingSplit as updateStoredTrainingSplit, updateUnitSystem, updateWorkoutSession } from "@/database/database";
+import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, removeSplitSync as removeStoredSplitSync, requestPasswordReset, requestSplitSync as requestStoredSplitSync, respondSplitSync as respondStoredSplitSync, revokeFriendInvite as revokeStoredFriendInvite, saveActiveWorkout as saveStoredActiveWorkout, saveBodyWeightLog as saveStoredBodyWeightLog, saveCompletedGuidedWorkouts as saveStoredCompletedGuidedWorkouts, saveMachineProfiles as saveStoredMachineProfiles, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateGuidedWorkoutPreferences as updateStoredGuidedWorkoutPreferences, updateTrainingSplit as updateStoredTrainingSplit, updateUnitSystem, updateWorkoutSession, updateWorkoutSessionMachineProfile } from "@/database/database";
 import { ParsedImportData } from "@/services/import/importService";
 import { ActiveWorkout, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, LoggedSetDraft, MachineProfile, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { todayIso } from "@/utils/date";
@@ -52,6 +52,7 @@ type FitnessState = {
   setExerciseEnabled: (exerciseId: number, enabled: boolean) => Promise<void>;
   saveWorkout: (input: { exerciseId: number; workoutDate: string; notes: string; machineProfileId?: string | null; sets: LoggedSetDraft[] }) => Promise<void>;
   updateWorkoutLog: (input: { sessionId: number; exerciseId: number; workoutDate: string; notes: string; machineProfileId?: string | null; sets: LoggedSetDraft[] }) => Promise<void>;
+  updateWorkoutMachineProfile: (input: { sessionId: number; exerciseId: number; machineProfileId?: string | null }) => Promise<void>;
   deleteWorkoutLog: (sessionId: number) => Promise<void>;
   saveBodyWeightLog: (input: { loggedDate: string; weight: string; unitSystem?: UnitSystem }) => Promise<void>;
   updateBodyWeightLog: (input: { id: number; loggedDate: string; weight: string; unitSystem?: UnitSystem }) => Promise<void>;
@@ -284,6 +285,11 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
     const workoutDate = /^\d{4}-\d{2}-\d{2}$/.test(input.workoutDate) ? input.workoutDate : todayIso();
 
     await updateWorkoutSession({ sessionId: input.sessionId, exerciseId: input.exerciseId, workoutDate, notes: input.notes, machineProfileId: input.machineProfileId ?? null, sets });
+    await touchStoredMachineProfile(input.machineProfileId, input.exerciseId);
+    await get().hydrate();
+  },
+  updateWorkoutMachineProfile: async (input) => {
+    await updateWorkoutSessionMachineProfile({ sessionId: input.sessionId, machineProfileId: input.machineProfileId ?? null });
     await touchStoredMachineProfile(input.machineProfileId, input.exerciseId);
     await get().hydrate();
   },

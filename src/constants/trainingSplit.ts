@@ -12,12 +12,12 @@ const dayTemplate: Array<{ key: string; label: string }> = [
 
 const defaultMuscles: Record<string, SplitMuscle[]> = {
   mon: ["Chest", "Triceps"],
-  tue: ["Back", "Biceps"],
+  tue: ["Back", "Biceps", "Traps"],
   wed: ["Legs", "Shoulders"],
   thu: [],
   fri: ["Chest", "Triceps"],
-  sat: ["Back", "Biceps", "Forearms", "Abs"],
-  sun: ["Legs", "Shoulders", "Forearms", "Abs"]
+  sat: ["Back", "Biceps", "Traps"],
+  sun: ["Legs", "Shoulders"]
 };
 
 const validMuscles = new Set<SplitMuscle>(["Chest", "Triceps", "Back", "Biceps", "Legs", "Shoulders", "Traps", "Forearms", "Abs"]);

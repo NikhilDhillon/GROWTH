@@ -693,6 +693,29 @@ export async function updateWorkoutSession(input: { sessionId: number; exerciseI
   writeDatabase(data);
 }
 
+export async function updateWorkoutSessionMachineProfile(input: { sessionId: number; machineProfileId?: string | null }) {
+  if (supabase) {
+    await requireCloudUser(supabase);
+    const result = await supabase
+      .from("workout_sessions")
+      .update({ machine_profile_id: input.machineProfileId ?? null })
+      .eq("id", input.sessionId);
+    if (result.error && isMissingMachineSessionColumnError(result.error)) {
+      throw new Error("Machine tags need the Supabase schema update before old logs can be tagged.");
+    }
+    throwIfSupabaseError(result.error);
+    return;
+  }
+
+  const data = readDatabase();
+  data.sessions = data.sessions.map((session) =>
+    session.id === input.sessionId
+      ? { ...session, machine_profile_id: input.machineProfileId ?? null }
+      : session
+  );
+  writeDatabase(data);
+}
+
 export async function updateConfigWeight(id: number, weightFactor: number) {
   if (supabase) {
     await requireCloudUser(supabase);
@@ -1252,10 +1275,14 @@ function parseFingerprintSetting(value: string | undefined | null) {
 }
 
 function normalizeCatalog(existing: Exercise[]) {
-  if (!exercisesAreCatalog(existing)) return catalogExerciseRows(now());
+  const migrated = existing.map((exercise) => ({
+    ...exercise,
+    name: exercise.name === "Cable Pushdown" ? "Cable Triceps Pushdown" : exercise.name
+  }));
+  if (!exercisesAreCatalog(migrated)) return catalogExerciseRows(now());
 
-  let nextId = existing.reduce((max, exercise) => Math.max(max, exercise.id), 0);
-  const existingByName = new Map(existing.map((exercise) => [exercise.name, exercise]));
+  let nextId = migrated.reduce((max, exercise) => Math.max(max, exercise.id), 0);
+  const existingByName = new Map(migrated.map((exercise) => [exercise.name, exercise]));
 
   return catalogExerciseRows(now()).map((catalogExercise) => {
     const existingExercise = existingByName.get(catalogExercise.name);
@@ -1278,7 +1305,7 @@ function normalizeCatalog(existing: Exercise[]) {
 
 function exercisesAreCatalog(exercises: Exercise[]) {
   const catalogNames = new Set(catalogExerciseRows("").map((exercise) => exercise.name));
-  return exercises.every((exercise) => catalogNames.has(exercise.name));
+  return exercises.every((exercise) => catalogNames.has(exercise.name === "Cable Pushdown" ? "Cable Triceps Pushdown" : exercise.name));
 }
 
 function withPreferenceFlags(exercises: Exercise[], preferences: UserExercisePreference[], userId: number | string | null) {

@@ -106,13 +106,14 @@ export function buildGuidedRecommendation(input: {
   workoutDate: string;
   draftWarmups: boolean[];
   machineProfileId?: string | null;
+  machineScoped?: boolean;
 }): GuidedRecommendation {
   const category = categoryForExercise(input.exercise.name, input.preferences);
   const draftWorkingIndexes = prescribedWorkingIndexes(input.draftWarmups);
   const requiredSetCount = prescribedWorkingSetCount;
   const allSummaries = exerciseSessions(input.exercise.id, input.sessions, input.sets);
   const sameMachineSummaries = input.machineProfileId ? allSummaries.filter((summary) => summary.machineProfileId === input.machineProfileId) : [];
-  const summaries = input.machineProfileId ? sameMachineSummaries : allSummaries;
+  const summaries = input.machineScoped ? sameMachineSummaries : input.machineProfileId ? sameMachineSummaries : allSummaries;
   const latest = summaries.at(-1);
   const inactive = latest ? daysBetween(latest.date, input.workoutDate) > input.preferences.inactivityDays : false;
   const latestWorking = latest?.sets ?? [];

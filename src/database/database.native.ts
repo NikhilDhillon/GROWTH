@@ -119,9 +119,10 @@ async function ensureExerciseCatalog(db: Database) {
 
 async function ensureCatalogAdditions(db: Database) {
   const version = await db.getFirstAsync<{ user_version: number }>("PRAGMA user_version");
-  if ((version?.user_version ?? 0) >= 6) return;
+  if ((version?.user_version ?? 0) >= 7) return;
 
   const timestamp = new Date().toISOString();
+  await db.runAsync("UPDATE exercises SET name = ? WHERE name = ?", ["Cable Triceps Pushdown", "Cable Pushdown"]);
   for (const exercise of catalogExercises) {
     const existing = await db.getFirstAsync<{ id: number }>("SELECT id FROM exercises WHERE name = ?", [exercise.name]);
     if (existing) {
@@ -134,7 +135,7 @@ async function ensureCatalogAdditions(db: Database) {
     }
   }
 
-  await db.execAsync("PRAGMA user_version = 6");
+  await db.execAsync("PRAGMA user_version = 7");
 }
 
 export async function loadAllData() {
@@ -326,6 +327,11 @@ export async function updateWorkoutSession(input: { sessionId: number; exerciseI
       );
     }
   });
+}
+
+export async function updateWorkoutSessionMachineProfile(input: { sessionId: number; machineProfileId?: string | null }) {
+  const db = await getDatabase();
+  await db.runAsync("UPDATE workout_sessions SET machine_profile_id = ? WHERE id = ?", [input.machineProfileId ?? null, input.sessionId]);
 }
 
 export async function saveBodyWeightLog(input: { loggedDate: string; weight: number; unit: UnitSystem }) {

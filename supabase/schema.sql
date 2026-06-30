@@ -283,6 +283,7 @@ create unique index if not exists exercises_name_idx on public.exercises(name);
 create index if not exists user_exercise_preferences_user_id_idx on public.user_exercise_preferences(user_id);
 create index if not exists user_exercise_preferences_exercise_id_idx on public.user_exercise_preferences(exercise_id);
 create index if not exists workout_sessions_user_id_date_idx on public.workout_sessions(user_id, workout_date desc);
+create index if not exists workout_sessions_user_machine_date_idx on public.workout_sessions(user_id, machine_profile_id, workout_date desc);
 create index if not exists workout_sets_user_id_created_idx on public.workout_sets(user_id, created_at, set_number);
 create index if not exists workout_sets_session_id_idx on public.workout_sets(session_id);
 create index if not exists workout_sets_exercise_id_idx on public.workout_sets(exercise_id);
@@ -567,7 +568,8 @@ insert into public.exercises (name, primary_muscle, secondary_muscle, is_strengt
   ('Cable Curl', 'Biceps', null, 0),
   ('Close-Grip Bench Press', 'Triceps', 'Chest', 0),
   ('Skull Crusher', 'Triceps', null, 0),
-  ('Cable Pushdown', 'Triceps', null, 0),
+  ('Cable Triceps Pushdown', 'Triceps', null, 0),
+  ('Bar Triceps Pushdown', 'Triceps', null, 0),
   ('Overhead Triceps Extension', 'Triceps', null, 0),
   ('Assisted Dip', 'Triceps', 'Chest', 0),
   ('Tricep Pin Press', 'Triceps', 'Chest', 0),
