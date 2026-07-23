@@ -74,6 +74,7 @@ insert into public.exercises (name, primary_muscle, secondary_muscle, is_strengt
   ('Back Squat', 'Legs', null, 0),
   ('Front Squat', 'Legs', null, 0),
   ('Leg Press', 'Legs', null, 0),
+  ('Hack Squat', 'Legs', null, 0),
   ('Romanian Deadlift', 'Legs', 'Back', 0),
   ('Hip Thrust', 'Legs', null, 0),
   ('Bulgarian Split Squat', 'Legs', null, 0),

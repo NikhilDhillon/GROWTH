@@ -119,7 +119,7 @@ async function ensureExerciseCatalog(db: Database) {
 
 async function ensureCatalogAdditions(db: Database) {
   const version = await db.getFirstAsync<{ user_version: number }>("PRAGMA user_version");
-  if ((version?.user_version ?? 0) >= 7) return;
+  if ((version?.user_version ?? 0) >= 8) return;
 
   const timestamp = new Date().toISOString();
   await db.runAsync("UPDATE exercises SET name = ? WHERE name = ?", ["Cable Triceps Pushdown", "Cable Pushdown"]);
@@ -135,7 +135,7 @@ async function ensureCatalogAdditions(db: Database) {
     }
   }
 
-  await db.execAsync("PRAGMA user_version = 7");
+  await db.execAsync("PRAGMA user_version = 8");
 }
 
 export async function loadAllData() {

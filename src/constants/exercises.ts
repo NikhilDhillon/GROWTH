@@ -57,6 +57,7 @@ export const catalogExercises: CatalogExercise[] = [
   { name: "Back Squat", primary_muscle: "Legs", supportsBarbellCalculator: true },
   { name: "Front Squat", primary_muscle: "Legs", supportsBarbellCalculator: true },
   { name: "Leg Press", primary_muscle: "Legs", loadType: "machine_stack" },
+  { name: "Hack Squat", primary_muscle: "Legs", loadType: "machine_stack" },
   { name: "Romanian Deadlift", primary_muscle: "Legs", secondary_muscle: "Back", supportsBarbellCalculator: true },
   { name: "Hip Thrust", primary_muscle: "Legs" },
   { name: "Bulgarian Split Squat", primary_muscle: "Legs" },
