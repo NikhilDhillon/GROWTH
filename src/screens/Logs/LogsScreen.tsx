@@ -15,7 +15,7 @@ import { formatShortDate } from "@/utils/date";
 import { buildPreviousLogs } from "@/utils/logs";
 import { muscles, palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
-import { formatBodyWeight, formatWeightInput } from "@/utils/units";
+import { formatWeightInput } from "@/utils/units";
 
 type EditingWorkout = {
   sessionId: number;
@@ -35,7 +35,6 @@ export function LogsScreen() {
   const sessions = useFitnessStore((state) => state.sessions);
   const sets = useFitnessStore((state) => state.sets);
   const machineProfiles = useFitnessStore((state) => state.machineProfiles);
-  const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
   const points = useFitnessStore((state) => state.exercisePoints);
   const completedGuidedWorkouts = useFitnessStore((state) => state.completedGuidedWorkouts);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
@@ -44,11 +43,9 @@ export function LogsScreen() {
   const updateWorkoutMachineProfile = useFitnessStore((state) => state.updateWorkoutMachineProfile);
   const saveMachineProfile = useFitnessStore((state) => state.saveMachineProfile);
   const deleteMachineProfile = useFitnessStore((state) => state.deleteMachineProfile);
-  const deleteBodyWeightLog = useFitnessStore((state) => state.deleteBodyWeightLog);
   const logs = buildPreviousLogs({ exercises, sessions, sets, points, unitSystem, machineProfiles });
   const groupedLogs = useMemo(() => groupLogsByMuscle(logs, exercises), [exercises, logs]);
   const [guidedWorkoutsCollapsed, setGuidedWorkoutsCollapsed] = useState(false);
-  const [bodyWeightCollapsed, setBodyWeightCollapsed] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [collapsedMuscles, setCollapsedMuscles] = useState<Record<string, boolean>>({});
   const [editingWorkout, setEditingWorkout] = useState<EditingWorkout | null>(null);
@@ -56,7 +53,6 @@ export function LogsScreen() {
   const [machineSaveState, setMachineSaveState] = useState<SaveState>("idle");
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [deletingWorkoutId, setDeletingWorkoutId] = useState<number | null>(null);
-  const [deletingBodyWeightId, setDeletingBodyWeightId] = useState<number | null>(null);
 
   function startEditWorkout(log: ReturnType<typeof buildPreviousLogs>[number]) {
     const session = sessions.find((item) => item.id === log.sessionId);
@@ -129,16 +125,6 @@ export function LogsScreen() {
     }
   }
 
-  async function handleDeleteBodyWeight(id: number) {
-    if (deletingBodyWeightId !== null) return;
-    setDeletingBodyWeightId(id);
-    try {
-      await deleteBodyWeightLog(id);
-    } finally {
-      setDeletingBodyWeightId(null);
-    }
-  }
-
   return (
     <Screen>
       <View>
@@ -177,37 +163,6 @@ export function LogsScreen() {
             </View>
           );
         }) : !guidedWorkoutsCollapsed ? <Body>Finish a guided workout to see its summary here.</Body> : null}
-      </Panel>
-
-      <Panel>
-        <Pressable
-          accessibilityLabel={`${bodyWeightCollapsed ? "Expand" : "Collapse"} body weight logs`}
-          onPress={() => setBodyWeightCollapsed((current) => !current)}
-          style={styles.muscleHeader}
-        >
-          <View style={styles.exerciseHeaderTitle}>
-            {bodyWeightCollapsed ? <ChevronRight size={20} color={palette.ink} /> : <ChevronDown size={20} color={palette.ink} />}
-            <SectionTitle style={styles.muscleTitle}>Body weight</SectionTitle>
-          </View>
-          <Body style={styles.countText}>{bodyWeightLogs.length} logs</Body>
-        </Pressable>
-        {!bodyWeightCollapsed && bodyWeightLogs.length ? (
-          bodyWeightLogs.map((log) => (
-            <View key={log.id} style={styles.historyRow}>
-              <View style={styles.historyHeader}>
-                <View style={styles.historyText}>
-                  <Body style={styles.dateText}>{formatShortDate(log.logged_at.slice(0, 10))}</Body>
-                  <Body>{formatBodyWeight(log.weight)}</Body>
-                </View>
-                <Pressable disabled={deletingBodyWeightId === log.id} accessibilityLabel={`Delete body weight log from ${log.logged_at.slice(0, 10)}`} onPress={() => void handleDeleteBodyWeight(log.id)} style={styles.deleteButton}>
-                  {deletingBodyWeightId === log.id ? <ActivityIndicator color={palette.danger} /> : <Trash2 size={16} color={palette.danger} />}
-                </Pressable>
-              </View>
-            </View>
-          ))
-        ) : !bodyWeightCollapsed ? (
-          <Body>No body weight logs yet.</Body>
-        ) : null}
       </Panel>
 
       <Panel>

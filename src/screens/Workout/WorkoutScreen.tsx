@@ -10,18 +10,18 @@ import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { SetComposerTarget, VisualSetComposer } from "@/components/VisualSetComposer";
 import { ExerciseLoadType, getExerciseLoadType, isBodyweightLoadType, isMachineLoadType, supportsBarbellCalculator } from "@/constants/exercises";
 import { preferredMachineProfile, profileAppliesToExercise } from "@/constants/machineProfiles";
-import { getClosestBodyweightForDate } from "@/services/analytics/bulkAnalyticsService";
+import { getClosestBodyweightForDate } from "@/services/body/bodyWeightService";
 import { calculateSessionPerformance, findStrengthReference } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { LoggedSetDraft, MachineProfile, MuscleGroup, WorkoutSet } from "@/types";
 import { todayIso } from "@/utils/date";
 import { muscles, palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
-import { bodyWeightDisplayUnit, formatBodyWeight, formatWeightInput, weightFromStorageUnit, weightToStorageUnit } from "@/utils/units";
+import { formatBodyWeight, formatWeightInput, weightFromStorageUnit, weightToStorageUnit } from "@/utils/units";
+import { createEmptyPlateCounts } from "@/utils/workout";
 import { latestSetsForExercise } from "@/utils/workoutHistory";
 
 const emptySet = (): LoggedSetDraft => ({ reps: "", weight: "" });
-const emptyPlateCounts = () => ({ 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 });
 type SaveState = "idle" | "saving" | "saved";
 
 export function WorkoutScreen() {
@@ -30,36 +30,32 @@ export function WorkoutScreen() {
   const sets = useFitnessStore((state) => state.sets);
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
   const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
+  const bodyWeightUnit = useFitnessStore((state) => state.bodyUnitPreferences.weight);
   const machineProfiles = useFitnessStore((state) => state.machineProfiles);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
   const saveMachineProfile = useFitnessStore((state) => state.saveMachineProfile);
   const deleteMachineProfile = useFitnessStore((state) => state.deleteMachineProfile);
-  const saveBodyWeightLog = useFitnessStore((state) => state.saveBodyWeightLog);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const exercises = useMemo(() => allExercises.filter((exercise) => exercise.is_strength_exercise), [allExercises]);
-  const [selectedKind, setSelectedKind] = useState<"exercise" | "weight">("exercise");
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleGroup>(exercises[0]?.primary_muscle ?? "Chest");
   const [exerciseId, setExerciseId] = useState<number | null>(exercises[0]?.id ?? null);
   const [seededHistoryKey, setSeededHistoryKey] = useState<string | null>(null);
   const [draftSets, setDraftSets] = useState<LoggedSetDraft[]>([emptySet(), emptySet(), emptySet()]);
   const [barWeight, setBarWeight] = useState("45");
-  const [plateCounts, setPlateCounts] = useState<Record<string, number>>(emptyPlateCounts());
-  const [weightDraft, setWeightDraft] = useState("");
+  const [plateCounts, setPlateCounts] = useState<Record<string, number>>(createEmptyPlateCounts());
   const [workoutDate, setWorkoutDate] = useState(todayIso());
   const [notes, setNotes] = useState("");
   const [selectedMachineProfileId, setSelectedMachineProfileId] = useState<string | null>(null);
   const [workoutSaveState, setWorkoutSaveState] = useState<SaveState>("idle");
-  const [weightSaveState, setWeightSaveState] = useState<SaveState>("idle");
   const [workoutError, setWorkoutError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (selectedKind !== "exercise") return;
     const selectedExists = exercises.some((exercise) => exercise.id === exerciseId);
     if (selectedExists) return;
     const nextExercise = exercises[0] ?? null;
     setSelectedMuscle(nextExercise?.primary_muscle ?? "Chest");
     setExerciseId(nextExercise?.id ?? null);
-  }, [exerciseId, exercises, selectedKind]);
+  }, [exerciseId, exercises]);
 
   const exercisesByMuscle = useMemo(() => {
     return muscles.reduce((output, muscle) => {
@@ -68,7 +64,7 @@ export function WorkoutScreen() {
     }, {} as Record<MuscleGroup, typeof exercises>);
   }, [exercises]);
   const visibleExercises = exercisesByMuscle[selectedMuscle] ?? [];
-  const selectedExercise = selectedKind === "exercise" ? visibleExercises.find((exercise) => exercise.id === exerciseId) ?? visibleExercises[0] ?? null : null;
+  const selectedExercise = visibleExercises.find((exercise) => exercise.id === exerciseId) ?? visibleExercises[0] ?? null;
   const selectedLoadType = getExerciseLoadType(selectedExercise?.name ?? "");
   const showBarbellCalculator = supportsBarbellCalculator(selectedExercise?.name ?? "");
   const selectedBodyWeight = isBodyweightLoadType(selectedLoadType) ? getClosestBodyweightForDate(workoutDate, bodyWeightLogs) : null;
@@ -108,12 +104,12 @@ export function WorkoutScreen() {
     const historyKey = selectedExercise
       ? `${selectedExercise.id}:${isMachineLoadType(selectedLoadType) ? selectedMachineProfileId ?? "no-machine" : "all"}`
       : null;
-    if (selectedKind !== "exercise" || !selectedExercise || seededHistoryKey === historyKey) return;
+    if (!selectedExercise || seededHistoryKey === historyKey) return;
     setDraftSets(buildSmartWorkoutSets(previousSets, unitSystem));
     setBarWeight("45");
-    setPlateCounts(emptyPlateCounts());
+    setPlateCounts(createEmptyPlateCounts());
     setSeededHistoryKey(historyKey);
-  }, [previousSets, seededHistoryKey, selectedExercise, selectedKind, selectedLoadType, selectedMachineProfileId, unitSystem]);
+  }, [previousSets, seededHistoryKey, selectedExercise, selectedLoadType, selectedMachineProfileId, unitSystem]);
 
   useEffect(() => {
     if (!selectedExercise || !isMachineLoadType(selectedLoadType)) {
@@ -157,19 +153,6 @@ export function WorkoutScreen() {
     }
   }
 
-  async function handleSaveWeight() {
-    if (weightSaveState === "saving") return;
-    setWeightSaveState("saving");
-    try {
-      await saveBodyWeightLog({ loggedDate: workoutDate, weight: weightDraft, unitSystem: bodyWeightDisplayUnit });
-      setWeightDraft("");
-      showSaved(setWeightSaveState);
-    } catch (error) {
-      setWeightSaveState("idle");
-      throw error;
-    }
-  }
-
   function duplicatePrevious() {
     if (!previousSets.length) return;
     setDraftSets(previousSets.map((set) => ({ reps: String(set.reps), weight: formatWeightInput(set.weight, unitSystem), isWarmup: Boolean(set.is_warmup) })));
@@ -179,29 +162,23 @@ export function WorkoutScreen() {
     <Screen>
       <View>
         <Label>Fast workout capture</Label>
-        <Title>{selectedKind === "weight" ? "Log weight" : "Log sets"}</Title>
+        <Title>Log sets</Title>
       </View>
 
       <Panel>
-        <SectionTitle>Log type</SectionTitle>
-        <View style={styles.exerciseGrid}>
-          <Pressable hitSlop={touchHitSlop} onPress={() => setSelectedKind("weight")} style={pressableFeedback([styles.exerciseButton, selectedKind === "weight" && styles.exerciseButtonActive])}>
-            <Body style={[styles.exerciseText, selectedKind === "weight" && styles.exerciseTextActive]}>Weight</Body>
-          </Pressable>
-        </View>
+        <SectionTitle>Exercise</SectionTitle>
         <View style={styles.muscleTabs}>
           {muscles.map((muscle) => (
             <Pressable
               key={muscle}
               hitSlop={touchHitSlop}
               onPress={() => {
-                setSelectedKind("exercise");
                 setSelectedMuscle(muscle);
                 setExerciseId(exercisesByMuscle[muscle]?.[0]?.id ?? null);
               }}
-              style={pressableFeedback([styles.muscleTab, selectedKind === "exercise" && selectedMuscle === muscle && styles.muscleTabActive])}
+              style={pressableFeedback([styles.muscleTab, selectedMuscle === muscle && styles.muscleTabActive])}
             >
-              <Body style={[styles.muscleTabText, selectedKind === "exercise" && selectedMuscle === muscle && styles.muscleTabTextActive]}>{muscle}</Body>
+              <Body style={[styles.muscleTabText, selectedMuscle === muscle && styles.muscleTabTextActive]}>{muscle}</Body>
             </Pressable>
           ))}
         </View>
@@ -211,13 +188,12 @@ export function WorkoutScreen() {
               key={exercise.id}
               hitSlop={touchHitSlop}
               onPress={() => {
-                setSelectedKind("exercise");
                 setSelectedMuscle(exercise.primary_muscle);
                 setExerciseId(exercise.id);
               }}
-              style={pressableFeedback([styles.exerciseButton, selectedKind === "exercise" && exercise.id === selectedExercise?.id && styles.exerciseButtonActive])}
+              style={pressableFeedback([styles.exerciseButton, exercise.id === selectedExercise?.id && styles.exerciseButtonActive])}
             >
-              <Body style={[styles.exerciseText, selectedKind === "exercise" && exercise.id === selectedExercise?.id && styles.exerciseTextActive]}>{exercise.name}</Body>
+              <Body style={[styles.exerciseText, exercise.id === selectedExercise?.id && styles.exerciseTextActive]}>{exercise.name}</Body>
             </Pressable>
           ))}
           {!visibleExercises.length ? <Body>No selected exercises in {selectedMuscle} yet.</Body> : null}
@@ -229,28 +205,7 @@ export function WorkoutScreen() {
         <DatePickerField value={workoutDate} onChange={setWorkoutDate} />
       </Panel>
 
-      {selectedKind === "weight" ? (
-        <Panel>
-          <SectionTitle>Body weight</SectionTitle>
-          <View style={styles.bodyWeightRow}>
-            <TextInput
-              style={styles.input}
-              value={weightDraft}
-              onChangeText={setWeightDraft}
-              keyboardType="decimal-pad"
-              inputMode="decimal"
-              placeholder={bodyWeightDisplayUnit}
-            />
-            <View style={styles.unitBadge}>
-              <Body style={styles.unitBadgeText}>{bodyWeightDisplayUnit}</Body>
-            </View>
-          </View>
-          <Pressable disabled={weightSaveState === "saving"} hitSlop={touchHitSlop} style={pressableFeedback(styles.primaryButton)} onPress={handleSaveWeight}>
-            {weightSaveState === "saving" ? <ActivityIndicator color={palette.surface} /> : weightSaveState === "saved" ? <Check size={19} color={palette.surface} /> : <Save size={19} color={palette.surface} />}
-            <Body style={styles.primaryButtonText}>{weightSaveState === "saving" ? "Saving" : weightSaveState === "saved" ? "Added" : "Save weight"}</Body>
-          </Pressable>
-        </Panel>
-      ) : !exercises.length ? (
+      {!exercises.length ? (
         <Panel>
           <SectionTitle>No exercises selected</SectionTitle>
           <Body>Select exercises on the Exercises page to make them available for logging.</Body>
@@ -267,7 +222,7 @@ export function WorkoutScreen() {
           </Pressable>
         </View>
 
-        {isBodyweightLoadType(selectedLoadType) ? <Body style={styles.loadHint}>{loadInstruction(selectedLoadType, selectedBodyWeight?.weight)}</Body> : null}
+        {isBodyweightLoadType(selectedLoadType) ? <Body style={styles.loadHint}>{loadInstruction(selectedLoadType, selectedBodyWeight?.weight, bodyWeightUnit)}</Body> : null}
 
         {isMachineLoadType(selectedLoadType) && selectedExercise ? (
           <MachineProfilePanel
@@ -320,8 +275,8 @@ function showSaved(setState: (state: SaveState) => void) {
   setTimeout(() => setState("idle"), 900);
 }
 
-function loadInstruction(loadType: ExerciseLoadType, bodyWeight?: number) {
-  const basis = bodyWeight ? `Body weight ${formatBodyWeight(bodyWeight)} is included.` : "Log body weight to calculate Performance Points.";
+function loadInstruction(loadType: ExerciseLoadType, bodyWeight: number | undefined, bodyWeightUnit: "lb" | "kg") {
+  const basis = bodyWeight ? `Body weight ${formatBodyWeight(bodyWeight, bodyWeightUnit)} is included.` : "Log body weight to calculate Performance Points.";
   if (loadType === "bodyweight_plus_load") return `Enter added weight only; use 0 for bodyweight reps. ${basis}`;
   return `Enter assistance weight; use 0 for unassisted reps. ${basis}`;
 }
@@ -426,27 +381,6 @@ const styles = StyleSheet.create({
     color: palette.ink,
     fontSize: 16,
     fontWeight: "700"
-  },
-  bodyWeightRow: {
-    flexDirection: "row",
-    alignItems: "stretch",
-    gap: spacing.sm
-  },
-  unitBadge: {
-    minWidth: 48,
-    borderWidth: 1,
-    borderColor: palette.border,
-    borderRadius: 8,
-    minHeight: 44,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.md,
-    backgroundColor: palette.ink,
-    ...fastTouchStyle
-  },
-  unitBadgeText: {
-    color: palette.surface,
-    fontWeight: "900"
   },
   setInput: {
     flexBasis: 0,

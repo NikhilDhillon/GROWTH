@@ -4,12 +4,13 @@ import { getExerciseLoadType, isBodyweightLoadType, isMachineLoadType } from "@/
 import { createDefaultGuidedWorkoutPreferences } from "@/constants/guidedWorkout";
 import { createMachineProfile, MachineProfileDraft, touchMachineProfile, upsertMachineProfile } from "@/constants/machineProfiles";
 import { createDefaultTrainingSplit } from "@/constants/trainingSplit";
-import { buildExerciseScorePoints, buildMuscleScorePoints, summarizeMuscles } from "@/services/strength/strengthService";
-import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, removeSplitSync as removeStoredSplitSync, requestPasswordReset, requestSplitSync as requestStoredSplitSync, respondSplitSync as respondStoredSplitSync, revokeFriendInvite as revokeStoredFriendInvite, saveActiveWorkout as saveStoredActiveWorkout, saveBodyWeightLog as saveStoredBodyWeightLog, saveCompletedGuidedWorkouts as saveStoredCompletedGuidedWorkouts, saveMachineProfiles as saveStoredMachineProfiles, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateGuidedWorkoutPreferences as updateStoredGuidedWorkoutPreferences, updateTrainingSplit as updateStoredTrainingSplit, updateUnitSystem, updateWorkoutSession, updateWorkoutSessionMachineProfile } from "@/database/database";
+import { buildExerciseScorePoints, buildMuscleScorePoints } from "@/services/strength/strengthService";
+import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyMeasurementLog as deleteStoredBodyMeasurementLog, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, removeSplitSync as removeStoredSplitSync, requestPasswordReset, requestSplitSync as requestStoredSplitSync, respondSplitSync as respondStoredSplitSync, revokeFriendInvite as revokeStoredFriendInvite, saveActiveWorkout as saveStoredActiveWorkout, saveBodyMeasurementLog as saveStoredBodyMeasurementLog, saveBodyWeightLog as saveStoredBodyWeightLog, saveCompletedGuidedWorkouts as saveStoredCompletedGuidedWorkouts, saveMachineProfiles as saveStoredMachineProfiles, setExerciseEnabled as setStoredExerciseEnabled, syncScoreSnapshots, updateBodyMeasurementLog as updateStoredBodyMeasurementLog, updateBodyUnitPreferences as updateStoredBodyUnitPreferences, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateGuidedWorkoutPreferences as updateStoredGuidedWorkoutPreferences, updateTrainingSplit as updateStoredTrainingSplit, updateUnitSystem, updateWorkoutSession, updateWorkoutSessionMachineProfile } from "@/database/database";
 import { ParsedImportData } from "@/services/import/importService";
-import { ActiveWorkout, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, LoggedSetDraft, MachineProfile, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyMeasurementLog, BodyMeasurementValues, BodyUnitPreferences, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, LoggedSetDraft, MachineProfile, MuscleScorePoint, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { todayIso } from "@/utils/date";
-import { bodyWeightDisplayUnit, bodyWeightToStorageUnit, weightToStorageUnit } from "@/utils/units";
+import { bodyMeasurementValuesToStorage, bodyWeightLogsFromMeasurements, bodyWeightToStorage, defaultBodyUnitPreferences, hasBodyMeasurementData, normalizeBodyMeasurementValues } from "@/utils/bodyMeasurements";
+import { weightToStorageUnit } from "@/utils/units";
 
 type FitnessState = {
   loading: boolean;
@@ -20,7 +21,9 @@ type FitnessState = {
   exercises: Exercise[];
   sessions: WorkoutSession[];
   sets: WorkoutSet[];
+  bodyMeasurementLogs: BodyMeasurementLog[];
   bodyWeightLogs: BodyWeightLog[];
+  bodyUnitPreferences: BodyUnitPreferences;
   configs: MuscleStrengthConfig[];
   trainingSplit: TrainingSplit;
   activeWorkout: ActiveWorkout | null;
@@ -29,7 +32,6 @@ type FitnessState = {
   guidedWorkoutPreferences: GuidedWorkoutPreferences;
   exercisePoints: ExerciseScorePoint[];
   musclePoints: MuscleScorePoint[];
-  muscleSummaries: MuscleSummary[];
   socialData: SocialData;
   socialLoading: boolean;
   socialError: string | null;
@@ -57,8 +59,12 @@ type FitnessState = {
   saveBodyWeightLog: (input: { loggedDate: string; weight: string; unitSystem?: UnitSystem }) => Promise<void>;
   updateBodyWeightLog: (input: { id: number; loggedDate: string; weight: string; unitSystem?: UnitSystem }) => Promise<void>;
   deleteBodyWeightLog: (id: number) => Promise<void>;
+  saveBodyMeasurementLog: (input: { loggedDate: string; weight: string; measurements: BodyMeasurementValues; notes?: string }) => Promise<void>;
+  updateBodyMeasurementLog: (input: { id: number; loggedDate: string; weight: string; measurements: BodyMeasurementValues; notes?: string }) => Promise<void>;
+  deleteBodyMeasurementLog: (id: number) => Promise<void>;
   importTrainingData: (input: ParsedImportData) => Promise<void>;
   setUnitSystem: (unitSystem: UnitSystem) => Promise<void>;
+  setBodyUnitPreferences: (preferences: BodyUnitPreferences) => Promise<void>;
   saveTrainingSplit: (days: TrainingSplitDay[]) => Promise<void>;
   startActiveWorkout: (activeWorkout: ActiveWorkout) => Promise<void>;
   updateActiveWorkout: (activeWorkout: ActiveWorkout) => Promise<void>;
@@ -72,8 +78,7 @@ type FitnessState = {
 function derive(exercises: Exercise[], sessions: WorkoutSession[], sets: WorkoutSet[], bodyWeightLogs: BodyWeightLog[], configs: MuscleStrengthConfig[]) {
   const exercisePoints = buildExerciseScorePoints(exercises, sessions, sets, bodyWeightLogs);
   const musclePoints = buildMuscleScorePoints(exercises, configs, exercisePoints);
-  const muscleSummaries = summarizeMuscles(exercises, configs, musclePoints);
-  return { exercisePoints, musclePoints, muscleSummaries };
+  return { exercisePoints, musclePoints };
 }
 
 export const useFitnessStore = create<FitnessState>((set, get) => ({
@@ -85,7 +90,9 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   exercises: [],
   sessions: [],
   sets: [],
+  bodyMeasurementLogs: [],
   bodyWeightLogs: [],
+  bodyUnitPreferences: defaultBodyUnitPreferences,
   configs: [],
   trainingSplit: createDefaultTrainingSplit(),
   activeWorkout: null,
@@ -94,7 +101,6 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(),
   exercisePoints: [],
   musclePoints: [],
-  muscleSummaries: [],
   socialData: { friends: [], invites: [], leaderboard: [], notice: null },
   socialLoading: false,
   socialError: null,
@@ -102,8 +108,9 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   hydrate: async () => {
     try {
       const data = await loadAllData();
-      const derived = derive(data.exercises, data.sessions, data.sets, data.bodyWeightLogs, data.configs);
-      set({ ...data, ...derived, loading: false, authError: null });
+      const bodyWeightLogs = bodyWeightLogsFromMeasurements(data.bodyMeasurementLogs, data.bodyUnitPreferences.weight);
+      const derived = derive(data.exercises, data.sessions, data.sets, bodyWeightLogs, data.configs);
+      set({ ...data, bodyWeightLogs, ...derived, loading: false, authError: null });
       try {
         await syncScoreSnapshots(derived.exercisePoints);
       } catch (error) {
@@ -116,7 +123,9 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
         exercises: [],
         sessions: [],
         sets: [],
+        bodyMeasurementLogs: [],
         bodyWeightLogs: [],
+        bodyUnitPreferences: defaultBodyUnitPreferences,
         configs: [],
         trainingSplit: createDefaultTrainingSplit(),
         activeWorkout: null,
@@ -125,7 +134,6 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
         guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(),
         exercisePoints: [],
         musclePoints: [],
-        muscleSummaries: [],
         socialData: { friends: [], invites: [], leaderboard: [], notice: null },
         loading: false,
         authError: error instanceof Error ? error.message : "Could not load app data."
@@ -300,23 +308,103 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   saveBodyWeightLog: async (input) => {
     const weight = parseWeightInput(input.weight);
     const loggedDate = /^\d{4}-\d{2}-\d{2}$/.test(input.loggedDate) ? input.loggedDate : todayIso();
-    const unitSystem = input.unitSystem ?? bodyWeightDisplayUnit;
+    const unitSystem = input.unitSystem ?? get().bodyUnitPreferences.weight;
 
-    if (!Number.isFinite(weight) || weight <= 0) return;
-    await saveStoredBodyWeightLog({ loggedDate, weight: unitSystem === bodyWeightDisplayUnit ? bodyWeightToStorageUnit(weight) : weightToStorageUnit(weight, unitSystem), unit: unitSystem });
+    if (!Number.isFinite(weight) || weight <= 0) {
+      throw new Error("Bodyweight must be a number greater than zero.");
+    }
+    await saveStoredBodyWeightLog({ loggedDate, weight: bodyWeightToStorage(weight, unitSystem), unit: unitSystem });
     await get().hydrate();
   },
   updateBodyWeightLog: async (input) => {
     const weight = parseWeightInput(input.weight);
     const loggedDate = /^\d{4}-\d{2}-\d{2}$/.test(input.loggedDate) ? input.loggedDate : todayIso();
-    const unitSystem = input.unitSystem ?? bodyWeightDisplayUnit;
+    const unitSystem = input.unitSystem ?? get().bodyUnitPreferences.weight;
 
-    if (!Number.isFinite(weight) || weight <= 0) return;
-    await updateStoredBodyWeightLog({ id: input.id, loggedDate, weight: unitSystem === bodyWeightDisplayUnit ? bodyWeightToStorageUnit(weight) : weightToStorageUnit(weight, unitSystem), unit: unitSystem });
+    if (!Number.isFinite(weight) || weight <= 0) {
+      throw new Error("Bodyweight must be a number greater than zero.");
+    }
+    const storedWeight = bodyWeightToStorage(weight, unitSystem);
+    const conflictingLog = get().bodyMeasurementLogs.find(
+      (log) => log.id !== input.id && log.logged_date === loggedDate
+    );
+    if (conflictingLog) {
+      await saveStoredBodyWeightLog({ loggedDate, weight: storedWeight, unit: unitSystem });
+      await deleteStoredBodyWeightLog(input.id);
+    } else {
+      await updateStoredBodyWeightLog({ id: input.id, loggedDate, weight: storedWeight, unit: unitSystem });
+    }
     await get().hydrate();
   },
   deleteBodyWeightLog: async (id) => {
     await deleteStoredBodyWeightLog(id);
+    await get().hydrate();
+  },
+  saveBodyMeasurementLog: async (input) => {
+    const bodyUnitPreferences = get().bodyUnitPreferences;
+    const parsedWeight = input.weight.trim() ? parseWeightInput(input.weight) : null;
+    if (input.weight.trim() && (!Number.isFinite(parsedWeight) || Number(parsedWeight) <= 0)) {
+      throw new Error("Body weight must be a number greater than zero.");
+    }
+    const measurements = normalizeBodyMeasurementValues(input.measurements);
+    const storedMeasurements = bodyMeasurementValuesToStorage(measurements, bodyUnitPreferences.circumference);
+    const storedWeight = parsedWeight === null ? null : bodyWeightToStorage(parsedWeight, bodyUnitPreferences.weight);
+    const loggedDate = /^\d{4}-\d{2}-\d{2}$/.test(input.loggedDate) ? input.loggedDate : todayIso();
+    const existing = get().bodyMeasurementLogs.find((log) => log.logged_date === loggedDate);
+    const mergedWeight = storedWeight ?? existing?.weight ?? null;
+    const mergedMeasurements = { ...(existing?.measurements ?? {}), ...storedMeasurements };
+    if (!hasBodyMeasurementData(mergedWeight, mergedMeasurements)) {
+      throw new Error("Enter at least one body measurement.");
+    }
+    if (existing) {
+      await updateStoredBodyMeasurementLog({
+        id: existing.id,
+        loggedDate,
+        weight: mergedWeight,
+        measurements: mergedMeasurements,
+        notes: input.notes?.trim() ? input.notes : existing.notes
+      });
+    } else {
+      await saveStoredBodyMeasurementLog({ loggedDate, weight: mergedWeight, measurements: mergedMeasurements, notes: input.notes });
+    }
+    await get().hydrate();
+  },
+  updateBodyMeasurementLog: async (input) => {
+    const bodyUnitPreferences = get().bodyUnitPreferences;
+    const existing = get().bodyMeasurementLogs.find((log) => log.id === input.id);
+    const parsedWeight = input.weight.trim() ? parseWeightInput(input.weight) : null;
+    if (input.weight.trim() && (!Number.isFinite(parsedWeight) || Number(parsedWeight) <= 0)) {
+      throw new Error("Body weight must be a number greater than zero.");
+    }
+    const measurements = normalizeBodyMeasurementValues(input.measurements);
+    const storedMeasurements = bodyMeasurementValuesToStorage(measurements, bodyUnitPreferences.circumference);
+    const storedWeight = parsedWeight === null ? existing?.weight ?? null : bodyWeightToStorage(parsedWeight, bodyUnitPreferences.weight);
+    const loggedDate = /^\d{4}-\d{2}-\d{2}$/.test(input.loggedDate) ? input.loggedDate : todayIso();
+    if (!hasBodyMeasurementData(storedWeight, storedMeasurements)) {
+      throw new Error("Enter at least one body measurement.");
+    }
+    const conflictingLog = get().bodyMeasurementLogs.find(
+      (log) => log.id !== input.id && log.logged_date === loggedDate
+    );
+    if (conflictingLog) {
+      if (Object.keys(conflictingLog.measurements).length) {
+        throw new Error("Body measurements already exist for this date.");
+      }
+      await updateStoredBodyMeasurementLog({
+        id: conflictingLog.id,
+        loggedDate,
+        weight: conflictingLog.weight,
+        measurements: storedMeasurements,
+        notes: input.notes
+      });
+      await deleteStoredBodyMeasurementLog(input.id);
+    } else {
+      await updateStoredBodyMeasurementLog({ id: input.id, loggedDate, weight: storedWeight, measurements: storedMeasurements, notes: input.notes });
+    }
+    await get().hydrate();
+  },
+  deleteBodyMeasurementLog: async (id) => {
+    await deleteStoredBodyMeasurementLog(id);
     await get().hydrate();
   },
   importTrainingData: async (input) => {
@@ -326,6 +414,10 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   setUnitSystem: async (unitSystem) => {
     await updateUnitSystem(unitSystem);
     set({ unitSystem });
+  },
+  setBodyUnitPreferences: async (preferences) => {
+    const bodyUnitPreferences = await updateStoredBodyUnitPreferences(preferences);
+    set({ bodyUnitPreferences });
   },
   saveTrainingSplit: async (days) => {
     const trainingSplit = await updateStoredTrainingSplit(days);

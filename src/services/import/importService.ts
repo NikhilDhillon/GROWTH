@@ -1,4 +1,5 @@
-import { Exercise, UnitSystem } from "@/types";
+import { BodyLimbMeasurement, BodyMeasurementValues, Exercise, UnitSystem } from "@/types";
+import { bodyMeasurementDefinitions, circumferenceToStorageUnit } from "@/utils/bodyMeasurements";
 import { bodyWeightDisplayUnit, weightToStorageUnit } from "@/utils/units";
 
 export type ImportBodyWeightLog = {
@@ -19,8 +20,16 @@ export type ImportWorkoutLog = {
   }>;
 };
 
+export type ImportBodyMeasurementLog = {
+  loggedDate: string;
+  weight: number | null;
+  measurements: BodyMeasurementValues;
+  notes: string | null;
+};
+
 export type ParsedImportData = {
   bodyWeightLogs: ImportBodyWeightLog[];
+  bodyMeasurementLogs: ImportBodyMeasurementLog[];
   workouts: ImportWorkoutLog[];
   exerciseIdsToEnable: number[];
   warnings: string[];
@@ -28,6 +37,7 @@ export type ParsedImportData = {
 
 export type ImportPreview = ParsedImportData & {
   bodyWeightCount: number;
+  bodyMeasurementCount: number;
   workoutCount: number;
   setCount: number;
 };
@@ -37,6 +47,8 @@ type ImportFile = {
   unit?: unknown;
   bodyweightUnit?: unknown;
   bodyweight?: unknown;
+  bodyMeasurementUnit?: unknown;
+  bodyMeasurements?: unknown;
   workouts?: unknown;
 };
 
@@ -55,16 +67,18 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
   }
 
   const file = raw as ImportFile;
-  if (file.schemaVersion !== 1) {
-    throw new Error("Import schemaVersion must be 1.");
+  if (file.schemaVersion !== 1 && file.schemaVersion !== 2) {
+    throw new Error("Import schemaVersion must be 1 or 2.");
   }
 
   const workoutUnit = parseUnit(file.unit, "unit", true) ?? "lb";
   const bodyweightUnit = parseUnit(file.bodyweightUnit, "bodyweightUnit", false) ?? bodyWeightDisplayUnit;
+  const bodyMeasurementUnit = parseCircumferenceUnit(file.bodyMeasurementUnit) ?? "in";
   const exerciseByName = new Map(exercises.map((exercise) => [normalizeExerciseName(exercise.name), exercise]));
   const errors: string[] = [];
   const warnings: string[] = [];
   const bodyWeightByDate = new Map<string, ImportBodyWeightLog>();
+  const bodyMeasurementsByDate = new Map<string, ImportBodyMeasurementLog>();
   const workouts: ImportWorkoutLog[] = [];
   const exerciseIdsToEnable = new Set<number>();
 
@@ -85,6 +99,33 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
           loggedDate: date,
           weight: weightToStorageUnit(weight, bodyweightUnit),
           unit: bodyweightUnit
+        });
+      });
+    }
+  }
+
+  if (file.bodyMeasurements !== undefined) {
+    if (!Array.isArray(file.bodyMeasurements)) {
+      errors.push("bodyMeasurements must be an array.");
+    } else {
+      file.bodyMeasurements.forEach((entry, index) => {
+        const prefix = `bodyMeasurements[${index}]`;
+        if (!isObject(entry)) {
+          errors.push(`${prefix} must be an object.`);
+          return;
+        }
+        const date = readDate(entry.date, `${prefix}.date`, errors);
+        const notes = typeof entry.notes === "string" ? entry.notes.trim() : null;
+        const weight = entry.weight === undefined || entry.weight === null
+          ? null
+          : readPositiveNumber(entry.weight, `${prefix}.weight`, errors);
+        const measurements = parseBodyMeasurements(entry.measurements, bodyMeasurementUnit, prefix, errors);
+        if (!date || (weight === null && !Object.keys(measurements).length)) return;
+        bodyMeasurementsByDate.set(date, {
+          loggedDate: date,
+          weight: weight === null ? null : weightToStorageUnit(weight, bodyweightUnit),
+          measurements,
+          notes
         });
       });
     }
@@ -172,8 +213,8 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
     }
   }
 
-  if (!bodyWeightByDate.size && !workouts.length && !errors.length) {
-    errors.push("Import file must include at least one bodyweight entry or workout exercise log.");
+  if (!bodyWeightByDate.size && !bodyMeasurementsByDate.size && !workouts.length && !errors.length) {
+    errors.push("Import file must include at least one body check-in or workout exercise log.");
   }
 
   if (errors.length) {
@@ -181,17 +222,60 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
   }
 
   const bodyWeightLogs = [...bodyWeightByDate.values()].sort((a, b) => a.loggedDate.localeCompare(b.loggedDate));
+  const bodyMeasurementLogs = [...bodyMeasurementsByDate.values()].sort((a, b) => a.loggedDate.localeCompare(b.loggedDate));
   const setCount = workouts.reduce((total, workout) => total + workout.sets.length, 0);
 
   return {
     bodyWeightLogs,
+    bodyMeasurementLogs,
     workouts,
     exerciseIdsToEnable: [...exerciseIdsToEnable],
     warnings,
     bodyWeightCount: bodyWeightLogs.length,
+    bodyMeasurementCount: bodyMeasurementLogs.length,
     workoutCount: workouts.length,
     setCount
   };
+}
+
+function parseBodyMeasurements(value: unknown, unit: "in" | "cm", prefix: string, errors: string[]) {
+  const output: BodyMeasurementValues = {};
+  if (value === undefined || value === null) return output;
+  if (!isObject(value)) {
+    errors.push(`${prefix}.measurements must be an object.`);
+    return output;
+  }
+
+  for (const definition of bodyMeasurementDefinitions) {
+    const raw = value[definition.key];
+    if (raw === undefined || raw === null || raw === "") continue;
+    if (!definition.sided) {
+      const number = readPositiveNumber(raw, `${prefix}.measurements.${definition.key}`, errors);
+      if (number !== null) Object.assign(output, { [definition.key]: circumferenceToStorageUnit(number, unit) });
+      continue;
+    }
+
+    if (typeof raw === "number") {
+      const number = readPositiveNumber(raw, `${prefix}.measurements.${definition.key}`, errors);
+      if (number !== null) Object.assign(output, { [definition.key]: { mode: "single", value: circumferenceToStorageUnit(number, unit) } });
+      continue;
+    }
+    if (!isObject(raw)) {
+      errors.push(`${prefix}.measurements.${definition.key} must be a number or an object with left/right values.`);
+      continue;
+    }
+    const left = raw.left === undefined ? null : readPositiveNumber(raw.left, `${prefix}.measurements.${definition.key}.left`, errors);
+    const right = raw.right === undefined ? null : readPositiveNumber(raw.right, `${prefix}.measurements.${definition.key}.right`, errors);
+    if (left === null && right === null) continue;
+    const limb: BodyLimbMeasurement = {
+      mode: "sides",
+      ...(left !== null ? { left: circumferenceToStorageUnit(left, unit) } : {}),
+      ...(right !== null ? { right: circumferenceToStorageUnit(right, unit) } : {})
+    };
+    Object.assign(output, { [definition.key]: limb });
+  }
+
+  return output;
 }
 
 export function buildWorkoutFingerprint(input: {
@@ -221,6 +305,12 @@ function parseUnit(value: unknown, field: string, required: boolean): UnitSystem
   }
   if (value === "lb" || value === "kg") return value;
   throw new Error(`${field} must be "lb" or "kg".`);
+}
+
+function parseCircumferenceUnit(value: unknown) {
+  if (value === undefined || value === null || value === "") return null;
+  if (value === "in" || value === "cm") return value;
+  throw new Error('bodyMeasurementUnit must be "in" or "cm".');
 }
 
 function readDate(value: unknown, field: string, errors: string[]) {

@@ -39,6 +39,19 @@ CREATE TABLE IF NOT EXISTS body_weight_logs (
 
 CREATE INDEX IF NOT EXISTS body_weight_logs_logged_at_idx ON body_weight_logs(logged_at DESC);
 
+CREATE TABLE IF NOT EXISTS body_measurement_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  weight REAL,
+  measurements TEXT NOT NULL DEFAULT '{}',
+  notes TEXT,
+  logged_at TEXT NOT NULL,
+  logged_date TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS body_measurement_logs_logged_at_idx ON body_measurement_logs(logged_at DESC);
+
 CREATE TABLE IF NOT EXISTS muscle_strength_config (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   muscle_group TEXT NOT NULL,

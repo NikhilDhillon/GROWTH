@@ -1,7 +1,7 @@
 export type MuscleGroup = "Chest" | "Back" | "Shoulders" | "Traps" | "Biceps" | "Triceps" | "Legs" | "Core" | "Forearms";
 
-export type TrendStatus = "Increasing" | "Stable" | "Decreasing";
 export type UnitSystem = "lb" | "kg";
+export type CircumferenceUnit = "in" | "cm";
 export type GuidedExerciseCategory = "hypertrophy" | "strength" | "top_set" | "unguided";
 export type MachineStackUnit = UnitSystem | "plate";
 export type MachineProfileType =
@@ -84,6 +84,38 @@ export type BodyWeightLog = {
   logged_at: string;
   logged_date?: string;
   created_at: string;
+};
+
+export type BodyUnitPreferences = {
+  weight: UnitSystem;
+  circumference: CircumferenceUnit;
+};
+
+export type BodyLimbMeasurement =
+  | { mode: "single"; value: number }
+  | { mode: "sides"; left?: number; right?: number };
+
+export type BodyMeasurementValues = {
+  arm_unflexed?: BodyLimbMeasurement;
+  arm_flexed?: BodyLimbMeasurement;
+  calves?: BodyLimbMeasurement;
+  chest?: number;
+  forearm?: BodyLimbMeasurement;
+  abdomen?: number;
+  thinnest_waist?: number;
+  thigh?: BodyLimbMeasurement;
+  waist?: number;
+};
+
+export type BodyMeasurementLog = {
+  id: number;
+  weight: number | null;
+  measurements: BodyMeasurementValues;
+  notes?: string | null;
+  logged_at: string;
+  logged_date: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type User = {
@@ -236,14 +268,6 @@ export type MuscleScorePoint = {
   muscle: MuscleGroup;
   date: string;
   score: number;
-};
-
-export type MuscleSummary = {
-  muscle: MuscleGroup;
-  score: number;
-  percentChange: number;
-  trend: TrendStatus;
-  contributors: string[];
 };
 
 export type BulkAnalyticsRange = "7d" | "14d" | "30d" | "60d" | "90d" | "all";

@@ -13,7 +13,7 @@ import { ExerciseLoadType, getExerciseLoadType, isBodyweightLoadType, isMachineL
 import { guidedCategoryLabels } from "@/constants/guidedWorkout";
 import { preferredMachineProfile, profileAppliesToExercise } from "@/constants/machineProfiles";
 import { cloneTrainingSplitDays } from "@/constants/trainingSplit";
-import { getClosestBodyweightForDate } from "@/services/analytics/bulkAnalyticsService";
+import { getClosestBodyweightForDate } from "@/services/body/bodyWeightService";
 import { buildGuidedRecommendation, buildGuidedSessionOutcome } from "@/services/guidedWorkout/guidedWorkoutService";
 import { calculateSessionPerformance, findStrengthReference } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
@@ -21,8 +21,7 @@ import { ActiveWorkout, CompletedGuidedWorkout, Exercise, GuidedWorkoutPreferenc
 import { muscles, palette, spacing } from "@/utils/theme";
 import { pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { formatBodyWeight, formatWeight, formatWeightInput, weightFromStorageUnit, weightToStorageUnit } from "@/utils/units";
-
-const emptyPlateCounts = () => ({ 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 });
+import { createEmptyPlateCounts, formatElapsedWorkoutTime } from "@/utils/workout";
 
 export function GuidedWorkoutScreen() {
   const activeWorkout = useFitnessStore((state) => state.activeWorkout);
@@ -51,6 +50,7 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
   const sessions = useFitnessStore((state) => state.sessions);
   const sets = useFitnessStore((state) => state.sets);
   const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
+  const bodyWeightUnit = useFitnessStore((state) => state.bodyUnitPreferences.weight);
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
   const machineProfiles = useFitnessStore((state) => state.machineProfiles);
   const trainingSplit = useFitnessStore((state) => state.trainingSplit);
@@ -453,7 +453,7 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
           </View>
 
           {isBodyweightLoadType(loadType) ? (
-            <Body>{loadInstruction(loadType, selectedBodyWeight?.weight)}</Body>
+            <Body>{loadInstruction(loadType, selectedBodyWeight?.weight, bodyWeightUnit)}</Body>
           ) : null}
 
           {isMachineLoadType(loadType) ? (
@@ -557,7 +557,7 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
         unitSystem
       }) : current.sets,
       barWeight: "45",
-      plateCounts: emptyPlateCounts()
+      plateCounts: createEmptyPlateCounts()
     });
   }
 
@@ -567,7 +567,7 @@ function TimerDisplay({ startedAt, now }: { startedAt: string; now: number }) {
   return (
     <View style={styles.timer}>
       <Timer size={18} color={palette.accent} />
-      <Body style={styles.timerText}>{formatElapsed(startedAt, now)}</Body>
+      <Body style={styles.timerText}>{formatElapsedWorkoutTime(startedAt, now)}</Body>
     </View>
   );
 }
@@ -625,8 +625,8 @@ function buildSmartGuidedSets(input: {
   return nextSets;
 }
 
-function loadInstruction(loadType: ExerciseLoadType, bodyWeight?: number) {
-  const basis = bodyWeight ? `Body weight ${formatBodyWeight(bodyWeight)} is included.` : "Log body weight first to calculate performance.";
+function loadInstruction(loadType: ExerciseLoadType, bodyWeight: number | undefined, bodyWeightUnit: "lb" | "kg") {
+  const basis = bodyWeight ? `Body weight ${formatBodyWeight(bodyWeight, bodyWeightUnit)} is included.` : "Log body weight first to calculate performance.";
   return loadType === "bodyweight_plus_load" ? `Enter added weight only. ${basis}` : `Enter assistance weight. ${basis}`;
 }
 
@@ -636,11 +636,6 @@ function loadChangeInstruction(loadType: ExerciseLoadType) {
 
 function hasEnteredSets(sets: LoggedSetDraft[]) {
   return sets.some((set) => set.weight.trim() || set.reps.trim());
-}
-
-function formatElapsed(startedAt: string, now: number) {
-  const seconds = Math.max(0, Math.floor((now - new Date(startedAt).getTime()) / 1000));
-  return `${String(Math.floor(seconds / 3600)).padStart(2, "0")}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 function errorMessage(error: unknown) {

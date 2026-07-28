@@ -1,4 +1,5 @@
 import { BodyWeightLog, BulkAnalyticsRange, BulkAnalyticsScope, ExerciseScorePoint, MuscleScorePoint } from "@/types";
+import { calculateAverageBodyweight, getClosestBodyweightForDate, normalizeBodyWeightLogs } from "@/services/body/bodyWeightService";
 import { todayIso } from "@/utils/date";
 
 const dayMs = 24 * 60 * 60 * 1000;
@@ -70,26 +71,6 @@ export function getBulkEfficiencyStatus(efficiency: number | null | undefined) {
   return "Not Productive";
 }
 
-export function getClosestBodyweightForDate(date: string, logs: BodyWeightLog[]) {
-  const normalized = normalizeLogs(logs);
-  if (!normalized.length) return null;
-  const onOrBefore = normalized.filter((log) => log.logged_at.slice(0, 10) <= date).at(-1);
-  if (onOrBefore) return onOrBefore;
-
-  const target = toTime(date);
-  return normalized.reduce((closest, log) => {
-    const currentDistance = Math.abs(toTime(log.logged_at.slice(0, 10)) - target);
-    const closestDistance = Math.abs(toTime(closest.logged_at.slice(0, 10)) - target);
-    return currentDistance < closestDistance ? log : closest;
-  }, normalized[0]);
-}
-
-export function calculateAverageBodyweight(startDate: string, endDate: string, logs: BodyWeightLog[]) {
-  const selected = normalizeLogs(logs).filter((log) => isWithin(log.logged_at.slice(0, 10), startDate, endDate));
-  if (!selected.length) return null;
-  return average(selected.map((log) => log.weight));
-}
-
 export function calculateAverageStrength(startDate: string, endDate: string, input: StrengthScopeInput) {
   const points = getStrengthPoints(input).filter((point) => isWithin(point.date, startDate, endDate));
   if (!points.length) return null;
@@ -152,7 +133,7 @@ export function generateBulkInsight(analytics: Pick<BulkAnalyticsResult, "previo
 
 export function calculateBulkTrend(input: BulkAnalyticsInput) {
   const strengthPoints = getStrengthPoints(input);
-  const allDates = [...new Set([...strengthPoints.map((point) => point.date), ...normalizeLogs(input.bodyWeightLogs).map((log) => log.logged_at.slice(0, 10))])].sort();
+  const allDates = [...new Set([...strengthPoints.map((point) => point.date), ...normalizeBodyWeightLogs(input.bodyWeightLogs).map((log) => log.logged_at.slice(0, 10))])].sort();
   const trendEndDate = input.endDate ?? todayIso();
   const selectedPeriod = getComparisonPeriods(input.range, trendEndDate, input);
   const dates = input.range === "all"
@@ -228,7 +209,7 @@ function getComparisonPeriods(range: BulkAnalyticsRange, endDate: string, input:
 
   const dates = [
     ...getStrengthPoints(input).map((point) => point.date),
-    ...normalizeLogs(input.bodyWeightLogs).map((log) => log.logged_at.slice(0, 10))
+    ...normalizeBodyWeightLogs(input.bodyWeightLogs).map((log) => log.logged_at.slice(0, 10))
   ].sort();
   const firstDate = dates[0] ?? endDate;
   const lastDate = dates.at(-1) ?? endDate;
@@ -239,12 +220,6 @@ function getComparisonPeriods(range: BulkAnalyticsRange, endDate: string, input:
   const currentStart = addDays(previousEnd, 1);
   const currentEnd = lastDate;
   return { currentStart, currentEnd, previousStart, previousEnd };
-}
-
-function normalizeLogs(logs: BodyWeightLog[]) {
-  return [...logs]
-    .map((log) => ({ ...log, logged_at: log.logged_at ?? `${log.logged_date ?? log.created_at.slice(0, 10)}T12:00:00.000Z` }))
-    .sort((a, b) => a.logged_at.localeCompare(b.logged_at) || a.created_at.localeCompare(b.created_at));
 }
 
 function isWithin(date: string, startDate: string, endDate: string) {

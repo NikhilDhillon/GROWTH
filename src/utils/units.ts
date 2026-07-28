@@ -22,18 +22,18 @@ export function formatWeightInput(weight: number, unitSystem: UnitSystem) {
   return unitSystem === "kg" ? converted.toFixed(1) : String(Math.round(converted));
 }
 
-export function bodyWeightToStorageUnit(weight: number) {
-  return weightToStorageUnit(weight, bodyWeightDisplayUnit);
+export function bodyWeightToStorageUnit(weight: number, unitSystem: UnitSystem = bodyWeightDisplayUnit) {
+  return weightToStorageUnit(weight, unitSystem);
 }
 
-export function bodyWeightFromStorageUnit(weight: number) {
-  return weightFromStorageUnit(weight, bodyWeightDisplayUnit);
+export function bodyWeightFromStorageUnit(weight: number, unitSystem: UnitSystem = bodyWeightDisplayUnit) {
+  return weightFromStorageUnit(weight, unitSystem);
 }
 
-export function formatBodyWeight(weight: number) {
-  return formatWeight(weight, bodyWeightDisplayUnit);
+export function formatBodyWeight(weight: number, unitSystem: UnitSystem = bodyWeightDisplayUnit) {
+  return formatWeight(weight, unitSystem);
 }
 
-export function formatBodyWeightInput(weight: number) {
-  return formatWeightInput(weight, bodyWeightDisplayUnit);
+export function formatBodyWeightInput(weight: number, unitSystem: UnitSystem = bodyWeightDisplayUnit) {
+  return formatWeightInput(weight, unitSystem);
 }

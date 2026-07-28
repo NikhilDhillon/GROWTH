@@ -5,8 +5,9 @@ import { catalogExerciseRows } from "@/constants/exercises";
 import { createDefaultGuidedWorkoutPreferences, normalizeGuidedWorkoutPreferences } from "@/constants/guidedWorkout";
 import { normalizeMachineProfiles } from "@/constants/machineProfiles";
 import { createDefaultTrainingSplit, normalizeTrainingSplit } from "@/constants/trainingSplit";
-import { buildWorkoutFingerprint, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
-import { ActiveWorkout, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, Friend, FriendInvite, GuidedWorkoutPreferences, LeaderboardEntry, MachineProfile, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
+import { buildWorkoutFingerprint, ImportBodyMeasurementLog, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
+import { ActiveWorkout, BodyMeasurementLog, BodyMeasurementValues, BodyUnitPreferences, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, Friend, FriendInvite, GuidedWorkoutPreferences, LeaderboardEntry, MachineProfile, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
+import { bodyMeasurementsFromLegacyWeights, defaultBodyUnitPreferences, normalizeBodyMeasurementLog, normalizeBodyUnitPreferences, parseStoredMeasurements } from "@/utils/bodyMeasurements";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 const storageKey = "growth.preview.database.v2";
@@ -18,12 +19,14 @@ type WebDatabase = {
   exercises: Exercise[];
   sessions: WorkoutSession[];
   sets: WorkoutSet[];
+  bodyMeasurementLogs: BodyMeasurementLog[];
   bodyWeightLogs: BodyWeightLog[];
   configs: MuscleStrengthConfig[];
   exercisePreferences: UserExercisePreference[];
   users: User[];
   currentUserId: number | null;
   unitSystem: UnitSystem;
+  bodyUnitPreferences: BodyUnitPreferences;
   importFingerprints: string[];
   trainingSplit: TrainingSplit;
   activeWorkout: ActiveWorkout | null;
@@ -90,7 +93,7 @@ function now() {
 }
 
 function seedDatabase(): WebDatabase {
-  return { exercises: catalogExerciseRows(now()), sessions: [], sets: [], bodyWeightLogs: [], configs: [], exercisePreferences: [], users: [], currentUserId: null, unitSystem: "lb", importFingerprints: [], trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(), completedGuidedWorkouts: [], machineProfiles: [] };
+  return { exercises: catalogExerciseRows(now()), sessions: [], sets: [], bodyMeasurementLogs: [], bodyWeightLogs: [], configs: [], exercisePreferences: [], users: [], currentUserId: null, unitSystem: "lb", bodyUnitPreferences: defaultBodyUnitPreferences, importFingerprints: [], trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(), completedGuidedWorkouts: [], machineProfiles: [] };
 }
 
 function readDatabase(): WebDatabase {
@@ -99,16 +102,19 @@ function readDatabase(): WebDatabase {
     const parsed = JSON.parse(existing) as Partial<WebDatabase>;
     const unitSystem: UnitSystem = parsed.unitSystem === "kg" ? "kg" : "lb";
     const exercises = normalizeCatalog(parsed.exercises ?? []);
+    const bodyMeasurementLogs = normalizeLocalBodyMeasurements(parsed.bodyMeasurementLogs, parsed.bodyWeightLogs);
     return {
       exercises,
       sessions: exercisesAreCatalog(parsed.exercises ?? []) ? parsed.sessions ?? [] : [],
       sets: exercisesAreCatalog(parsed.exercises ?? []) ? parsed.sets ?? [] : [],
+      bodyMeasurementLogs,
       bodyWeightLogs: parsed.bodyWeightLogs ?? [],
       configs: exercisesAreCatalog(parsed.exercises ?? []) ? parsed.configs ?? [] : [],
       exercisePreferences: parsed.exercisePreferences ?? [],
       users: parsed.users ?? [],
       currentUserId: parsed.currentUserId ?? null,
       unitSystem,
+      bodyUnitPreferences: normalizeBodyUnitPreferences(parsed.bodyUnitPreferences),
       importFingerprints: Array.isArray(parsed.importFingerprints) ? parsed.importFingerprints.filter((value): value is string => typeof value === "string") : [],
       trainingSplit: normalizeTrainingSplit(parsed.trainingSplit),
       activeWorkout: normalizeActiveWorkout(parsed.activeWorkout),
@@ -135,10 +141,11 @@ export async function loadAllData() {
     exercises: withPreferenceFlags(data.exercises, data.exercisePreferences, data.currentUserId).sort((a, b) => a.name.localeCompare(b.name)),
     sessions: [...data.sessions].sort((a, b) => b.workout_date.localeCompare(a.workout_date)),
     sets: [...data.sets].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.set_number - b.set_number),
-    bodyWeightLogs: normalizeBodyWeightLogs(data.bodyWeightLogs).sort((a, b) => b.logged_at.localeCompare(a.logged_at) || b.created_at.localeCompare(a.created_at)),
+    bodyMeasurementLogs: [...data.bodyMeasurementLogs].sort((a, b) => b.logged_at.localeCompare(a.logged_at) || b.created_at.localeCompare(a.created_at)),
     configs: [...data.configs].sort((a, b) => a.muscle_group.localeCompare(b.muscle_group)),
     currentUser,
     unitSystem: data.unitSystem,
+    bodyUnitPreferences: data.bodyUnitPreferences,
     trainingSplit: data.trainingSplit,
     activeWorkout: data.activeWorkout,
     guidedWorkoutPreferences: data.guidedWorkoutPreferences,
@@ -150,18 +157,20 @@ export async function loadAllData() {
 async function loadCloudData(client: SupabaseClient) {
   const user = await requireCloudUser(client, false);
   if (!user) {
-    return { exercises: [], sessions: [], sets: [], bodyWeightLogs: [], configs: [], currentUser: null, unitSystem: "lb" as UnitSystem, trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(), completedGuidedWorkouts: [], machineProfiles: [] };
+    return { exercises: [], sessions: [], sets: [], bodyMeasurementLogs: [], configs: [], currentUser: null, unitSystem: "lb" as UnitSystem, bodyUnitPreferences: defaultBodyUnitPreferences, trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(), completedGuidedWorkouts: [], machineProfiles: [] };
   }
 
-  const [profileResult, exercisesResult, preferencesResult, sessionsResult, setsResult, bodyWeightResult, configsResult, settingResult, activeWorkoutResult, guidedWorkoutResult, completedWorkoutsResult, machineProfilesResult] = await Promise.all([
+  const [profileResult, exercisesResult, preferencesResult, sessionsResult, setsResult, bodyMeasurementResult, bodyWeightResult, configsResult, settingResult, bodyUnitResult, activeWorkoutResult, guidedWorkoutResult, completedWorkoutsResult, machineProfilesResult] = await Promise.all([
     client.from("profiles").select("*").eq("id", user.id).maybeSingle<ProfileRow>(),
     client.from("exercises").select("*").order("name"),
     client.from("user_exercise_preferences").select("*").eq("user_id", user.id),
     client.from("workout_sessions").select("*").eq("user_id", user.id).order("workout_date", { ascending: false }),
     client.from("workout_sets").select("*").eq("user_id", user.id).order("created_at").order("set_number"),
-    client.from("body_weight_logs").select("*").order("logged_date", { ascending: false }).order("created_at", { ascending: false }),
+    client.from("body_measurement_logs").select("*").eq("user_id", user.id).order("logged_date", { ascending: false }).order("created_at", { ascending: false }),
+    client.from("body_weight_logs").select("*").eq("user_id", user.id).order("logged_date", { ascending: false }).order("created_at", { ascending: false }),
     client.from("muscle_strength_config").select("*").order("muscle_group"),
     client.from("app_settings").select("value").eq("key", "unit_system").maybeSingle<{ value: UnitSystem }>(),
+    client.from("app_settings").select("value").eq("key", "body_unit_preferences").maybeSingle<{ value: string }>(),
     client.from("app_settings").select("value").eq("key", "active_workout").maybeSingle<{ value: string }>(),
     client.from("app_settings").select("value").eq("key", "guided_workout_preferences").maybeSingle<{ value: string }>(),
     client.from("app_settings").select("value").eq("key", "completed_guided_workouts").maybeSingle<{ value: string }>(),
@@ -173,11 +182,15 @@ async function loadCloudData(client: SupabaseClient) {
   throwIfSupabaseError(preferencesResult.error);
   throwIfSupabaseError(sessionsResult.error);
   throwIfSupabaseError(setsResult.error);
+  if (bodyMeasurementResult.error && !isMissingBodyMeasurementTableError(bodyMeasurementResult.error)) {
+    throwIfSupabaseError(bodyMeasurementResult.error);
+  }
   if (bodyWeightResult.error && !isMissingBodyWeightTableError(bodyWeightResult.error)) {
     throwIfSupabaseError(bodyWeightResult.error);
   }
   throwIfSupabaseError(configsResult.error);
   throwIfSupabaseError(settingResult.error);
+  throwIfSupabaseError(bodyUnitResult.error);
   throwIfSupabaseError(activeWorkoutResult.error);
   throwIfSupabaseError(guidedWorkoutResult.error);
   throwIfSupabaseError(completedWorkoutsResult.error);
@@ -185,14 +198,21 @@ async function loadCloudData(client: SupabaseClient) {
 
   const preferences = (preferencesResult.data ?? []) as UserExercisePreference[];
   const trainingSplit = await loadCloudTrainingSplit(client, user.id);
+  const legacyBodyWeightLogs = normalizeBodyWeightLogs(bodyWeightResult.error ? [] : (bodyWeightResult.data ?? []) as BodyWeightLog[]);
+  const bodyMeasurementLogs = bodyMeasurementResult.error
+    ? legacyBodyWeightLogs.map(bodyMeasurementFromLegacyWeight)
+    : ((bodyMeasurementResult.data ?? []) as Array<Partial<BodyMeasurementLog> & { id: number }>).map((row) =>
+        normalizeBodyMeasurementLog({ ...row, measurements: parseStoredMeasurements(row.measurements) })
+      );
   return {
     exercises: withPreferenceFlags((exercisesResult.data ?? []) as Exercise[], preferences, user.id),
     sessions: (sessionsResult.data ?? []) as WorkoutSession[],
     sets: (setsResult.data ?? []) as WorkoutSet[],
-    bodyWeightLogs: normalizeBodyWeightLogs(bodyWeightResult.error ? [] : (bodyWeightResult.data ?? []) as BodyWeightLog[]),
+    bodyMeasurementLogs,
     configs: (configsResult.data ?? []) as MuscleStrengthConfig[],
     currentUser: cloudUserToAppUser(user, profileResult.data),
     unitSystem: settingResult.data?.value === "kg" ? "kg" : "lb",
+    bodyUnitPreferences: normalizeBodyUnitPreferences(bodyUnitResult.data?.value ? JSON.parse(bodyUnitResult.data.value) : null),
     trainingSplit,
     activeWorkout: normalizeActiveWorkout(activeWorkoutResult.data?.value ? JSON.parse(activeWorkoutResult.data.value) : null),
     guidedWorkoutPreferences: normalizeGuidedWorkoutPreferences(guidedWorkoutResult.data?.value ? JSON.parse(guidedWorkoutResult.data.value) : null),
@@ -394,14 +414,32 @@ export async function logWorkout(input: { exerciseId: number; workoutDate: strin
   writeDatabase(data);
 }
 
-export async function importTrainingData(input: { bodyWeightLogs: ImportBodyWeightLog[]; workouts: ImportWorkoutLog[]; exerciseIdsToEnable: number[] }) {
+export async function importTrainingData(input: { bodyWeightLogs: ImportBodyWeightLog[]; bodyMeasurementLogs?: ImportBodyMeasurementLog[]; workouts: ImportWorkoutLog[]; exerciseIdsToEnable: number[] }) {
   if (supabase) {
     const user = await requireCloudUser(supabase);
     if (!user) throw new Error("Please log in again.");
     const timestamp = now();
 
+    if (input.bodyMeasurementLogs?.length) {
+      const measurementResult = await supabase.from("body_measurement_logs").upsert(
+        input.bodyMeasurementLogs.map((log) => ({
+          user_id: user.id,
+          logged_date: log.loggedDate,
+          ...(log.weight !== null ? { weight: log.weight } : {}),
+          measurements: log.measurements,
+          notes: log.notes,
+          updated_at: timestamp
+        })),
+        { onConflict: "user_id,logged_date" }
+      );
+      if (measurementResult.error && isMissingBodyMeasurementTableError(measurementResult.error)) {
+        throw new Error("Body measurements need the Supabase schema update for body_measurement_logs.");
+      }
+      throwIfSupabaseError(measurementResult.error);
+    }
+
     if (input.bodyWeightLogs.length) {
-      const bodyWeightResult = await supabase.from("body_weight_logs").upsert(
+      const bodyWeightResult = await supabase.from("body_measurement_logs").upsert(
         input.bodyWeightLogs.map((log) => ({
           user_id: user.id,
           logged_date: log.loggedDate,
@@ -410,8 +448,8 @@ export async function importTrainingData(input: { bodyWeightLogs: ImportBodyWeig
         })),
         { onConflict: "user_id,logged_date" }
       );
-      if (bodyWeightResult.error && isMissingBodyWeightTableError(bodyWeightResult.error)) {
-        throw new Error("Body weight logging needs the Supabase schema update for body_weight_logs.");
+      if (bodyWeightResult.error && isMissingBodyMeasurementTableError(bodyWeightResult.error)) {
+        throw new Error("Body measurements need the Supabase schema update for body_measurement_logs.");
       }
       throwIfSupabaseError(bodyWeightResult.error);
     }
@@ -473,18 +511,34 @@ export async function importTrainingData(input: { bodyWeightLogs: ImportBodyWeig
   if (!data.currentUserId) throw new Error("Please log in again.");
 
   const timestamp = now();
-  const bodyWeightByDate = new Map(normalizeBodyWeightLogs(data.bodyWeightLogs).map((log) => [log.logged_date ?? log.logged_at.slice(0, 10), log]));
-  for (const log of input.bodyWeightLogs) {
-    bodyWeightByDate.set(log.loggedDate, {
-      id: bodyWeightByDate.get(log.loggedDate)?.id ?? Math.max(0, ...[...bodyWeightByDate.values()].map((item) => item.id)) + 1,
-      weight: log.weight,
-      unit: log.unit,
+  const bodyMeasurementByDate = new Map(data.bodyMeasurementLogs.map((log) => [log.logged_date, log]));
+  for (const log of input.bodyMeasurementLogs ?? []) {
+    const existing = bodyMeasurementByDate.get(log.loggedDate);
+    bodyMeasurementByDate.set(log.loggedDate, normalizeBodyMeasurementLog({
+      id: existing?.id ?? Math.max(0, ...[...bodyMeasurementByDate.values()].map((item) => item.id)) + 1,
+      weight: log.weight ?? existing?.weight ?? null,
+      measurements: log.measurements,
+      notes: log.notes,
       logged_at: `${log.loggedDate}T12:00:00.000Z`,
       logged_date: log.loggedDate,
-      created_at: timestamp
+      created_at: existing?.created_at ?? timestamp,
+      updated_at: timestamp
+    }));
+  }
+  for (const log of input.bodyWeightLogs) {
+    const existing = bodyMeasurementByDate.get(log.loggedDate);
+    bodyMeasurementByDate.set(log.loggedDate, {
+      id: existing?.id ?? Math.max(0, ...[...bodyMeasurementByDate.values()].map((item) => item.id)) + 1,
+      weight: log.weight,
+      measurements: existing?.measurements ?? {},
+      notes: existing?.notes ?? null,
+      logged_at: `${log.loggedDate}T12:00:00.000Z`,
+      logged_date: log.loggedDate,
+      created_at: existing?.created_at ?? timestamp,
+      updated_at: timestamp
     });
   }
-  data.bodyWeightLogs = [...bodyWeightByDate.values()];
+  data.bodyMeasurementLogs = [...bodyMeasurementByDate.values()];
 
   for (const exerciseId of input.exerciseIdsToEnable) {
     const existing = data.exercisePreferences.find((preference) => preference.user_id === data.currentUserId && preference.exercise_id === exerciseId);
@@ -558,32 +612,37 @@ export async function saveBodyWeightLog(input: { loggedDate: string; weight: num
   if (supabase) {
     const user = await requireCloudUser(supabase);
     if (!user) throw new Error("Please log in again.");
-    const result = await supabase.from("body_weight_logs").upsert(
+    const result = await supabase.from("body_measurement_logs").upsert(
       {
         user_id: user.id,
         logged_date: input.loggedDate,
         weight: input.weight,
+        updated_at: now(),
         created_at: `${input.loggedDate}T12:00:00.000Z`
       },
       { onConflict: "user_id,logged_date" }
     );
-    if (result.error && isMissingBodyWeightTableError(result.error)) {
-      throw new Error("Body weight logging needs the Supabase schema update for body_weight_logs.");
+    if (result.error && isMissingBodyMeasurementTableError(result.error)) {
+      throw new Error("Body measurements need the Supabase schema update for body_measurement_logs.");
     }
     throwIfSupabaseError(result.error);
     return;
   }
 
   const data = readDatabase();
-  const row: BodyWeightLog = {
-    id: Math.max(0, ...data.bodyWeightLogs.map((log) => log.id)) + 1,
+  const existing = data.bodyMeasurementLogs.find((log) => log.logged_date === input.loggedDate);
+  const timestamp = now();
+  const row = normalizeBodyMeasurementLog({
+    id: existing?.id ?? Math.max(0, ...data.bodyMeasurementLogs.map((log) => log.id)) + 1,
     weight: input.weight,
-    unit: input.unit,
+    measurements: existing?.measurements ?? {},
+    notes: existing?.notes ?? null,
     logged_at: `${input.loggedDate}T12:00:00.000Z`,
     logged_date: input.loggedDate,
-    created_at: now()
-  };
-  data.bodyWeightLogs = [...normalizeBodyWeightLogs(data.bodyWeightLogs), row];
+    created_at: existing?.created_at ?? timestamp,
+    updated_at: timestamp
+  });
+  data.bodyMeasurementLogs = [row, ...data.bodyMeasurementLogs.filter((log) => log.id !== row.id)];
   writeDatabase(data);
 }
 
@@ -591,20 +650,20 @@ export async function updateBodyWeightLog(input: { id: number; loggedDate: strin
   if (supabase) {
     await requireCloudUser(supabase);
     const result = await supabase
-      .from("body_weight_logs")
-      .update({ logged_date: input.loggedDate, weight: input.weight, created_at: `${input.loggedDate}T12:00:00.000Z` })
+      .from("body_measurement_logs")
+      .update({ logged_date: input.loggedDate, weight: input.weight, updated_at: now() })
       .eq("id", input.id);
-    if (result.error && isMissingBodyWeightTableError(result.error)) {
-      throw new Error("Body weight logging needs the Supabase schema update for body_weight_logs.");
+    if (result.error && isMissingBodyMeasurementTableError(result.error)) {
+      throw new Error("Body measurements need the Supabase schema update for body_measurement_logs.");
     }
     throwIfSupabaseError(result.error);
     return;
   }
 
   const data = readDatabase();
-  data.bodyWeightLogs = normalizeBodyWeightLogs(data.bodyWeightLogs).map((log) =>
+  data.bodyMeasurementLogs = data.bodyMeasurementLogs.map((log) =>
     log.id === input.id
-      ? { ...log, weight: input.weight, unit: input.unit, logged_at: `${input.loggedDate}T12:00:00.000Z`, logged_date: input.loggedDate }
+      ? { ...log, weight: input.weight, logged_at: `${input.loggedDate}T12:00:00.000Z`, logged_date: input.loggedDate, updated_at: now() }
       : log
   );
   writeDatabase(data);
@@ -613,16 +672,129 @@ export async function updateBodyWeightLog(input: { id: number; loggedDate: strin
 export async function deleteBodyWeightLog(id: number) {
   if (supabase) {
     await requireCloudUser(supabase);
-    const result = await supabase.from("body_weight_logs").delete().eq("id", id);
-    if (result.error && isMissingBodyWeightTableError(result.error)) {
-      throw new Error("Body weight logging needs the Supabase schema update for body_weight_logs.");
+    const existingResult = await supabase.from("body_measurement_logs").select("measurements").eq("id", id).maybeSingle();
+    throwIfSupabaseError(existingResult.error);
+    const hasMeasurements = Object.keys(parseStoredMeasurements(existingResult.data?.measurements)).length > 0;
+    const result = hasMeasurements
+      ? await supabase.from("body_measurement_logs").update({ weight: null, updated_at: now() }).eq("id", id)
+      : await supabase.from("body_measurement_logs").delete().eq("id", id);
+    if (result.error && isMissingBodyMeasurementTableError(result.error)) {
+      throw new Error("Body measurements need the Supabase schema update for body_measurement_logs.");
     }
     throwIfSupabaseError(result.error);
     return;
   }
 
   const data = readDatabase();
-  data.bodyWeightLogs = data.bodyWeightLogs.filter((log) => log.id !== id);
+  const existing = data.bodyMeasurementLogs.find((log) => log.id === id);
+  data.bodyMeasurementLogs = existing && Object.keys(existing.measurements).length
+    ? data.bodyMeasurementLogs.map((log) => log.id === id ? { ...log, weight: null, updated_at: now() } : log)
+    : data.bodyMeasurementLogs.filter((log) => log.id !== id);
+  writeDatabase(data);
+}
+
+export async function saveBodyMeasurementLog(input: { loggedDate: string; weight: number | null; measurements: BodyMeasurementValues; notes?: string | null }) {
+  if (supabase) {
+    const user = await requireCloudUser(supabase);
+    if (!user) throw new Error("Please log in again.");
+    const timestamp = now();
+    const result = await supabase.from("body_measurement_logs").upsert(
+      {
+        user_id: user.id,
+        logged_date: input.loggedDate,
+        weight: input.weight,
+        measurements: input.measurements,
+        notes: input.notes?.trim() || null,
+        created_at: `${input.loggedDate}T12:00:00.000Z`,
+        updated_at: timestamp
+      },
+      { onConflict: "user_id,logged_date" }
+    );
+    if (result.error && isMissingBodyMeasurementTableError(result.error)) {
+      throw new Error("Body measurements need the Supabase schema update for body_measurement_logs.");
+    }
+    throwIfSupabaseError(result.error);
+    return;
+  }
+
+  const data = readDatabase();
+  const existing = data.bodyMeasurementLogs.find((log) => log.logged_date === input.loggedDate);
+  const timestamp = now();
+  const row = normalizeBodyMeasurementLog({
+    id: existing?.id ?? Math.max(0, ...data.bodyMeasurementLogs.map((log) => log.id)) + 1,
+    weight: input.weight,
+    measurements: input.measurements,
+    notes: input.notes?.trim() || null,
+    logged_at: `${input.loggedDate}T12:00:00.000Z`,
+    logged_date: input.loggedDate,
+    created_at: existing?.created_at ?? timestamp,
+    updated_at: timestamp
+  });
+  data.bodyMeasurementLogs = [row, ...data.bodyMeasurementLogs.filter((log) => log.id !== row.id)];
+  writeDatabase(data);
+}
+
+export async function updateBodyMeasurementLog(input: { id: number; loggedDate: string; weight: number | null; measurements: BodyMeasurementValues; notes?: string | null }) {
+  if (supabase) {
+    await requireCloudUser(supabase);
+    const result = await supabase
+      .from("body_measurement_logs")
+      .update({
+        logged_date: input.loggedDate,
+        weight: input.weight,
+        measurements: input.measurements,
+        notes: input.notes?.trim() || null,
+        updated_at: now()
+      })
+      .eq("id", input.id);
+    if (result.error && isMissingBodyMeasurementTableError(result.error)) {
+      throw new Error("Body measurements need the Supabase schema update for body_measurement_logs.");
+    }
+    throwIfSupabaseError(result.error);
+    return;
+  }
+
+  const data = readDatabase();
+  if (data.bodyMeasurementLogs.some((log) => log.logged_date === input.loggedDate && log.id !== input.id)) {
+    throw new Error("A body check-in already exists for this date.");
+  }
+  data.bodyMeasurementLogs = data.bodyMeasurementLogs.map((log) =>
+    log.id === input.id
+      ? normalizeBodyMeasurementLog({
+          ...log,
+          weight: input.weight,
+          measurements: input.measurements,
+          notes: input.notes?.trim() || null,
+          logged_at: `${input.loggedDate}T12:00:00.000Z`,
+          logged_date: input.loggedDate,
+          updated_at: now()
+        })
+      : log
+  );
+  writeDatabase(data);
+}
+
+export async function deleteBodyMeasurementLog(id: number) {
+  if (supabase) {
+    await requireCloudUser(supabase);
+    const existingResult = await supabase.from("body_measurement_logs").select("weight").eq("id", id).maybeSingle();
+    throwIfSupabaseError(existingResult.error);
+    const hasWeight = Number.isFinite(existingResult.data?.weight) && Number(existingResult.data?.weight) > 0;
+    const result = hasWeight
+      ? await supabase.from("body_measurement_logs").update({ measurements: {}, notes: null, updated_at: now() }).eq("id", id)
+      : await supabase.from("body_measurement_logs").delete().eq("id", id);
+    if (result.error && isMissingBodyMeasurementTableError(result.error)) {
+      throw new Error("Body measurements need the Supabase schema update for body_measurement_logs.");
+    }
+    throwIfSupabaseError(result.error);
+    return;
+  }
+
+  const data = readDatabase();
+  const existing = data.bodyMeasurementLogs.find((log) => log.id === id);
+  data.bodyMeasurementLogs = existing?.weight
+    ? data.bodyMeasurementLogs.map((log) => log.id === id ? { ...log, measurements: {}, notes: null, updated_at: now() } : log)
+    : data.bodyMeasurementLogs.filter((log) => log.id !== id);
   writeDatabase(data);
 }
 
@@ -743,6 +915,24 @@ export async function updateUnitSystem(unitSystem: UnitSystem) {
   const data = readDatabase();
   data.unitSystem = unitSystem;
   writeDatabase(data);
+}
+
+export async function updateBodyUnitPreferences(preferences: BodyUnitPreferences) {
+  const normalized = normalizeBodyUnitPreferences(preferences);
+  if (supabase) {
+    const user = await requireCloudUser(supabase);
+    if (!user) throw new Error("Please log in again.");
+    const result = await supabase
+      .from("app_settings")
+      .upsert({ user_id: user.id, key: "body_unit_preferences", value: JSON.stringify(normalized), updated_at: now() }, { onConflict: "user_id,key" });
+    throwIfSupabaseError(result.error);
+    return normalized;
+  }
+
+  const data = readDatabase();
+  data.bodyUnitPreferences = normalized;
+  writeDatabase(data);
+  return normalized;
 }
 
 export async function updateGuidedWorkoutPreferences(preferences: GuidedWorkoutPreferences) {
@@ -1118,6 +1308,13 @@ function isMissingBodyWeightTableError(error: { message: string; code?: string }
   return error.message.includes("body_weight_logs") && (error.message.includes("schema cache") || error.message.includes("does not exist") || error.code === "PGRST205");
 }
 
+function isMissingBodyMeasurementTableError(error: { message: string; code?: string } | null) {
+  if (!error) return false;
+  const message = error.message.toLowerCase();
+  return error.code === "42P01" || error.code === "PGRST205" ||
+    (message.includes("body_measurement_logs") && (message.includes("does not exist") || message.includes("schema cache")));
+}
+
 function isMissingSocialTableError(error: { message: string; code?: string } | null) {
   if (!error) return false;
   return (
@@ -1205,6 +1402,31 @@ function normalizeBodyWeightLogs(logs: BodyWeightLog[]) {
       logged_date: loggedDate
     };
   });
+}
+
+function bodyMeasurementFromLegacyWeight(log: BodyWeightLog): BodyMeasurementLog {
+  const normalized = normalizeBodyWeightLogs([log])[0];
+  return normalizeBodyMeasurementLog({
+    id: normalized.id,
+    weight: normalized.weight,
+    measurements: {},
+    notes: null,
+    logged_at: normalized.logged_at,
+    logged_date: normalized.logged_date ?? normalized.logged_at.slice(0, 10),
+    created_at: normalized.created_at,
+    updated_at: normalized.created_at
+  });
+}
+
+function normalizeLocalBodyMeasurements(measurements: BodyMeasurementLog[] | undefined, legacyWeights: BodyWeightLog[] | undefined) {
+  if (Array.isArray(measurements) && measurements.length) {
+    return measurements.map((log) => normalizeBodyMeasurementLog({
+      ...log,
+      measurements: parseStoredMeasurements(log.measurements)
+    }));
+  }
+
+  return bodyMeasurementsFromLegacyWeights(normalizeBodyWeightLogs(legacyWeights ?? []));
 }
 
 async function getCloudImportedWorkoutFingerprints(client: SupabaseClient) {

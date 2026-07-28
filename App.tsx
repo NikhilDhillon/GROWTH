@@ -4,7 +4,7 @@ import { Analytics } from "@vercel/analytics/react";
 import { NavigationContainer, createNavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { BarChart3, Dumbbell, Home, LineChart, ListChecks, Menu, Scale, Settings, TrendingUp, Users, X } from "lucide-react-native";
+import { BarChart3, Dumbbell, Home, LineChart, ListChecks, Menu, Scale, Settings, Users, X } from "lucide-react-native";
 import type { ComponentType } from "react";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
@@ -16,13 +16,12 @@ import { useFitnessStore } from "@/store/useFitnessStore";
 import { HomeScreen } from "@/screens/Home/HomeScreen";
 import { WorkoutScreen } from "@/screens/Workout/WorkoutScreen";
 import { ExerciseScreen } from "@/screens/Exercise/ExerciseScreen";
-import { AnalyticsScreen } from "@/screens/Analytics/AnalyticsScreen";
+import { BodyweightScreen } from "@/screens/Bodyweight/BodyweightScreen";
+import { ProgressScreen } from "@/screens/Progress/ProgressScreen";
 import { SettingsScreen } from "@/screens/Settings/SettingsScreen";
 import { GuidedWorkoutSettingsScreen } from "@/screens/Settings/GuidedWorkoutSettingsScreen";
 import { AuthScreen } from "@/screens/Auth/AuthScreen";
 import { LogsScreen } from "@/screens/Logs/LogsScreen";
-import { BodyweightScreen } from "@/screens/Bodyweight/BodyweightScreen";
-import { BulkAnalyticsScreen } from "@/screens/BulkAnalytics/BulkAnalyticsScreen";
 import { SocialScreen } from "@/screens/Social/SocialScreen";
 import { GuidedWorkoutScreen } from "@/screens/Workout/GuidedWorkoutScreen";
 import { WorkoutSummaryScreen } from "@/screens/Workout/WorkoutSummaryScreen";
@@ -32,9 +31,8 @@ type RootStackParamList = {
   Home: undefined;
   Log: undefined;
   Exercises: undefined;
-  Progress: undefined;
   Bodyweight: undefined;
-  Bulk: undefined;
+  Progress: undefined;
   Social: undefined;
   Logs: undefined;
   Settings: undefined;
@@ -54,9 +52,8 @@ const appRoutes: Array<{ name: AppRouteName; label: string; component: Component
   { name: "Home", label: "Home", component: HomeScreen, Icon: Home },
   { name: "Log", label: "Log", component: WorkoutScreen, Icon: Dumbbell },
   { name: "Exercises", label: "Exercises", component: ExerciseScreen, Icon: LineChart },
-  { name: "Progress", label: "Progress", component: AnalyticsScreen, Icon: BarChart3 },
   { name: "Bodyweight", label: "Bodyweight", component: BodyweightScreen, Icon: Scale },
-  { name: "Bulk", label: "Bulk", component: BulkAnalyticsScreen, Icon: TrendingUp },
+  { name: "Progress", label: "Progress", component: ProgressScreen, Icon: BarChart3 },
   { name: "Social", label: "Social", component: SocialScreen, Icon: Users },
   { name: "Logs", label: "Logs", component: LogsScreen, Icon: ListChecks },
   { name: "Settings", label: "Settings", component: SettingsScreen, Icon: Settings }

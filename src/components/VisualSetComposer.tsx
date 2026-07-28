@@ -8,13 +8,13 @@ import { LoggedSetDraft, UnitSystem } from "@/types";
 import { palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { formatWeightInput, weightToStorageUnit } from "@/utils/units";
+import { createEmptyPlateCounts } from "@/utils/workout";
 
 const plateWeights = [45, 35, 25, 10, 5] as const;
 type PlateWeight = typeof plateWeights[number];
 type PlateCounts = Record<PlateWeight, number>;
 type ApplyMode = "one" | "working" | "down";
 
-const emptyPlateCounts = (): PlateCounts => ({ 45: 0, 35: 0, 25: 0, 10: 0, 5: 0 });
 const plateVisuals: Record<PlateWeight, { backgroundColor: string; height: number; width: number }> = {
   45: { backgroundColor: "#2563eb", height: 34, width: 8 },
   35: { backgroundColor: "#eab308", height: 30, width: 8 },
@@ -207,7 +207,7 @@ export function VisualSetComposer({
                   >
                     {targetDisplay ? <View style={styles.targetRail} /> : null}
                     <LoadedBar
-                      counts={displayLoad ? calculatePlateCounts(String(weightToStorageUnit(parseLoad(displayLoad), unitSystem)), barWeight) : emptyPlateCounts()}
+                      counts={displayLoad ? calculatePlateCounts(String(weightToStorageUnit(parseLoad(displayLoad), unitSystem)), barWeight) : createEmptyPlateCounts()}
                     />
                   </Pressable>
                   <View style={styles.loadMeta}>
@@ -271,7 +271,7 @@ export function VisualSetComposer({
                   onReset={() => {
                     setEditorBarWeight("45");
                     setEditorTotalLoad("45");
-                    setEditorPlateCounts(emptyPlateCounts());
+                    setEditorPlateCounts(createEmptyPlateCounts());
                   }}
                 />
                 <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -426,7 +426,7 @@ function normalizePlateCounts(counts: Record<string, number>): PlateCounts {
   return plateWeights.reduce<PlateCounts>((output, plate) => {
     output[plate] = Math.max(0, Number(counts[plate] ?? 0));
     return output;
-  }, emptyPlateCounts());
+  }, createEmptyPlateCounts());
 }
 
 function calculateLoadedBarWeight(currentBarWeight: string, counts: PlateCounts) {
@@ -441,7 +441,7 @@ function calculatePlateCounts(totalLoad: string, currentBarWeight: string) {
     counts[plate] = count;
     remainingPerSide -= count * plate;
     return counts;
-  }, emptyPlateCounts());
+  }, createEmptyPlateCounts());
 }
 
 function parseLoad(value: string) {

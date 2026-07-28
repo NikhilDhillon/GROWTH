@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { ReactNode, useMemo, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 
 import { LineGraph } from "@/components/LineGraph";
@@ -11,7 +11,7 @@ import { BodyWeightLog, ExerciseScorePoint } from "@/types";
 import { formatShortDate, todayIso } from "@/utils/date";
 import { buildPreviousLogs } from "@/utils/logs";
 import { muscles, palette, spacing } from "@/utils/theme";
-import { bodyWeightDisplayUnit, bodyWeightFromStorageUnit, formatBodyWeight } from "@/utils/units";
+import { bodyWeightFromStorageUnit, formatBodyWeight } from "@/utils/units";
 
 type ProgressRange = "month" | "year" | "all";
 
@@ -21,12 +21,13 @@ const ranges: Array<{ key: ProgressRange; label: string }> = [
   { key: "all", label: "All Time" }
 ];
 
-export function AnalyticsScreen() {
+export function AnalyticsScreen({ progressTabs }: { progressTabs?: ReactNode }) {
   const exercises = useFitnessStore((state) => state.exercises);
   const sessions = useFitnessStore((state) => state.sessions);
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
   const sets = useFitnessStore((state) => state.sets);
   const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
+  const bodyWeightUnit = useFitnessStore((state) => state.bodyUnitPreferences.weight);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const strengthExercises = exercises.filter((exercise) => exercise.is_strength_exercise);
   const groupedStrengthExercises = useMemo(() => {
@@ -55,19 +56,20 @@ export function AnalyticsScreen() {
   const bodyWeightByDate = new Map(bodyWeightLogs.map((log) => [log.logged_at.slice(0, 10), log]));
   const strengthPointByDate = new Map(selectedPoints.map((point) => [point.date, point]));
   const logByDate = new Map(previousLogs.map((log) => [log.date, log]));
-  const weightPoints = buildBodyWeightGraphPoints(rangedBodyWeightLogs, strengthPointByDate, logByDate);
-  const comparisonStrengthPoints = buildStrengthGraphPoints(rangedSelectedPoints, bodyWeightByDate, previousLogs);
+  const weightPoints = buildBodyWeightGraphPoints(rangedBodyWeightLogs, range, strengthPointByDate, logByDate, bodyWeightUnit);
+  const comparisonStrengthPoints = buildStrengthGraphPoints(rangedSelectedPoints, range, bodyWeightByDate, previousLogs, bodyWeightUnit);
   const comparisonDates = [...new Set([...weightPoints.map((point) => point.date), ...comparisonStrengthPoints.map((point) => point.date)])].sort();
-  const progressGraphPoints = buildStrengthGraphPoints(rangedSelectedPoints, bodyWeightByDate, previousLogs);
+  const progressGraphPoints = buildStrengthGraphPoints(rangedSelectedPoints, range, bodyWeightByDate, previousLogs, bodyWeightUnit);
   const prs = useMemo(() => detectPersonalRecords(selectedPoints), [selectedPoints]);
   const sessionComparison = compareLatestSessions(rangedSelectedPoints);
 
   return (
     <Screen>
       <View>
-        <Label>Individual exercise performance graphs</Label>
+        <Label>Individual exercise performance</Label>
         <Title>Progress</Title>
       </View>
+      {progressTabs}
 
       <Panel>
         <SectionTitle>Strength exercise</SectionTitle>
@@ -113,7 +115,7 @@ export function AnalyticsScreen() {
         <Panel>
           <SectionTitle>{selected.name} vs body weight</SectionTitle>
           <Label>Body weight</Label>
-          <LineGraph points={weightPoints} suffix={` ${bodyWeightDisplayUnit}`} height={150} emptyMessage="Log body weight to draw a trend." xLabels={comparisonDates} />
+          <LineGraph points={weightPoints} suffix={` ${bodyWeightUnit}`} height={150} emptyMessage="Log body weight to draw a trend." xLabels={comparisonDates} />
           <Label>Performance Points</Label>
           <LineGraph points={comparisonStrengthPoints} suffix=" pts" height={150} xLabels={comparisonDates} />
         </Panel>
@@ -220,7 +222,11 @@ function filterLogsByRange(logs: ReturnType<typeof buildPreviousLogs>, range: Pr
   });
 }
 
-function buildStrengthGraphPoints(points: ExerciseScorePoint[], bodyWeightByDate: Map<string, BodyWeightLog>, previousLogs: ReturnType<typeof buildPreviousLogs>) {
+function buildStrengthGraphPoints(points: ExerciseScorePoint[], range: ProgressRange, bodyWeightByDate: Map<string, BodyWeightLog>, previousLogs: ReturnType<typeof buildPreviousLogs>, bodyWeightUnit: "lb" | "kg") {
+  if (usesMonthlyAverages(range)) {
+    return monthlyAveragePoints(points, (point) => point.date, (point) => point.score, "Score");
+  }
+
   return points.map((point) => {
     const weightLog = bodyWeightByDate.get(point.date);
     const workoutLog = previousLogs.find((item) => item.sessionId === point.sessionId);
@@ -230,14 +236,18 @@ function buildStrengthGraphPoints(points: ExerciseScorePoint[], bodyWeightByDate
       label: formatShortDate(point.date),
       value: point.score,
       details: [
-        weightLog ? `Body weight ${formatBodyWeight(weightLog.weight)}` : "No body weight logged",
+        weightLog ? `Body weight ${formatBodyWeight(weightLog.weight, bodyWeightUnit)}` : "No body weight logged",
         ...(workoutLog?.sets ?? [])
       ]
     };
   });
 }
 
-function buildBodyWeightGraphPoints(logs: BodyWeightLog[], strengthPointByDate: Map<string, ExerciseScorePoint>, logByDate: Map<string, ReturnType<typeof buildPreviousLogs>[number]>) {
+function buildBodyWeightGraphPoints(logs: BodyWeightLog[], range: ProgressRange, strengthPointByDate: Map<string, ExerciseScorePoint>, logByDate: Map<string, ReturnType<typeof buildPreviousLogs>[number]>, bodyWeightUnit: "lb" | "kg") {
+  if (usesMonthlyAverages(range)) {
+    return monthlyAveragePoints(logs, (log) => log.logged_at.slice(0, 10), (log) => bodyWeightFromStorageUnit(log.weight, bodyWeightUnit), "Body weight");
+  }
+
   return logs.map((log) => {
     const loggedDate = log.logged_at.slice(0, 10);
     const strengthPoint = strengthPointByDate.get(loggedDate);
@@ -245,13 +255,32 @@ function buildBodyWeightGraphPoints(logs: BodyWeightLog[], strengthPointByDate: 
     return {
       date: loggedDate,
       label: formatShortDate(loggedDate),
-      value: bodyWeightFromStorageUnit(log.weight),
+      value: bodyWeightFromStorageUnit(log.weight, bodyWeightUnit),
       details: [
         strengthPoint ? `Performance ${strengthPoint.performancePoints.toFixed(1)} pts | e1RM ${strengthPoint.estimated1RM.toFixed(1)}` : "No eligible lift logged",
         ...(workoutLog?.sets ?? [])
       ]
     };
   });
+}
+
+function monthlyAveragePoints<T>(items: T[], getDate: (item: T) => string, getValue: (item: T) => number, label: string) {
+  const buckets = items.reduce<Map<string, number[]>>((groups, item) => {
+    const key = getDate(item).slice(0, 7);
+    groups.set(key, [...(groups.get(key) ?? []), getValue(item)]);
+    return groups;
+  }, new Map());
+
+  return [...buckets.entries()].map(([month, values]) => ({
+    date: month,
+    label: formatMonthLabel(month),
+    value: values.reduce((total, value) => total + value, 0) / values.length,
+    details: [`${label}: ${values.length} ${values.length === 1 ? "entry" : "entries"} averaged`]
+  }));
+}
+
+function usesMonthlyAverages(range: ProgressRange) {
+  return range === "year" || range === "all";
 }
 
 function cutoffDate(range: Exclude<ProgressRange, "all">) {

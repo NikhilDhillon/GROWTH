@@ -14,11 +14,24 @@ import { palette, spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback } from "@/utils/touch";
 
 const sampleImportJson = `{
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "unit": "lb",
   "bodyweightUnit": "kg",
+  "bodyMeasurementUnit": "in",
   "bodyweight": [
     { "date": "2026-05-24", "weight": 82.4 }
+  ],
+  "bodyMeasurements": [
+    {
+      "date": "2026-05-24",
+      "weight": 82.4,
+      "notes": "Morning check-in",
+      "measurements": {
+        "chest": 40.2,
+        "waist": 32.4,
+        "arm_flexed": { "left": 14.1, "right": 14.3 }
+      }
+    }
   ],
   "workouts": [
     {
@@ -45,6 +58,8 @@ export function SettingsScreen() {
   const logout = useFitnessStore((state) => state.logout);
   const unitSystem = useFitnessStore((state) => state.unitSystem);
   const setUnitSystem = useFitnessStore((state) => state.setUnitSystem);
+  const bodyUnitPreferences = useFitnessStore((state) => state.bodyUnitPreferences);
+  const setBodyUnitPreferences = useFitnessStore((state) => state.setBodyUnitPreferences);
   const importTrainingData = useFitnessStore((state) => state.importTrainingData);
   const guidedWorkoutPreferences = useFitnessStore((state) => state.guidedWorkoutPreferences);
   const strengthCount = exercises.filter((exercise) => exercise.is_strength_exercise).length;
@@ -65,7 +80,7 @@ export function SettingsScreen() {
     try {
       const nextPreview = parseImportData(text, exercises);
       setPreview(nextPreview);
-      setImportMessage(`Ready: ${nextPreview.bodyWeightCount} bodyweight, ${nextPreview.workoutCount} workout logs, ${nextPreview.setCount} sets.`);
+      setImportMessage(`Ready: ${nextPreview.bodyWeightCount} weight entries, ${nextPreview.bodyMeasurementCount} body check-ins, ${nextPreview.workoutCount} workout logs, ${nextPreview.setCount} sets.`);
     } catch (error) {
       setPreview(null);
       setImportError(error instanceof Error ? error.message : "Could not validate import data.");
@@ -80,7 +95,7 @@ export function SettingsScreen() {
       await importTrainingData(selectedPreview);
       setSelectedFileText("");
       setPreview(null);
-      setImportMessage(`Imported ${selectedPreview.bodyWeightCount} bodyweight entries and ${selectedPreview.workoutCount} workout logs.`);
+      setImportMessage(`Imported ${selectedPreview.bodyWeightCount} weight entries, ${selectedPreview.bodyMeasurementCount} body check-ins, and ${selectedPreview.workoutCount} workout logs.`);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Could not import data.");
     } finally {
@@ -196,11 +211,40 @@ export function SettingsScreen() {
       </Panel>
 
       <Panel>
-        <SectionTitle>Units</SectionTitle>
+        <SectionTitle>Workout load units</SectionTitle>
         <View style={styles.unitRow}>
           {(["lb", "kg"] as const).map((unit) => (
             <Pressable key={unit} onPress={() => void setUnitSystem(unit)} style={[styles.unitButton, unitSystem === unit && styles.unitButtonActive]}>
               <Body style={[styles.unitText, unitSystem === unit && styles.unitTextActive]}>{unit}</Body>
+            </Pressable>
+          ))}
+        </View>
+      </Panel>
+
+      <Panel>
+        <SectionTitle>Body units</SectionTitle>
+        <Body style={styles.importNotice}>Body weight and tape measurements can use independent units.</Body>
+        <Label>Body weight</Label>
+        <View style={styles.unitRow}>
+          {(["kg", "lb"] as const).map((unit) => (
+            <Pressable
+              key={unit}
+              onPress={() => void setBodyUnitPreferences({ ...bodyUnitPreferences, weight: unit })}
+              style={[styles.unitButton, bodyUnitPreferences.weight === unit && styles.unitButtonActive]}
+            >
+              <Body style={[styles.unitText, bodyUnitPreferences.weight === unit && styles.unitTextActive]}>{unit}</Body>
+            </Pressable>
+          ))}
+        </View>
+        <Label>Tape measurements</Label>
+        <View style={styles.unitRow}>
+          {(["in", "cm"] as const).map((unit) => (
+            <Pressable
+              key={unit}
+              onPress={() => void setBodyUnitPreferences({ ...bodyUnitPreferences, circumference: unit })}
+              style={[styles.unitButton, bodyUnitPreferences.circumference === unit && styles.unitButtonActive]}
+            >
+              <Body style={[styles.unitText, bodyUnitPreferences.circumference === unit && styles.unitTextActive]}>{unit}</Body>
             </Pressable>
           ))}
         </View>

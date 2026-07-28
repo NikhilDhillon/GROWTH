@@ -6,8 +6,9 @@ import { normalizeGuidedWorkoutPreferences } from "@/constants/guidedWorkout";
 import { normalizeMachineProfiles } from "@/constants/machineProfiles";
 import { createDefaultTrainingSplit, normalizeTrainingSplit } from "@/constants/trainingSplit";
 import { schema } from "@/database/schema";
-import { buildWorkoutFingerprint, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
-import { ActiveWorkout, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, MachineProfile, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { buildWorkoutFingerprint, ImportBodyMeasurementLog, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
+import { ActiveWorkout, BodyMeasurementLog, BodyMeasurementValues, BodyUnitPreferences, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, MachineProfile, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { defaultBodyUnitPreferences, normalizeBodyMeasurementLog, normalizeBodyUnitPreferences, parseStoredMeasurements } from "@/utils/bodyMeasurements";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 type Database = SQLite.SQLiteDatabase;
@@ -19,6 +20,7 @@ async function getDatabase() {
     database = await SQLite.openDatabaseAsync("growth.db");
     await database.execAsync(schema);
     await ensureBodyWeightLogSchema(database);
+    await ensureBodyMeasurementLogSchema(database);
     await ensureWorkoutSessionSchema(database);
     await ensureWorkoutSetSchema(database);
     await removeLegacySeedData(database);
@@ -26,6 +28,30 @@ async function getDatabase() {
     await ensureCatalogAdditions(database);
   }
   return database;
+}
+
+async function ensureBodyMeasurementLogSchema(db: Database) {
+  await db.runAsync(`
+    INSERT INTO body_measurement_logs (weight, measurements, notes, logged_at, logged_date, created_at, updated_at)
+    SELECT
+      legacy.weight,
+      '{}',
+      NULL,
+      COALESCE(legacy.logged_at, legacy.logged_date || 'T12:00:00.000Z', legacy.created_at),
+      COALESCE(legacy.logged_date, substr(legacy.logged_at, 1, 10), substr(legacy.created_at, 1, 10)),
+      COALESCE(legacy.created_at, legacy.logged_at, datetime('now')),
+      COALESCE(legacy.created_at, legacy.logged_at, datetime('now'))
+    FROM body_weight_logs legacy
+    WHERE legacy.id = (
+      SELECT candidate.id
+      FROM body_weight_logs candidate
+      WHERE COALESCE(candidate.logged_date, substr(candidate.logged_at, 1, 10), substr(candidate.created_at, 1, 10))
+        = COALESCE(legacy.logged_date, substr(legacy.logged_at, 1, 10), substr(legacy.created_at, 1, 10))
+      ORDER BY candidate.created_at DESC, candidate.id DESC
+      LIMIT 1
+    )
+    ON CONFLICT(logged_date) DO NOTHING
+  `);
 }
 
 async function ensureWorkoutSessionSchema(db: Database) {
@@ -140,16 +166,17 @@ async function ensureCatalogAdditions(db: Database) {
 
 export async function loadAllData() {
   const db = await getDatabase();
-  const [currentUser, unitSetting, trainingSplitSetting, activeWorkoutSetting, guidedWorkoutSetting, completedWorkoutsSetting, machineProfilesSetting] = await Promise.all([
+  const [currentUser, unitSetting, bodyUnitSetting, trainingSplitSetting, activeWorkoutSetting, guidedWorkoutSetting, completedWorkoutsSetting, machineProfilesSetting] = await Promise.all([
     db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1"),
     db.getFirstAsync<{ value: UnitSystem }>("SELECT value FROM app_settings WHERE key = ?", ["unit_system"]),
+    db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["body_unit_preferences"]),
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["training_split"]),
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["active_workout"]),
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["guided_workout_preferences"]),
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["completed_guided_workouts"]),
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["machine_profiles"])
   ]);
-  const [exercises, sessions, sets, bodyWeightLogs, configs] = await Promise.all([
+  const [exercises, sessions, sets, bodyMeasurementRows, configs] = await Promise.all([
     db.getAllAsync<Exercise>(
       `
       SELECT
@@ -169,17 +196,19 @@ export async function loadAllData() {
     ),
     db.getAllAsync<WorkoutSession>("SELECT * FROM workout_sessions ORDER BY workout_date DESC"),
     db.getAllAsync<WorkoutSet>("SELECT * FROM workout_sets ORDER BY created_at ASC, set_number ASC"),
-    db.getAllAsync<BodyWeightLog>("SELECT id, weight, unit, logged_at, created_at, COALESCE(logged_date, substr(logged_at, 1, 10)) as logged_date FROM body_weight_logs ORDER BY logged_at DESC, created_at DESC"),
+    db.getAllAsync<Omit<BodyMeasurementLog, "measurements"> & { measurements: string }>("SELECT * FROM body_measurement_logs ORDER BY logged_at DESC, created_at DESC"),
     db.getAllAsync<MuscleStrengthConfig>("SELECT * FROM muscle_strength_config ORDER BY muscle_group")
   ]);
 
   const unitSystem: UnitSystem = unitSetting?.value === "kg" ? "kg" : "lb";
+  const bodyUnitPreferences = bodyUnitSetting?.value ? normalizeBodyUnitPreferences(JSON.parse(bodyUnitSetting.value)) : defaultBodyUnitPreferences;
+  const bodyMeasurementLogs = bodyMeasurementRows.map((row) => normalizeBodyMeasurementLog({ ...row, measurements: parseStoredMeasurements(row.measurements) }));
   const trainingSplit = trainingSplitSetting?.value ? normalizeTrainingSplit(JSON.parse(trainingSplitSetting.value)) : createDefaultTrainingSplit();
   const activeWorkout = normalizeActiveWorkout(activeWorkoutSetting?.value ? JSON.parse(activeWorkoutSetting.value) : null);
   const guidedWorkoutPreferences = normalizeGuidedWorkoutPreferences(guidedWorkoutSetting?.value ? JSON.parse(guidedWorkoutSetting.value) : null);
   const completedGuidedWorkouts = normalizeCompletedGuidedWorkouts(completedWorkoutsSetting?.value ? JSON.parse(completedWorkoutsSetting.value) : null);
   const machineProfiles = normalizeMachineProfiles(machineProfilesSetting?.value ? JSON.parse(machineProfilesSetting.value) : null);
-  return { exercises, sessions, sets, bodyWeightLogs, configs, currentUser: currentUser ?? null, unitSystem, trainingSplit, activeWorkout, guidedWorkoutPreferences, completedGuidedWorkouts, machineProfiles };
+  return { exercises, sessions, sets, bodyMeasurementLogs, configs, currentUser: currentUser ?? null, unitSystem, bodyUnitPreferences, trainingSplit, activeWorkout, guidedWorkoutPreferences, completedGuidedWorkouts, machineProfiles };
 }
 
 export async function registerUser(input: { name: string; email: string; password: string }) {
@@ -255,18 +284,38 @@ export async function logWorkout(input: { exerciseId: number; workoutDate: strin
   }
 }
 
-export async function importTrainingData(input: { bodyWeightLogs: ImportBodyWeightLog[]; workouts: ImportWorkoutLog[]; exerciseIdsToEnable: number[] }) {
+export async function importTrainingData(input: { bodyWeightLogs: ImportBodyWeightLog[]; bodyMeasurementLogs?: ImportBodyMeasurementLog[]; workouts: ImportWorkoutLog[]; exerciseIdsToEnable: number[] }) {
   const db = await getDatabase();
   const currentUser = await db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1");
   if (!currentUser) throw new Error("Please log in again.");
 
   const timestamp = new Date().toISOString();
   await db.withTransactionAsync(async () => {
-    for (const log of input.bodyWeightLogs) {
-      await db.runAsync("DELETE FROM body_weight_logs WHERE COALESCE(logged_date, substr(logged_at, 1, 10)) = ?", [log.loggedDate]);
+    for (const log of input.bodyMeasurementLogs ?? []) {
       await db.runAsync(
-        "INSERT INTO body_weight_logs (weight, unit, logged_at, logged_date, created_at) VALUES (?, ?, ?, ?, ?)",
-        [log.weight, log.unit, `${log.loggedDate}T12:00:00.000Z`, log.loggedDate, timestamp]
+        `
+        INSERT INTO body_measurement_logs (weight, measurements, notes, logged_at, logged_date, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(logged_date)
+        DO UPDATE SET
+          weight = COALESCE(excluded.weight, body_measurement_logs.weight),
+          measurements = excluded.measurements,
+          notes = excluded.notes,
+          updated_at = excluded.updated_at
+        `,
+        [log.weight, JSON.stringify(log.measurements), log.notes, `${log.loggedDate}T12:00:00.000Z`, log.loggedDate, timestamp, timestamp]
+      );
+    }
+
+    for (const log of input.bodyWeightLogs) {
+      await db.runAsync(
+        `
+        INSERT INTO body_measurement_logs (weight, measurements, notes, logged_at, logged_date, created_at, updated_at)
+        VALUES (?, '{}', NULL, ?, ?, ?, ?)
+        ON CONFLICT(logged_date)
+        DO UPDATE SET weight = excluded.weight, updated_at = excluded.updated_at
+        `,
+        [log.weight, `${log.loggedDate}T12:00:00.000Z`, log.loggedDate, timestamp, timestamp]
       );
     }
 
@@ -336,23 +385,71 @@ export async function updateWorkoutSessionMachineProfile(input: { sessionId: num
 
 export async function saveBodyWeightLog(input: { loggedDate: string; weight: number; unit: UnitSystem }) {
   const db = await getDatabase();
+  const timestamp = new Date().toISOString();
   await db.runAsync(
-    "INSERT INTO body_weight_logs (weight, unit, logged_at, logged_date, created_at) VALUES (?, ?, ?, ?, ?)",
-    [input.weight, input.unit, `${input.loggedDate}T12:00:00.000Z`, input.loggedDate, new Date().toISOString()]
+    `
+    INSERT INTO body_measurement_logs (weight, measurements, notes, logged_at, logged_date, created_at, updated_at)
+    VALUES (?, '{}', NULL, ?, ?, ?, ?)
+    ON CONFLICT(logged_date)
+    DO UPDATE SET weight = excluded.weight, updated_at = excluded.updated_at
+    `,
+    [input.weight, `${input.loggedDate}T12:00:00.000Z`, input.loggedDate, timestamp, timestamp]
   );
 }
 
 export async function updateBodyWeightLog(input: { id: number; loggedDate: string; weight: number; unit: UnitSystem }) {
   const db = await getDatabase();
   await db.runAsync(
-    "UPDATE body_weight_logs SET weight = ?, unit = ?, logged_at = ?, logged_date = ? WHERE id = ?",
-    [input.weight, input.unit, `${input.loggedDate}T12:00:00.000Z`, input.loggedDate, input.id]
+    "UPDATE body_measurement_logs SET weight = ?, logged_at = ?, logged_date = ?, updated_at = ? WHERE id = ?",
+    [input.weight, `${input.loggedDate}T12:00:00.000Z`, input.loggedDate, new Date().toISOString(), input.id]
   );
 }
 
 export async function deleteBodyWeightLog(id: number) {
   const db = await getDatabase();
-  await db.runAsync("DELETE FROM body_weight_logs WHERE id = ?", [id]);
+  const row = await db.getFirstAsync<{ measurements: string }>("SELECT measurements FROM body_measurement_logs WHERE id = ?", [id]);
+  if (Object.keys(parseStoredMeasurements(row?.measurements)).length) {
+    await db.runAsync("UPDATE body_measurement_logs SET weight = NULL, updated_at = ? WHERE id = ?", [new Date().toISOString(), id]);
+  } else {
+    await db.runAsync("DELETE FROM body_measurement_logs WHERE id = ?", [id]);
+  }
+}
+
+export async function saveBodyMeasurementLog(input: { loggedDate: string; weight: number | null; measurements: BodyMeasurementValues; notes?: string | null }) {
+  const db = await getDatabase();
+  const timestamp = new Date().toISOString();
+  await db.runAsync(
+    `
+    INSERT INTO body_measurement_logs (weight, measurements, notes, logged_at, logged_date, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(logged_date)
+    DO UPDATE SET
+      weight = excluded.weight,
+      measurements = excluded.measurements,
+      notes = excluded.notes,
+      logged_at = excluded.logged_at,
+      updated_at = excluded.updated_at
+    `,
+    [input.weight, JSON.stringify(input.measurements), input.notes?.trim() || null, `${input.loggedDate}T12:00:00.000Z`, input.loggedDate, timestamp, timestamp]
+  );
+}
+
+export async function updateBodyMeasurementLog(input: { id: number; loggedDate: string; weight: number | null; measurements: BodyMeasurementValues; notes?: string | null }) {
+  const db = await getDatabase();
+  await db.runAsync(
+    "UPDATE body_measurement_logs SET weight = ?, measurements = ?, notes = ?, logged_at = ?, logged_date = ?, updated_at = ? WHERE id = ?",
+    [input.weight, JSON.stringify(input.measurements), input.notes?.trim() || null, `${input.loggedDate}T12:00:00.000Z`, input.loggedDate, new Date().toISOString(), input.id]
+  );
+}
+
+export async function deleteBodyMeasurementLog(id: number) {
+  const db = await getDatabase();
+  const row = await db.getFirstAsync<{ weight: number | null }>("SELECT weight FROM body_measurement_logs WHERE id = ?", [id]);
+  if (Number.isFinite(row?.weight) && Number(row?.weight) > 0) {
+    await db.runAsync("UPDATE body_measurement_logs SET measurements = '{}', notes = NULL, updated_at = ? WHERE id = ?", [new Date().toISOString(), id]);
+  } else {
+    await db.runAsync("DELETE FROM body_measurement_logs WHERE id = ?", [id]);
+  }
 }
 
 export async function updateConfigWeight(id: number, weightFactor: number) {
@@ -363,6 +460,13 @@ export async function updateConfigWeight(id: number, weightFactor: number) {
 export async function updateUnitSystem(unitSystem: UnitSystem) {
   const db = await getDatabase();
   await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["unit_system", unitSystem]);
+}
+
+export async function updateBodyUnitPreferences(preferences: BodyUnitPreferences) {
+  const db = await getDatabase();
+  const normalized = normalizeBodyUnitPreferences(preferences);
+  await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["body_unit_preferences", JSON.stringify(normalized)]);
+  return normalized;
 }
 
 export async function updateGuidedWorkoutPreferences(preferences: GuidedWorkoutPreferences) {

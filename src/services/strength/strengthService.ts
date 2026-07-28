@@ -1,6 +1,6 @@
 import { ExerciseLoadType, getExerciseLoadType, isBodyweightLoadType } from "@/constants/exercises";
-import { getClosestBodyweightForDate } from "@/services/analytics/bulkAnalyticsService";
-import { BodyWeightLog, Exercise, ExerciseScorePoint, MuscleGroup, MuscleScorePoint, MuscleStrengthConfig, MuscleSummary, TrendStatus, WorkoutSession, WorkoutSet } from "@/types";
+import { getClosestBodyweightForDate } from "@/services/body/bodyWeightService";
+import { BodyWeightLog, Exercise, ExerciseScorePoint, MuscleGroup, MuscleScorePoint, MuscleStrengthConfig, WorkoutSession, WorkoutSet } from "@/types";
 import { muscles } from "@/utils/theme";
 
 const strengthWeight = 0.45;
@@ -62,12 +62,6 @@ export function calculateSessionPerformance(sets: ScoreableSet[], reference?: Pe
 
 export function calculateExerciseScore(sets: ScoreableSet[]) {
   return calculateSessionPerformance(sets)?.performancePoints ?? 0;
-}
-
-export function calculateTrendDirection(percentChange: number): TrendStatus {
-  if (percentChange > 2) return "Increasing";
-  if (percentChange < -2) return "Decreasing";
-  return "Stable";
 }
 
 export function findStrengthReference(points: ExerciseScorePoint[]) {
@@ -163,34 +157,6 @@ export function buildMuscleScorePoints(exercises: Exercise[], configs: MuscleStr
   return output;
 }
 
-export function trendFromChange(percentChange: number): TrendStatus {
-  return calculateTrendDirection(percentChange);
-}
-
-export function summarizeMuscles(exercises: Exercise[], configs: MuscleStrengthConfig[], points: MuscleScorePoint[]): MuscleSummary[] {
-  return muscles.map((muscle) => {
-    const musclePoints = points.filter((point) => point.muscle === muscle).sort((a, b) => a.date.localeCompare(b.date));
-    const current = averageTail(musclePoints, 14);
-    const previous = averageWindowBeforeTail(musclePoints, 14);
-    const percentChange = previous > 0 ? ((current - previous) / previous) * 100 : 0;
-    const contributors = configs
-      .filter((config) => config.muscle_group === muscle)
-      .map((config) => exercises.find((exercise) => exercise.id === config.exercise_id)?.name)
-      .filter((name): name is string => Boolean(name));
-    const fallbackContributors = exercises
-      .filter((exercise) => exercise.is_strength_exercise && exercise.primary_muscle === muscle)
-      .map((exercise) => exercise.name);
-
-    return {
-      muscle,
-      score: current,
-      percentChange,
-      trend: calculateTrendDirection(percentChange),
-      contributors: contributors.length ? contributors : fallbackContributors
-    };
-  });
-}
-
 function isScoreableSet(set: ScoreableSet) {
   return Number.isFinite(set.weight) && set.weight > 0 &&
     Number.isInteger(set.reps) && set.reps >= 1;
@@ -213,16 +179,4 @@ function compareReference(a: ExerciseScorePoint, b: ExerciseScorePoint) {
     a.fatigueResistance - b.fatigueResistance ||
     a.date.localeCompare(b.date) ||
     a.sessionId - b.sessionId;
-}
-
-function averageTail(points: MuscleScorePoint[], count: number) {
-  const selected = points.slice(-count);
-  if (!selected.length) return 0;
-  return selected.reduce((total, point) => total + point.score, 0) / selected.length;
-}
-
-function averageWindowBeforeTail(points: MuscleScorePoint[], count: number) {
-  const selected = points.slice(-count * 2, -count);
-  if (!selected.length) return averageTail(points, count);
-  return selected.reduce((total, point) => total + point.score, 0) / selected.length;
 }

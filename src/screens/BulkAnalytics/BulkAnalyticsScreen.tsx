@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { ReactNode, useMemo, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 
 import { LineGraph } from "@/components/LineGraph";
@@ -10,14 +10,15 @@ import { useFitnessStore } from "@/store/useFitnessStore";
 import { BulkAnalyticsRange, BulkAnalyticsScope, MuscleGroup } from "@/types";
 import { formatShortDate } from "@/utils/date";
 import { muscles, palette, spacing } from "@/utils/theme";
-import { bodyWeightDisplayUnit, bodyWeightFromStorageUnit } from "@/utils/units";
+import { bodyWeightFromStorageUnit } from "@/utils/units";
 
 const ranges: BulkAnalyticsRange[] = ["7d", "14d", "30d", "60d", "90d", "all"];
 const scopeKinds = ["overall", "muscle", "exercise"] as const;
 
-export function BulkAnalyticsScreen() {
+export function BulkAnalyticsScreen({ progressTabs }: { progressTabs?: ReactNode }) {
   const exercises = useFitnessStore((state) => state.exercises);
   const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
+  const bodyWeightUnit = useFitnessStore((state) => state.bodyUnitPreferences.weight);
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
   const musclePoints = useFitnessStore((state) => state.musclePoints);
   const strengthExercises = exercises.filter((exercise) => exercise.is_strength_exercise);
@@ -33,14 +34,14 @@ export function BulkAnalyticsScreen() {
   }, [bodyWeightLogs, exercisePoints, musclePoints, range, scope]);
 
   const bodyweightDelta = analytics?.previousBodyweight !== null && analytics?.currentBodyweight !== null
-    ? bodyWeightFromStorageUnit((analytics?.currentBodyweight ?? 0) - (analytics?.previousBodyweight ?? 0))
+    ? bodyWeightFromStorageUnit((analytics?.currentBodyweight ?? 0) - (analytics?.previousBodyweight ?? 0), bodyWeightUnit)
     : null;
   const absoluteTrend = analytics?.trend
     .filter((point) => point.absoluteStrength !== null)
     .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: point.absoluteStrength ?? 0 })) ?? [];
   const bodyweightTrend = analytics?.trend
     .filter((point) => point.bodyweight !== null)
-    .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: bodyWeightFromStorageUnit(point.bodyweight ?? 0) })) ?? [];
+    .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: bodyWeightFromStorageUnit(point.bodyweight ?? 0, bodyWeightUnit) })) ?? [];
   const relativeTrend = analytics?.trend
     .filter((point) => point.relativeStrength !== null)
     .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: point.relativeStrength ?? 0 })) ?? [];
@@ -51,9 +52,10 @@ export function BulkAnalyticsScreen() {
   return (
     <Screen>
       <View>
-        <Label>Did performance rise with body weight?</Label>
-        <Title>Bulk Analytics</Title>
+        <Label>Body weight and training performance</Label>
+        <Title>Progress overview</Title>
       </View>
+      {progressTabs}
 
       <Panel>
         <SectionTitle>Range</SectionTitle>
@@ -97,7 +99,7 @@ export function BulkAnalyticsScreen() {
       </Panel>
 
       <View style={styles.cardGrid}>
-        <MetricCard title="Bodyweight" value={bodyweightDelta === null ? "--" : `${bodyweightDelta >= 0 ? "+" : ""}${bodyweightDelta.toFixed(1)} ${bodyWeightDisplayUnit}`} detail={rangeLabel(range)} />
+        <MetricCard title="Bodyweight" value={bodyweightDelta === null ? "--" : `${bodyweightDelta >= 0 ? "+" : ""}${bodyweightDelta.toFixed(1)} ${bodyWeightUnit}`} detail={rangeLabel(range)} />
         <MetricCard title="Performance Points" value={formatPercent(analytics?.strengthChangePercent)} detail={analytics?.currentStrength ? `${analytics.currentStrength.toFixed(1)} pts avg` : "Performance data required"} />
         <MetricCard title="Points per Bodyweight" value={formatPercent(analytics?.relativeStrengthChangePercent)} detail={analytics?.relativeStrength ? `${analytics.relativeStrength.toFixed(3)} current` : "Bodyweight data required"} />
         <MetricCard title="Performance Gain Efficiency" value={analytics?.bulkEfficiency === null || analytics?.bulkEfficiency === undefined ? "--" : analytics.bulkEfficiency.toFixed(2)} detail={`Status: ${analytics?.status ?? "Bodyweight data required"}`} />
@@ -111,7 +113,7 @@ export function BulkAnalyticsScreen() {
       <Panel>
         <SectionTitle>Trends</SectionTitle>
         <Label>Bodyweight</Label>
-        <LineGraph points={bodyweightTrend} maxPoints={bodyweightTrend.length || 1} suffix={` ${bodyWeightDisplayUnit}`} height={150} emptyMessage="Bodyweight data required." />
+        <LineGraph points={bodyweightTrend} maxPoints={bodyweightTrend.length || 1} suffix={` ${bodyWeightUnit}`} height={150} emptyMessage="Bodyweight data required." />
         <Label>Performance Points</Label>
         <LineGraph points={absoluteTrend} maxPoints={absoluteTrend.length || 1} suffix=" pts" height={150} emptyMessage="Performance data required." />
         <Label>Points per Bodyweight</Label>
