@@ -141,7 +141,9 @@ export function normalizeBodyMeasurementLog(value: Partial<BodyMeasurementLog> &
     logged_at: value.logged_at ?? `${loggedDate}T12:00:00.000Z`,
     logged_date: loggedDate,
     created_at: createdAt,
-    updated_at: value.updated_at ?? createdAt
+    updated_at: value.updated_at ?? createdAt,
+    ...(value.weight_input_unit !== undefined ? { weight_input_unit: value.weight_input_unit === "lb" || value.weight_input_unit === "kg" ? value.weight_input_unit : null } : {}),
+    ...(value.circumference_input_unit !== undefined ? { circumference_input_unit: value.circumference_input_unit === "in" || value.circumference_input_unit === "cm" ? value.circumference_input_unit : null } : {})
   };
 }
 

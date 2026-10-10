@@ -1,59 +1,78 @@
-import { ReactNode, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 
 import { LineGraph } from "@/components/LineGraph";
+import { DetailsDisclosure } from "@/components/DetailsDisclosure";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { BulkAnalyticsInput, calculateBulkAnalytics } from "@/services/analytics/bulkAnalyticsService";
+import { useReportContext } from "@/hooks/useReportContext";
+import { SearchableExercisePicker } from "@/components/SearchableExercisePicker";
+import { exerciseGrowthReport, pointContextKey } from "@/services/analytics/growthReport";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { BulkAnalyticsRange, BulkAnalyticsScope, MuscleGroup } from "@/types";
-import { formatShortDate } from "@/utils/date";
-import { muscles, palette, spacing } from "@/utils/theme";
+import { formatShortDate, todayIso } from "@/utils/date";
+import { createThemedStyles } from "@/utils/themedStyles";
+import { muscles, spacing } from "@/utils/theme";
 import { bodyWeightFromStorageUnit } from "@/utils/units";
 
 const ranges: BulkAnalyticsRange[] = ["7d", "14d", "30d", "60d", "90d", "all"];
 const scopeKinds = ["overall", "muscle", "exercise"] as const;
 
-export function BulkAnalyticsScreen({ progressTabs }: { progressTabs?: ReactNode }) {
+type ReportContext = { range: BulkAnalyticsRange; scopeKind: (typeof scopeKinds)[number]; muscleGroup: MuscleGroup; exerciseId: number; comparisonKey: string };
+export function BulkAnalyticsScreen({ progressTabs, initialContext, onContextChange }: { progressTabs?: ReactNode; initialContext?: Partial<Omit<ReportContext, "range">> & { range?: string }; onContextChange?: (context: ReportContext) => void }) {
+  const { styles } = useStyles();
   const exercises = useFitnessStore((state) => state.exercises);
   const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
   const bodyWeightUnit = useFitnessStore((state) => state.bodyUnitPreferences.weight);
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
   const musclePoints = useFitnessStore((state) => state.musclePoints);
-  const strengthExercises = exercises.filter((exercise) => exercise.is_strength_exercise);
-  const [range, setRange] = useState<BulkAnalyticsRange>("30d");
-  const [scopeKind, setScopeKind] = useState<(typeof scopeKinds)[number]>("overall");
-  const [muscleGroup, setMuscleGroup] = useState<MuscleGroup>("Chest");
-  const [exerciseId, setExerciseId] = useState(strengthExercises[0]?.id ?? 0);
+  const account = useFitnessStore((state) => state.currentUser?.id);
+  const profiles = useFitnessStore((state) => state.machineProfiles);
+  const [chartMetric, setChartMetric] = useState<"performance" | "bodyweight">("performance");
+  const strengthExercises = exercises;
+  const context = useReportContext(account, "comparison", { range: "30d" as BulkAnalyticsRange, scopeKind: "overall" as (typeof scopeKinds)[number], muscleGroup: "Chest" as MuscleGroup, exerciseId: 0, comparisonKey: "" }, validContext);
+  const { range, scopeKind, muscleGroup, exerciseId, comparisonKey } = context.value;
+  function update(next: ReportContext) { context.update(next); onContextChange?.(next); }
+  useEffect(() => {
+    if (!initialContext || !["range", "scopeKind", "muscleGroup", "exerciseId", "comparisonKey"].some((key) => (initialContext as Record<string, unknown>)[key] !== undefined)) return;
+    const next = { ...context.value, ...initialContext,
+      ...(initialContext.exerciseId !== undefined && initialContext.comparisonKey === undefined ? { comparisonKey: "" } : {}),
+      range: ranges.includes(initialContext.range as BulkAnalyticsRange) ? initialContext.range as BulkAnalyticsRange : context.value.range };
+    if (validContext(next)) context.update(next);
+  }, [initialContext?.range, initialContext?.scopeKind, initialContext?.muscleGroup, initialContext?.exerciseId, initialContext?.comparisonKey]);
+  const setRange = (range: BulkAnalyticsRange) => update({ ...context.value, range });
+  const setScopeKind = (scopeKind: (typeof scopeKinds)[number]) => update({ ...context.value, scopeKind });
+  const setMuscleGroup = (muscleGroup: MuscleGroup) => update({ ...context.value, muscleGroup });
+  const setExerciseId = (exerciseId: number) => update({ ...context.value, exerciseId, comparisonKey: exerciseGrowthReport(exercisePoints, exerciseId, undefined, todayIso()).comparisonKey ?? "" });
   const selectedExercise = strengthExercises.find((exercise) => exercise.id === exerciseId) ?? strengthExercises[0];
-  const scope = buildScope(scopeKind, muscleGroup, selectedExercise?.id);
+  const scopeTitle = scopeKind === "muscle" ? `Scope · ${muscleGroup}` : scopeKind === "exercise" ? `Scope · ${selectedExercise?.name ?? "Exercise"}` : "Scope · Overall";
+  const selectedContextKey = comparisonKey || (selectedExercise && exerciseGrowthReport(exercisePoints, selectedExercise.id, undefined, todayIso()).comparisonKey) || "";
+  const scope = buildScope(scopeKind, muscleGroup, selectedExercise?.id, selectedContextKey);
+  const contexts = [...new Map(exercisePoints.filter((point) => point.exerciseId === selectedExercise?.id && point.comparability !== "self_context" && point.date <= todayIso()).map((point) => [pointContextKey(point), point])).entries()];
   const analytics = useMemo(() => {
     if (!scope) return null;
     return calculateBulkAnalytics({ ...scope, range, bodyWeightLogs, exercisePoints, musclePoints });
   }, [bodyWeightLogs, exercisePoints, musclePoints, range, scope]);
 
-  const bodyweightDelta = analytics?.previousBodyweight !== null && analytics?.currentBodyweight !== null
-    ? bodyWeightFromStorageUnit((analytics?.currentBodyweight ?? 0) - (analytics?.previousBodyweight ?? 0), bodyWeightUnit)
+  const bodyweightDelta = analytics && analytics.previousBodyweight !== null && analytics.currentBodyweight !== null
+    ? bodyWeightFromStorageUnit(analytics.currentBodyweight - analytics.previousBodyweight, bodyWeightUnit)
     : null;
   const absoluteTrend = analytics?.trend
     .filter((point) => point.absoluteStrength !== null)
-    .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: point.absoluteStrength ?? 0 })) ?? [];
+    .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: point.absoluteStrength ?? 0, details: [`Coverage ${point.coverage.availableCount}/${point.coverage.memberCount}`] })) ?? [];
   const bodyweightTrend = analytics?.trend
     .filter((point) => point.bodyweight !== null)
-    .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: bodyWeightFromStorageUnit(point.bodyweight ?? 0, bodyWeightUnit) })) ?? [];
+    .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: bodyWeightFromStorageUnit(point.bodyweight ?? 0, bodyWeightUnit), details: [`Weight observed ${point.bodyweightObservationDate}; carried forward ${point.bodyweightAgeCalendarDays} calendar days`] })) ?? [];
   const relativeTrend = analytics?.trend
     .filter((point) => point.relativeStrength !== null)
     .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: point.relativeStrength ?? 0 })) ?? [];
-  const efficiencyTrend = analytics?.trend
-    .filter((point) => point.bulkEfficiency !== null)
-    .map((point) => ({ date: point.date, label: formatShortDate(point.date), value: point.bulkEfficiency ?? 0 })) ?? [];
-
   return (
     <Screen>
       <View>
-        <Label>Body weight and training performance</Label>
-        <Title>Progress overview</Title>
+        <Label>Compare over time</Label>
+        <Title>Performance & weight</Title>
       </View>
       {progressTabs}
 
@@ -69,6 +88,7 @@ export function BulkAnalyticsScreen({ progressTabs }: { progressTabs?: ReactNode
       </Panel>
 
       <Panel>
+        <DetailsDisclosure title={scopeTitle}>
         <SectionTitle>Scope</SectionTitle>
         <View style={styles.segmentRow}>
           {scopeKinds.map((kind) => (
@@ -87,57 +107,75 @@ export function BulkAnalyticsScreen({ progressTabs }: { progressTabs?: ReactNode
           </View>
         ) : null}
         {scopeKind === "exercise" ? (
-          <View style={styles.chipRow}>
-            {strengthExercises.map((exercise) => (
-              <Pressable key={exercise.id} onPress={() => setExerciseId(exercise.id)} style={[styles.chip, selectedExercise?.id === exercise.id && styles.chipActive]}>
-                <Body style={[styles.chipText, selectedExercise?.id === exercise.id && styles.chipTextActive]}>{exercise.name}</Body>
-              </Pressable>
-            ))}
-            {!strengthExercises.length ? <Body>No strength exercises available.</Body> : null}
+          <View style={{ gap: spacing.sm }}>
+            <SearchableExercisePicker exercises={strengthExercises} selectedId={selectedExercise?.id} onSelect={setExerciseId} />
+            <Label>Comparable equipment context</Label>
+            {contexts.map(([key, point]) => <Pressable key={key} accessibilityRole="button" style={styles.chip}
+              accessibilityState={{ selected: selectedContextKey === key }} onPress={() => update({ ...context.value, comparisonKey: key })}>
+              <Body>{point.machineProfileId ? profiles.find((profile) => profile.id === point.machineProfileId)?.label ?? point.machineProfileId : "External / bodyweight context"}</Body>
+            </Pressable>)}
+            {!contexts.length ? <Body>No comparable equipment history is available.</Body> : null}
           </View>
         ) : null}
+        </DetailsDisclosure>
       </Panel>
 
+      <Panel><View style={styles.coverageRow}><SectionTitle>Coverage</SectionTitle><SectionTitle>{analytics?.coverage.availableCount ?? 0}/{analytics?.coverage.memberCount ?? 0}</SectionTitle></View>
+        <Body>{analytics?.coverage.complete ? "All fixed members are current." : "Aggregate withheld until all fixed members are current."}</Body>
+        {analytics?.coverage.missing.length ? <Body>Missing: {analytics.coverage.missing.join(", ")}</Body> : null}
+        {analytics?.coverage.stale.length ? <Body style={styles.notice}>Stale: {analytics.coverage.stale.join(", ")}</Body> : null}
+        {analytics?.coverage.excludedCount ? <Body>{analytics.coverage.excludedCount} observations outside this cohort.</Body> : null}
+        {analytics ? <DetailsDisclosure title="Comparison details">
+          <Body>Current {analytics.periodStart}–{analytics.periodEnd}; previous {analytics.previousPeriodStart}–{analytics.previousPeriodEnd}. Each observed training day uses its latest eligible entry in the same fixed equipment or exercise cohort.</Body>
+          <Body>Version {analytics.metricVersion}; each eligible exercise starts at 100. Relative strength is estimated 1RM divided by bodyweight for one exercise only.</Body>
+          <Body>Relative strength uses a same-day or prior bodyweight observation no older than 14 calendar days. Training becomes stale after 30 days; missing or stale fixed members withhold an aggregate.</Body>
+        </DetailsDisclosure> : null}
+        {context.error ? <Body>{context.error}</Body> : null}
+      </Panel>
       <View style={styles.cardGrid}>
-        <MetricCard title="Bodyweight" value={bodyweightDelta === null ? "--" : `${bodyweightDelta >= 0 ? "+" : ""}${bodyweightDelta.toFixed(1)} ${bodyWeightUnit}`} detail={rangeLabel(range)} />
-        <MetricCard title="Performance Points" value={formatPercent(analytics?.strengthChangePercent)} detail={analytics?.currentStrength ? `${analytics.currentStrength.toFixed(1)} pts avg` : "Performance data required"} />
-        <MetricCard title="Points per Bodyweight" value={formatPercent(analytics?.relativeStrengthChangePercent)} detail={analytics?.relativeStrength ? `${analytics.relativeStrength.toFixed(3)} current` : "Bodyweight data required"} />
-        <MetricCard title="Performance Gain Efficiency" value={analytics?.bulkEfficiency === null || analytics?.bulkEfficiency === undefined ? "--" : analytics.bulkEfficiency.toFixed(2)} detail={`Status: ${analytics?.status ?? "Bodyweight data required"}`} />
+        <MetricCard title="Average bodyweight" value={analytics?.currentBodyweight === null || analytics?.currentBodyweight === undefined ? "—" : `${bodyWeightFromStorageUnit(analytics.currentBodyweight, bodyWeightUnit).toFixed(1)} ${bodyWeightUnit}`} detail={bodyweightDelta === null ? "Need both periods" : `${bodyweightDelta >= 0 ? "+" : ""}${bodyweightDelta.toFixed(1)} ${bodyWeightUnit} · ${formatPercent(analytics?.bodyweightChangePercent)}`} />
+        <MetricCard title="Performance" value={formatPercent(analytics?.strengthChangePercent)} detail={analytics?.currentStrength === null || analytics?.currentStrength === undefined ? "Current data unavailable" : `${analytics.currentStrength.toFixed(1)} pts · current average`} />
+        <MetricCard title="Relative 1RM / weight" value={formatPercent(analytics?.relativeStrengthChangePercent)} detail={analytics?.relativeStrength === null || analytics?.relativeStrength === undefined ? analytics?.relativeStrengthAvailable ? "No fresh paired weigh-in" : "Choose one exercise" : `${analytics.relativeStrength.toFixed(3)} current ratio`} />
       </View>
 
       <Panel>
-        <SectionTitle>Insight</SectionTitle>
+        <SectionTitle>{analytics?.status ?? "Comparison"}</SectionTitle>
         <Body>{analytics?.insight ?? "Bodyweight and performance data required."}</Body>
       </Panel>
 
       <Panel>
-        <SectionTitle>Trends</SectionTitle>
-        <Label>Bodyweight</Label>
-        <LineGraph points={bodyweightTrend} maxPoints={bodyweightTrend.length || 1} suffix={` ${bodyWeightUnit}`} height={150} emptyMessage="Bodyweight data required." />
-        <Label>Performance Points</Label>
-        <LineGraph points={absoluteTrend} maxPoints={absoluteTrend.length || 1} suffix=" pts" height={150} emptyMessage="Performance data required." />
-        <Label>Points per Bodyweight</Label>
-        <LineGraph points={relativeTrend} maxPoints={relativeTrend.length || 1} height={150} emptyMessage="Bodyweight data required." />
-        <Label>Performance gain efficiency</Label>
-        <LineGraph points={efficiencyTrend} maxPoints={efficiencyTrend.length || 1} height={150} emptyMessage="Bodyweight change too small to calculate bulk efficiency." />
+        <SectionTitle>Trend</SectionTitle>
+        <View style={styles.segmentRow}>
+          {(["performance", "bodyweight"] as const).map((metric) => <Pressable key={metric} accessibilityRole="button" accessibilityState={{ selected: chartMetric === metric }} onPress={() => setChartMetric(metric)} style={[styles.segmentButton, chartMetric === metric && styles.segmentButtonActive]}>
+            <Body style={[styles.segmentText, chartMetric === metric && styles.segmentTextActive]}>{metric === "performance" ? "Performance" : "Average bodyweight"}</Body>
+          </Pressable>)}
+        </View>
+        <Label>{chartMetric === "performance" ? "Performance points" : "Average bodyweight"}</Label>
+        <LineGraph points={chartMetric === "performance" ? absoluteTrend : bodyweightTrend} suffix={chartMetric === "performance" ? " pts" : ` ${bodyWeightUnit}`} height={170}
+          emptyMessage={chartMetric === "performance" ? "Performance data unavailable for this cohort." : "No bodyweight observation in this range."} />
+        <DetailsDisclosure title="Relative strength">
+          <Label>Estimated 1RM ÷ bodyweight · one exercise</Label>
+          <LineGraph points={relativeTrend} height={150} emptyMessage="Need a fresh bodyweight pair." />
+        </DetailsDisclosure>
       </Panel>
     </Screen>
   );
 }
 
-function buildScope(kind: "overall" | "muscle" | "exercise", muscleGroup: MuscleGroup, exerciseId?: number): BulkAnalyticsScope | null {
+function validContext(value: unknown): value is { range: BulkAnalyticsRange; scopeKind: (typeof scopeKinds)[number]; muscleGroup: MuscleGroup; exerciseId: number; comparisonKey: string } {
+  const p = value as { range: BulkAnalyticsRange; scopeKind: (typeof scopeKinds)[number]; muscleGroup: MuscleGroup; exerciseId: number; comparisonKey: string } | null;
+  return !!p && ranges.includes(p.range) && scopeKinds.includes(p.scopeKind) && muscles.includes(p.muscleGroup) && Number.isSafeInteger(p.exerciseId) && typeof p.comparisonKey === "string";
+}
+
+function buildScope(kind: "overall" | "muscle" | "exercise", muscleGroup: MuscleGroup, exerciseId?: number, comparisonKey?: string): BulkAnalyticsScope | null {
   if (kind === "overall") return { scope: "overall" };
   if (kind === "muscle") return { scope: "muscle", muscleGroup };
   if (!exerciseId) return null;
-  return { scope: "exercise", exerciseId };
+  return { scope: "exercise", exerciseId, comparisonKey: comparisonKey || undefined };
 }
 
 function labelScope(kind: string) {
   return kind.charAt(0).toUpperCase() + kind.slice(1);
-}
-
-function rangeLabel(range: BulkAnalyticsRange) {
-  return range === "all" ? "all time" : `this ${range}`;
 }
 
 function formatPercent(value: number | null | undefined) {
@@ -146,6 +184,7 @@ function formatPercent(value: number | null | undefined) {
 }
 
 function MetricCard({ title, value, detail }: { title: string; value: string; detail: string }) {
+  const { styles } = useStyles();
   return (
     <Panel style={styles.metricCard}>
       <Label>{title}</Label>
@@ -155,13 +194,14 @@ function MetricCard({ title, value, detail }: { title: string; value: string; de
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
   chipRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: spacing.sm
   },
   chip: {
+    minHeight: 44,
     borderWidth: 1,
     borderColor: palette.border,
     borderRadius: 8,
@@ -211,6 +251,8 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: spacing.md
   },
+  coverageRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md },
+  notice: { color: palette.warning, fontWeight: "700" },
   metricCard: {
     flexGrow: 1,
     flexBasis: 180,
@@ -219,4 +261,4 @@ const styles = StyleSheet.create({
   metricValue: {
     fontSize: 24
   }
-});
+}));

@@ -1,435 +1,180 @@
-import { ReactNode, useMemo, useState } from "react";
+import { ReactNode, useEffect, useMemo, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-
+import { Check, ChevronDown, ChevronUp, Scale } from "lucide-react-native";
+import { Button } from "@/components/Button";
 import { LineGraph } from "@/components/LineGraph";
+import { DetailsDisclosure } from "@/components/DetailsDisclosure";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
-import { Body, Label, SectionTitle, Title } from "@/components/Text";
-import { detectPersonalRecords, monthlyScoreAverages, weeklyScoreAverages } from "@/services/analytics/analyticsService";
+import { SearchableExercisePicker } from "@/components/SearchableExercisePicker";
+import { SegmentedControl } from "@/components/SegmentedControl";
+import { SessionRow } from "@/components/SessionRow";
+import { Body, Label, SectionTitle } from "@/components/Text";
+import { addCalendarDays, isCalendarDate } from "@/domain/calendar";
+import { useReportContext } from "@/hooks/useReportContext";
+import { buildExerciseScoreReport } from "@/services/strength/strengthService";
+import { exerciseGrowthReport, pointContextKey } from "@/services/analytics/growthReport";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { BodyWeightLog, ExerciseScorePoint } from "@/types";
-import { formatShortDate, todayIso } from "@/utils/date";
-import { buildPreviousLogs } from "@/utils/logs";
-import { muscles, palette, spacing } from "@/utils/theme";
-import { bodyWeightFromStorageUnit, formatBodyWeight } from "@/utils/units";
+import { formatCompactDate, formatWeekdayShort, todayIso } from "@/utils/date";
+import { buildPreviousLogs, formatLoggedLoad } from "@/utils/logs";
+import { annotateSessionProgress } from "@/utils/sessionDisplay";
+import { createThemedStyles } from "@/utils/themedStyles";
+import { spacing } from "@/utils/theme";
+import { pressableFeedback } from "@/utils/touch";
+import { formatBodyWeight, formatWeight } from "@/utils/units";
 
-type ProgressRange = "month" | "year" | "all";
-
-const ranges: Array<{ key: ProgressRange; label: string }> = [
-  { key: "month", label: "Month" },
-  { key: "year", label: "Year" },
-  { key: "all", label: "All Time" }
+type StrengthRange = "month" | "quarter" | "half" | "year" | "all";
+type Preferences = { exerciseId: number; comparisonKey: string; range: StrengthRange; view: "progress" | "comparison"; averages: boolean };
+const defaults: Preferences = { exerciseId: 0, comparisonKey: "", range: "quarter", view: "progress", averages: false };
+const rangeOptions: Array<{ key: StrengthRange; label: string; accessibilityLabel: string; days?: number }> = [
+  { key: "month", label: "1M", accessibilityLabel: "30 days", days: 30 },
+  { key: "quarter", label: "3M", accessibilityLabel: "90 days", days: 90 },
+  { key: "half", label: "6M", accessibilityLabel: "180 days", days: 180 },
+  { key: "year", label: "1Y", accessibilityLabel: "365 days", days: 365 },
+  { key: "all", label: "All", accessibilityLabel: "All time" }
 ];
-
-export function AnalyticsScreen({ progressTabs }: { progressTabs?: ReactNode }) {
-  const exercises = useFitnessStore((state) => state.exercises);
-  const sessions = useFitnessStore((state) => state.sessions);
-  const exercisePoints = useFitnessStore((state) => state.exercisePoints);
-  const sets = useFitnessStore((state) => state.sets);
-  const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
-  const bodyWeightUnit = useFitnessStore((state) => state.bodyUnitPreferences.weight);
-  const unitSystem = useFitnessStore((state) => state.unitSystem);
-  const strengthExercises = exercises.filter((exercise) => exercise.is_strength_exercise);
-  const groupedStrengthExercises = useMemo(() => {
-    return muscles
-      .map((muscle) => ({
-        muscle,
-        exercises: strengthExercises
-          .filter((exercise) => exercise.primary_muscle === muscle)
-          .sort((a, b) => a.name.localeCompare(b.name))
-      }))
-      .filter((group) => group.exercises.length);
-  }, [strengthExercises]);
-  const [selectedId, setSelectedId] = useState(strengthExercises[0]?.id ?? 0);
-  const [viewMode, setViewMode] = useState<"progress" | "comparison">("progress");
-  const [range, setRange] = useState<ProgressRange>("month");
-  const selected = strengthExercises.find((exercise) => exercise.id === selectedId) ?? strengthExercises[0];
-  const selectedPoints = selected
-    ? exercisePoints.filter((point) => point.exerciseId === selected.id)
-    : [];
-  const rangedSelectedPoints = filterPointsByRange(selectedPoints, range);
-  const rangedBodyWeightLogs = filterBodyWeightLogsByRange(bodyWeightLogs, range);
-  const previousLogs = useMemo(() => buildPreviousLogs({ exerciseId: selected?.id, exercises, sessions, sets, points: selectedPoints, unitSystem }), [exercises, selected?.id, selectedPoints, sessions, sets, unitSystem]);
-  const rangedPreviousLogs = filterLogsByRange(previousLogs, range);
-  const weeklyExercisePoints = weeklyScoreAverages(selectedPoints).map((point) => ({ date: point.date, label: formatShortDate(point.date), value: point.score }));
-  const monthlyExercisePoints = monthlyScoreAverages(selectedPoints).map((point) => ({ date: point.date, label: formatMonthLabel(point.date), value: point.score }));
-  const bodyWeightByDate = new Map(bodyWeightLogs.map((log) => [log.logged_at.slice(0, 10), log]));
-  const strengthPointByDate = new Map(selectedPoints.map((point) => [point.date, point]));
-  const logByDate = new Map(previousLogs.map((log) => [log.date, log]));
-  const weightPoints = buildBodyWeightGraphPoints(rangedBodyWeightLogs, range, strengthPointByDate, logByDate, bodyWeightUnit);
-  const comparisonStrengthPoints = buildStrengthGraphPoints(rangedSelectedPoints, range, bodyWeightByDate, previousLogs, bodyWeightUnit);
-  const comparisonDates = [...new Set([...weightPoints.map((point) => point.date), ...comparisonStrengthPoints.map((point) => point.date)])].sort();
-  const progressGraphPoints = buildStrengthGraphPoints(rangedSelectedPoints, range, bodyWeightByDate, previousLogs, bodyWeightUnit);
-  const prs = useMemo(() => detectPersonalRecords(selectedPoints), [selectedPoints]);
-  const sessionComparison = compareLatestSessions(rangedSelectedPoints);
-
-  return (
-    <Screen>
-      <View>
-        <Label>Individual exercise performance</Label>
-        <Title>Progress</Title>
-      </View>
-      {progressTabs}
-
-      <Panel>
-        <SectionTitle>Strength exercise</SectionTitle>
-        {groupedStrengthExercises.map((group) => (
-          <View key={group.muscle} style={styles.exerciseGroup}>
-            <Label>{group.muscle}</Label>
-            <View style={styles.chipRow}>
-              {group.exercises.map((exercise) => (
-                <Pressable key={exercise.id} onPress={() => setSelectedId(exercise.id)} style={[styles.chip, selected?.id === exercise.id && styles.chipActive]}>
-                  <Body style={[styles.chipText, selected?.id === exercise.id && styles.chipTextActive]}>{exercise.name}</Body>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-        ))}
-        {!strengthExercises.length ? <Body>Select exercises on the Exercises page to enable scoring.</Body> : null}
-      </Panel>
-
-      <Panel>
-        <SectionTitle>View</SectionTitle>
-        <View style={styles.segmentRow}>
-          <Pressable onPress={() => setViewMode("progress")} style={[styles.segmentButton, viewMode === "progress" && styles.segmentButtonActive]}>
-            <Body style={[styles.segmentText, viewMode === "progress" && styles.segmentTextActive]}>Progress</Body>
-          </Pressable>
-          <Pressable onPress={() => setViewMode("comparison")} style={[styles.segmentButton, viewMode === "comparison" && styles.segmentButtonActive]}>
-            <Body style={[styles.segmentText, viewMode === "comparison" && styles.segmentTextActive]}>Weight comparison</Body>
-          </Pressable>
-        </View>
-      </Panel>
-
-      <Panel>
-        <SectionTitle>Range</SectionTitle>
-        <View style={styles.chipRow}>
-          {ranges.map((item) => (
-            <Pressable key={item.key} onPress={() => setRange(item.key)} style={[styles.chip, range === item.key && styles.chipActive]}>
-              <Body style={[styles.chipText, range === item.key && styles.chipTextActive]}>{item.label}</Body>
-            </Pressable>
-          ))}
-        </View>
-      </Panel>
-
-      {selected && viewMode === "comparison" ? (
-        <Panel>
-          <SectionTitle>{selected.name} vs body weight</SectionTitle>
-          <Label>Body weight</Label>
-          <LineGraph points={weightPoints} suffix={` ${bodyWeightUnit}`} height={150} emptyMessage="Log body weight to draw a trend." xLabels={comparisonDates} />
-          <Label>Performance Points</Label>
-          <LineGraph points={comparisonStrengthPoints} suffix=" pts" height={150} xLabels={comparisonDates} />
-        </Panel>
-      ) : null}
-
-      {selected && viewMode === "progress" ? (
-        <Panel>
-          <View style={styles.summaryRow}>
-            <View>
-              <Label>{selected.primary_muscle}</Label>
-              <SectionTitle>{selected.name}</SectionTitle>
-              <Body>
-                {sessionComparison
-                  ? `${formatPoints(sessionComparison.current.score)} latest vs ${formatPoints(sessionComparison.previous?.score)} previous`
-                  : `${formatPoints(prs.bestPerformance?.score ?? null)} all-time peak`}
-              </Body>
-            </View>
-            <View style={styles.bigScore}>
-              <SectionTitle>{sessionComparison?.changePercent !== null && sessionComparison?.changePercent !== undefined
-                ? formatPercentChange(sessionComparison.changePercent)
-                : formatPoints(sessionComparison?.current.score ?? prs.bestPerformance?.score ?? null)}</SectionTitle>
-            </View>
-          </View>
-          <LineGraph
-            points={progressGraphPoints}
-            maxPoints={progressGraphPoints.length || 1}
-            suffix=" pts"
-            emptyMessage={`Performance Points data required for this ${rangeLabel(range)}.`}
-            scrollable
-          />
-          <Body>Each point is an individual workout score. Scroll horizontally to review older sessions.</Body>
-        </Panel>
-      ) : null}
-
-      {selected && viewMode === "progress" ? (
-        <Panel>
-          <SectionTitle>Exercise averages</SectionTitle>
-          <Label>Weekly</Label>
-          <LineGraph points={weeklyExercisePoints} suffix=" pts" height={150} />
-          <Label>Monthly</Label>
-          <LineGraph points={monthlyExercisePoints} suffix=" pts" height={150} />
-        </Panel>
-      ) : null}
-
-      {selected && viewMode === "progress" ? (
-        <Panel>
-          <View style={styles.logsHeader}>
-            <View>
-              <SectionTitle>Workout logs</SectionTitle>
-              <Body>{selected.name}</Body>
-            </View>
-            <Body style={styles.logCount}>{rangedPreviousLogs.length} logs</Body>
-          </View>
-          {rangedPreviousLogs.length ? rangedPreviousLogs.map((log) => (
-            <View key={log.sessionId} style={styles.logRow}>
-              <View style={styles.logHeading}>
-                <Body style={styles.logDate}>{formatShortDate(log.date)}</Body>
-                <Body style={styles.logScore}>{log.score ? `${log.score.toFixed(1)} pts` : "No score"}</Body>
-              </View>
-              <Body>{log.sets.join("  |  ")}</Body>
-              {log.point ? (
-                <Body style={styles.logDetails}>
-                  e1RM {log.point.estimated1RM.toFixed(1)} · Volume {log.point.failureVolume.toFixed(1)} · Resistance {(log.point.fatigueResistance * 100).toFixed(0)}%
-                </Body>
-              ) : null}
-            </View>
-          )) : (
-            <Body>No workout logs in this {rangeLabel(range)}.</Body>
-          )}
-        </Panel>
-      ) : null}
-    </Screen>
-  );
+function isStrengthRange(value: unknown): value is StrengthRange {
+  return rangeOptions.some((option) => option.key === value);
 }
-
-function filterPointsByRange(points: ExerciseScorePoint[], range: ProgressRange) {
-  if (range === "all") return points;
-  const cutoff = cutoffDate(range);
-  const today = todayDate();
-  return points.filter((point) => {
-    const date = toDate(point.date);
-    return date >= cutoff && date <= today;
-  });
+function valid(value: unknown): value is Preferences {
+  const item = value as Preferences | null;
+  return !!item && Number.isSafeInteger(item.exerciseId) && typeof item.comparisonKey === "string" && isStrengthRange(item.range)
+    && ["progress", "comparison"].includes(item.view) && typeof item.averages === "boolean";
 }
-
-function filterBodyWeightLogsByRange(logs: BodyWeightLog[], range: ProgressRange) {
-  const sortedLogs = [...logs].sort((a, b) => a.logged_at.localeCompare(b.logged_at) || a.created_at.localeCompare(b.created_at));
-  if (range === "all") return sortedLogs;
-  const cutoff = cutoffDate(range);
-  const today = todayDate();
-  return sortedLogs.filter((log) => {
-    const date = toDate(log.logged_at.slice(0, 10));
-    return date >= cutoff && date <= today;
-  });
-}
-
-function filterLogsByRange(logs: ReturnType<typeof buildPreviousLogs>, range: ProgressRange) {
-  if (range === "all") return logs;
-  const cutoff = cutoffDate(range);
-  const today = todayDate();
-  return logs.filter((log) => {
-    const date = toDate(log.date);
-    return date >= cutoff && date <= today;
-  });
-}
-
-function buildStrengthGraphPoints(points: ExerciseScorePoint[], range: ProgressRange, bodyWeightByDate: Map<string, BodyWeightLog>, previousLogs: ReturnType<typeof buildPreviousLogs>, bodyWeightUnit: "lb" | "kg") {
-  if (usesMonthlyAverages(range)) {
-    return monthlyAveragePoints(points, (point) => point.date, (point) => point.score, "Score");
-  }
-
-  return points.map((point) => {
-    const weightLog = bodyWeightByDate.get(point.date);
-    const workoutLog = previousLogs.find((item) => item.sessionId === point.sessionId);
-    return {
-      date: point.date,
-      key: String(point.sessionId),
-      label: formatShortDate(point.date),
-      value: point.score,
-      details: [
-        weightLog ? `Body weight ${formatBodyWeight(weightLog.weight, bodyWeightUnit)}` : "No body weight logged",
-        ...(workoutLog?.sets ?? [])
-      ]
-    };
-  });
-}
-
-function buildBodyWeightGraphPoints(logs: BodyWeightLog[], range: ProgressRange, strengthPointByDate: Map<string, ExerciseScorePoint>, logByDate: Map<string, ReturnType<typeof buildPreviousLogs>[number]>, bodyWeightUnit: "lb" | "kg") {
-  if (usesMonthlyAverages(range)) {
-    return monthlyAveragePoints(logs, (log) => log.logged_at.slice(0, 10), (log) => bodyWeightFromStorageUnit(log.weight, bodyWeightUnit), "Body weight");
-  }
-
-  return logs.map((log) => {
-    const loggedDate = log.logged_at.slice(0, 10);
-    const strengthPoint = strengthPointByDate.get(loggedDate);
-    const workoutLog = logByDate.get(loggedDate);
-    return {
-      date: loggedDate,
-      label: formatShortDate(loggedDate),
-      value: bodyWeightFromStorageUnit(log.weight, bodyWeightUnit),
-      details: [
-        strengthPoint ? `Performance ${strengthPoint.performancePoints.toFixed(1)} pts | e1RM ${strengthPoint.estimated1RM.toFixed(1)}` : "No eligible lift logged",
-        ...(workoutLog?.sets ?? [])
-      ]
-    };
-  });
-}
-
-function monthlyAveragePoints<T>(items: T[], getDate: (item: T) => string, getValue: (item: T) => number, label: string) {
-  const buckets = items.reduce<Map<string, number[]>>((groups, item) => {
-    const key = getDate(item).slice(0, 7);
-    groups.set(key, [...(groups.get(key) ?? []), getValue(item)]);
-    return groups;
-  }, new Map());
-
-  return [...buckets.entries()].map(([month, values]) => ({
-    date: month,
-    label: formatMonthLabel(month),
-    value: values.reduce((total, value) => total + value, 0) / values.length,
-    details: [`${label}: ${values.length} ${values.length === 1 ? "entry" : "entries"} averaged`]
-  }));
-}
-
-function usesMonthlyAverages(range: ProgressRange) {
-  return range === "year" || range === "all";
-}
-
-function cutoffDate(range: Exclude<ProgressRange, "all">) {
-  const cutoff = todayDate();
-  cutoff.setDate(cutoff.getDate() - rangeDays(range) + 1);
-  return cutoff;
-}
-
-function todayDate() {
-  return toDate(todayIso());
-}
-
-function toDate(value: string) {
-  return new Date(`${value}T00:00:00`);
-}
-
-function rangeDays(range: Exclude<ProgressRange, "all">) {
-  if (range === "month") return 30;
-  return 365;
-}
-
-function rangeLabel(range: ProgressRange) {
-  if (range === "all") return "all-time range";
-  return range;
-}
-
-function formatPoints(value: number | null | undefined) {
-  return Number.isFinite(value) ? `${Number(value).toFixed(1)} pts` : "--";
-}
-
-function compareLatestSessions(points: ExerciseScorePoint[]) {
-  const ordered = [...points].sort((left, right) => left.date.localeCompare(right.date) || left.sessionId - right.sessionId);
-  const current = ordered.at(-1);
-  if (!current) return null;
-  const previous = ordered.at(-2);
-  const changePercent = previous?.score
-    ? ((current.score - previous.score) / previous.score) * 100
+export function AnalyticsScreen({ progressTabs, initialExerciseId, initialRange, initialComparisonKey, onContextChange, onCompare }: {
+  progressTabs?: ReactNode; initialExerciseId?: number; initialRange?: string; initialComparisonKey?: string; onContextChange?: (context: { exerciseId: number; range: string; comparisonKey: string }) => void; onCompare?: (context: { exerciseId: number; comparisonKey: string }) => void;
+}) {
+  const { palette, styles } = useStyles();
+  const exercises = useFitnessStore((s) => s.exercises);
+  const sessions = useFitnessStore((s) => s.sessions);
+  const sets = useFitnessStore((s) => s.sets);
+  const points = useFitnessStore((s) => s.exercisePoints);
+  const weights = useFitnessStore((s) => s.bodyWeightLogs);
+  const account = useFitnessStore((s) => s.currentUser?.id);
+  const profiles = useFitnessStore((s) => s.machineProfiles);
+  const unit = useFitnessStore((s) => s.unitSystem);
+  const bodyUnit = useFitnessStore((s) => s.bodyUnitPreferences.weight);
+  const preferences = useReportContext(account, "strength", defaults, valid);
+  const selection = preferences.value;
+  function update(next: Preferences) { preferences.update(next); onContextChange?.({ exerciseId: next.exerciseId, range: next.range, comparisonKey: next.comparisonKey }); }
+  const exclusions = useMemo(() => buildExerciseScoreReport(exercises, sessions, sets, weights).exclusions, [exercises, sessions, sets, weights]);
+  const [allLogs, setAllLogs] = useState(false);
+  const [chartMetric, setChartMetric] = useState<"estimated1RM" | "points">("estimated1RM");
+  useEffect(() => {
+    if (initialExerciseId === undefined && initialRange === undefined && initialComparisonKey === undefined) return;
+    preferences.update({ ...selection, exerciseId: initialExerciseId ?? selection.exerciseId, comparisonKey: initialComparisonKey ?? selection.comparisonKey,
+      range: isStrengthRange(initialRange) ? initialRange : selection.range });
+  }, [initialExerciseId, initialRange, initialComparisonKey]);
+  const available = exercises;
+  // Without a saved choice, open on the exercise trained most recently rather than the alphabetical first.
+  const recentExerciseId = useMemo(() => {
+    const latestSession = [...sessions].filter((session) => isCalendarDate(session.workout_date)).sort((a, b) => b.workout_date.localeCompare(a.workout_date) || b.id - a.id)
+      .find((session) => sets.some((set) => set.session_id === session.id));
+    return latestSession ? sets.find((set) => set.session_id === latestSession.id)?.exercise_id : undefined;
+  }, [sessions, sets]);
+  const selected = available.find((e) => e.id === selection.exerciseId) ?? available.find((e) => e.id === recentExerciseId) ?? available[0];
+  const asOf = todayIso();
+  // Keys saved before untagged machine entries shared one context named a single entry; open the default instead.
+  const requestedContext = selection.comparisonKey.includes(":unknown-machine:") ? "" : selection.comparisonKey;
+  const report = exerciseGrowthReport(points, selected?.id ?? 0, requestedContext, asOf);
+  const rangeDays = rangeOptions.find((option) => option.key === selection.range)?.days;
+  const cutoff = rangeDays === undefined ? "0001-01-01" : addCalendarDays(asOf, -(rangeDays - 1));
+  const ranged = report.points.filter((point) => point.date >= cutoff);
+  const sessionIds = new Set(report.points.map((point) => point.sessionId));
+  const knownSessions = sessions.filter((session) => isCalendarDate(session.workout_date) && session.workout_date <= asOf
+    && (!selected || !report.current?.machineProfileId || session.machine_profile_id === report.current.machineProfileId));
+  const logs = buildPreviousLogs({ exerciseId: selected?.id, exercises, sessions: knownSessions, sets: sets.filter((set) => knownSessions.some((s) => s.id === set.session_id)),
+    points: report.points, unitSystem: unit, machineProfiles: profiles }).filter((log) => log.date >= cutoff
+      && (sessionIds.has(log.sessionId) || !report.current || knownSessions.find((s) => s.id === log.sessionId)?.machine_profile_id === report.current.machineProfileId));
+  const chart = ranged.map((point) => ({ key: String(point.sessionId), date: point.date, label: formatCompactDate(point.date), value: chartMetric === "estimated1RM" ? point.estimated1RM : point.score,
+    details: [`Estimated 1RM ${formatWeight(point.estimated1RM, unit)}`, `Performance ${point.score.toFixed(1)} points`, `Working volume ${formatWeight(point.failureVolume, unit)} × reps`,
+      `Set retention ${(point.fatigueResistance * 100).toFixed(0)}%`,
+      point.bodyWeightEstimate ? `Bodyweight ${formatBodyWeight(point.bodyWeightEstimate.weightLb, bodyUnit)} observed ${point.bodyWeightEstimate.observationDate}${point.bodyWeightEstimate.isEstimated ? `; carried forward ${point.bodyWeightEstimate.ageCalendarDays} days` : ""}` : "External load; no bodyweight estimate used",
+      ...(logs.find((log) => log.sessionId === point.sessionId)?.sets ?? [])] }));
+  const sessionProgress = useMemo(() => annotateSessionProgress(report.points), [report.points]);
+  const bestE1RMPoint = report.points.reduce<(typeof report.points)[number] | null>((best, point) => !best || point.estimated1RM > best.estimated1RM ? point : best, null);
+  const e1RMChangeFromStart = report.start && report.current
+    ? (report.current.estimated1RM / report.start.estimated1RM - 1) * 100
     : null;
-  return { current, previous, changePercent };
+  function contextLabel(key: string) {
+    const point = report.points.find((p) => pointContextKey(p) === key) ?? points.find((p) => p.exerciseId === selected?.id && pointContextKey(p) === key);
+    const sessions = report.points.length && pointContextKey(report.points[0]) === key ? report.points.length : points.filter((p) => p.exerciseId === selected?.id && pointContextKey(p) === key).length;
+    const name = key.endsWith(":machine:untagged") ? "No machine tag" : point?.machineProfileId ? profiles.find((p) => p.id === point.machineProfileId)?.label ?? `Equipment ${point.machineProfileId}` : "Free weights / bodyweight";
+    return `${name} · ${sessions} ${sessions === 1 ? "session" : "sessions"}`;
+  }
+  return <Screen>
+    {progressTabs}
+    {preferences.error ? <Body>{preferences.error}</Body> : null}
+    <Panel><SearchableExercisePicker exercises={available} selectedId={selected?.id} onSelect={(exerciseId) => update({ ...selection, exerciseId, comparisonKey: "" })} />
+      {!available.length ? <Body>Record working sets to begin a growth history.</Body> : null}
+      {report.contexts.length > 1 ? <View style={styles.group}><Label>Equipment context</Label>{report.contexts.map((key) => {
+        const active = report.comparisonKey === key;
+        return <Pressable key={key} accessibilityRole="button" accessibilityState={{ selected: active }} onPress={() => update({ ...selection, comparisonKey: key })}
+          style={pressableFeedback([styles.contextOption, active && styles.contextOptionActive])}>
+          <Body numberOfLines={2} style={[styles.contextText, active && styles.contextTextActive]}>{contextLabel(key)}</Body>
+          {active ? <Check size={16} color={palette.ink} /> : null}
+        </Pressable>;
+      })}</View> : null}
+      {report.excludedContextCount ? <Body style={styles.hint}>Loads differ between machines, so each one has its own trend. {report.excludedContextCount} {report.excludedContextCount === 1 ? "session is" : "sessions are"} on other equipment.</Body> : null}
+    </Panel>
+    <Panel>
+      <SectionTitle>Trend</SectionTitle>
+      <SegmentedControl accessibilityLabel="Chart metric" value={chartMetric} onChange={setChartMetric}
+        options={[{ key: "estimated1RM", label: "Estimated 1RM" }, { key: "points", label: "Performance points" }]} />
+      <LineGraph points={chart} suffix={chartMetric === "estimated1RM" ? ` ${unit}` : " pts"} height={210}
+        emptyMessage={report.points.length ? "No sessions in this range. Pick a longer range." : "Log this exercise twice to draw a trend."} />
+      <SegmentedControl variant="pills" accessibilityLabel="Chart range" value={selection.range} onChange={(range) => update({ ...selection, range })} options={rangeOptions} />
+      {report.current ? <View style={styles.statGrid}>
+        <Stat label="Best e1RM" value={formatWeight((bestE1RMPoint ?? report.current).estimated1RM, unit)} detail={formatCompactDate((bestE1RMPoint ?? report.current).date)} />
+        <Stat label="Latest" value={formatWeight(report.current.estimated1RM, unit)} detail={formatCompactDate(report.current.date)} />
+        <Stat label="Vs start" value={signed(e1RMChangeFromStart)} detail={report.start ? `since ${formatCompactDate(report.start.date)}` : "No baseline"} tone={e1RMChangeFromStart === null ? undefined : e1RMChangeFromStart >= 0 ? "up" : "down"} />
+      </View> : <Body>{selection.comparisonKey && !report.contexts.includes(selection.comparisonKey) ? "No eligible history in this equipment context. Choose another context or range." : "No eligible observations yet. All recordings remain in History."}</Body>}
+      {report.stale ? <Body style={styles.notice}>Last trained {report.ageCalendarDays} days ago · historical value.</Body> : null}
+      {onCompare && selected ? <Button label="Compare with bodyweight" icon={Scale} fullWidth onPress={() => onCompare({ exerciseId: selected.id, comparisonKey: report.comparisonKey ?? "" })} /> : null}
+      {report.current ? <DetailsDisclosure title="How performance points work">
+        <Body>{report.current.score.toFixed(1)} points · {signed(report.changeFromStartPercent)} from start · {signed(report.changeFromPreviousPercent)} vs previous.</Body>
+        <Body>First eligible entry = 100. This version weights estimated strength at 45%, working volume at 35%, and set retention at 20%. The baseline uses eligible history, independent of chart range; historical corrections can change it. Points describe recorded performance in this equipment context, not muscle growth.</Body>
+        <Body>Bodyweight lifts need an observation on or before training, no older than 14 days. Two valid working sets establish a score. Version {report.current.metricVersion ?? "unavailable"}.</Body>
+      </DetailsDisclosure> : null}
+    </Panel>
+    {exclusions.some((issue) => issue.exerciseId === selected?.id && (issue.date === null || issue.date <= asOf)) ? <Panel><DetailsDisclosure title="Recorded entries excluded from points">
+      {exclusions.filter((issue) => issue.exerciseId === selected?.id && (issue.date === null || issue.date <= asOf)).map((issue) => <Body key={issue.sessionId}>{issue.date ?? "Date unverified"}: {issue.reason}</Body>)}
+      <Body>These entries remain in History.</Body>
+    </DetailsDisclosure></Panel> : null}
+    <Panel>
+      <View style={styles.entriesHeader}><SectionTitle>Sessions</SectionTitle><Body style={styles.countText}>{logs.length} in range</Body></View>
+      {(allLogs ? logs : logs.slice(0, 6)).map((log, index) => <View key={log.sessionId} style={index ? styles.divided : undefined}>
+        <SessionRow title={formatWeekdayShort(log.date)} caption={log.machineProfileLabel} sets={log.rawSets}
+          formatLoad={(weight) => formatLoggedLoad(weight, log.loadType, unit)} estimated1RM={log.point?.estimated1RM}
+          progress={sessionProgress.get(log.sessionId)} formatMetric={(value) => formatWeight(value, unit)} />
+      </View>)}
+      {logs.length > 6 ? <Button variant="ghost" label={allLogs ? "Show fewer sessions" : `Show all ${logs.length} sessions`} icon={allLogs ? ChevronUp : ChevronDown} onPress={() => setAllLogs(!allLogs)} style={styles.centered} /> : null}
+      {!logs.length ? <Body>No entries in this range/context. Change the range to inspect older records.</Body> : null}
+    </Panel>
+  </Screen>;
 }
-
-function formatPercentChange(value: number | null | undefined) {
-  if (!Number.isFinite(value)) return "--";
-  return `${Number(value) >= 0 ? "+" : ""}${Number(value).toFixed(1)}%`;
+function Stat({ label, value, detail, tone }: { label: string; value: string; detail: string; tone?: "up" | "down" }) {
+  const { styles } = useStyles();
+  return <View style={styles.stat}>
+    <Label numberOfLines={1}>{label}</Label>
+    <Body numberOfLines={1} adjustsFontSizeToFit style={[styles.statValue, tone === "up" && styles.positive, tone === "down" && styles.negative]}>{value}</Body>
+    <Body numberOfLines={1} style={styles.statDetail}>{detail}</Body>
+  </View>;
 }
-
-function formatMonthLabel(month: string) {
-  const date = new Date(`${month}-01T00:00:00`);
-  return date.toLocaleDateString(undefined, { month: "short", year: "numeric" });
-}
-
-const styles = StyleSheet.create({
-  chipRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
-  },
-  chip: {
-    borderWidth: 1,
-    borderColor: palette.border,
-    borderRadius: 8,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-    backgroundColor: palette.surface
-  },
-  chipActive: {
-    backgroundColor: palette.ink,
-    borderColor: palette.ink
-  },
-  chipText: {
-    color: palette.ink,
-    fontWeight: "800"
-  },
-  chipTextActive: {
-    color: palette.surface
-  },
-  exerciseGroup: {
-    gap: spacing.sm
-  },
-  segmentRow: {
-    flexDirection: "row",
-    gap: spacing.sm
-  },
-  segmentButton: {
-    flex: 1,
-    minHeight: 44,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: palette.border,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.sm
-  },
-  segmentButtonActive: {
-    backgroundColor: palette.ink,
-    borderColor: palette.ink
-  },
-  segmentText: {
-    color: palette.ink,
-    fontWeight: "900",
-    textAlign: "center"
-  },
-  segmentTextActive: {
-    color: palette.surface
-  },
-  summaryRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: spacing.lg
-  },
-  bigScore: {
-    minWidth: 88,
-    height: 68,
-    borderRadius: 8,
-    backgroundColor: palette.accentSoft,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.sm
-  },
-  logsHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: spacing.md
-  },
-  logCount: {
-    fontWeight: "800"
-  },
-  logRow: {
-    borderTopWidth: 1,
-    borderTopColor: palette.border,
-    paddingTop: spacing.md,
-    gap: spacing.xs
-  },
-  logHeading: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: spacing.md
-  },
-  logDate: {
-    fontWeight: "900"
-  },
-  logScore: {
-    fontWeight: "900",
-    color: palette.accent
-  },
-  logDetails: {
-    color: palette.muted
-  },
-});
+function signed(value: number | null) { return value === null ? "—" : `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`; }
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
+  statGrid: { flexDirection: "row", gap: spacing.sm },
+  stat: { flex: 1, minWidth: 0, gap: 2, padding: spacing.md, borderRadius: 12, backgroundColor: palette.surfaceAlt },
+  statValue: { color: palette.ink, fontSize: 17, lineHeight: 22, fontWeight: "800", fontVariant: ["tabular-nums"] },
+  statDetail: { color: palette.muted, fontSize: 12, lineHeight: 16 },
+  notice: { color: palette.warning, fontWeight: "700" }, hint: { color: palette.muted, fontSize: 13, lineHeight: 18 }, positive: { color: palette.success }, negative: { color: palette.danger },
+  contextOption: { minHeight: 48, flexDirection: "row", alignItems: "center", gap: spacing.sm, paddingHorizontal: spacing.md, borderRadius: 12, backgroundColor: palette.surfaceAlt, borderWidth: 1, borderColor: "transparent" },
+  contextOptionActive: { borderColor: palette.ink },
+  contextText: { flex: 1, color: palette.muted, fontWeight: "600" },
+  contextTextActive: { color: palette.ink },
+  entriesHeader: { flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: spacing.sm },
+  countText: { color: palette.muted, fontSize: 13 },
+  divided: { borderTopWidth: 1, borderColor: palette.border },
+  centered: { alignSelf: "center" },
+  group: { gap: spacing.sm, paddingTop: spacing.md, borderTopWidth: 1, borderColor: palette.border }
+}));

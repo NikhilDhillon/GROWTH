@@ -1,17 +1,17 @@
 import { useMemo, useState } from "react";
-import { Pressable, StyleSheet, TextInput, View } from "react-native";
-import { Check, Search } from "lucide-react-native";
+import { StyleSheet, TextInput, View } from "react-native";
+import { Search } from "lucide-react-native";
 
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
-import { Body, Label, SectionTitle, Title } from "@/components/Text";
+import { Body, SectionTitle } from "@/components/Text";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { muscles, palette, spacing } from "@/utils/theme";
-import { pressableFeedback, touchHitSlop } from "@/utils/touch";
+import { createThemedStyles } from "@/utils/themedStyles";
+import { muscles, spacing } from "@/utils/theme";
 
 export function ExerciseScreen() {
+  const { palette, styles } = useStyles();
   const exercises = useFitnessStore((state) => state.exercises);
-  const setExerciseEnabled = useFitnessStore((state) => state.setExerciseEnabled);
   const [query, setQuery] = useState("");
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -20,26 +20,20 @@ export function ExerciseScreen() {
       muscle,
       exercises: exercises
         .filter((exercise) => exercise.primary_muscle === muscle)
-        .filter((exercise) => !normalizedQuery || exercise.name.toLowerCase().includes(normalizedQuery))
+        .filter((exercise) => !normalizedQuery || `${exercise.name} ${exercise.primary_muscle} ${exercise.secondary_muscle ?? ""}`.toLowerCase().includes(normalizedQuery))
         .sort((a, b) => a.name.localeCompare(b.name))
-    }));
+    })).filter((group) => group.exercises.length > 0);
   }, [exercises, normalizedQuery]);
-
-  const selectedCount = exercises.filter((exercise) => exercise.is_strength_exercise).length;
 
   return (
     <Screen>
-      <View>
-        <Label>Exercise library</Label>
-        <Title>Exercises</Title>
-      </View>
 
       <Panel>
-        <SectionTitle>Logging selection</SectionTitle>
-        <Body>{selectedCount} of {exercises.length} exercises selected for logging and scoring.</Body>
+        <SectionTitle>Browse all exercises</SectionTitle>
         <View style={styles.searchBox}>
           <Search size={18} color={palette.muted} />
           <TextInput
+            accessibilityLabel="Search exercises by name or muscle"
             style={styles.searchInput}
             value={query}
             onChangeText={setQuery}
@@ -50,39 +44,37 @@ export function ExerciseScreen() {
         </View>
       </Panel>
 
+      {!groupedExercises.length ? <Panel><Body>No matching exercises.</Body></Panel> : null}
       {groupedExercises.map((group) => (
         <Panel key={group.muscle}>
-          <SectionTitle>{group.muscle}</SectionTitle>
-          {group.exercises.length ? (
-            group.exercises.map((exercise) => {
-              const selected = Boolean(exercise.is_strength_exercise);
-              return (
-                <Pressable
-                  key={exercise.id}
-                  hitSlop={touchHitSlop}
-                  onPress={() => void setExerciseEnabled(exercise.id, !selected)}
-                  style={pressableFeedback(styles.exerciseRow)}
-                >
-                  <View style={[styles.checkbox, selected && styles.checkboxActive]}>
-                    {selected ? <Check size={16} color={palette.surface} /> : null}
-                  </View>
-                  <View style={styles.exerciseInfo}>
-                    <Body style={styles.exerciseName}>{exercise.name}</Body>
-                    {exercise.secondary_muscle ? <Body>{exercise.primary_muscle} · {exercise.secondary_muscle}</Body> : <Body>{exercise.primary_muscle}</Body>}
-                  </View>
-                </Pressable>
-              );
-            })
-          ) : (
-            <Body>No matching exercises.</Body>
-          )}
+          <View style={styles.muscleHeading}>
+            <SectionTitle>{group.muscle}</SectionTitle>
+            <Body style={styles.groupCount}>{group.exercises.length}</Body>
+          </View>
+          {group.exercises.map((exercise) => (
+            <View key={exercise.id} style={styles.exerciseRow}>
+              <View style={styles.exerciseInfo}>
+                <SectionTitle style={styles.exerciseName}>{exercise.name}</SectionTitle>
+                {exercise.secondary_muscle ? <Body style={styles.muscleMeta}>Also: {exercise.secondary_muscle}</Body> : null}
+              </View>
+            </View>
+          ))}
         </Panel>
       ))}
     </Screen>
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
+  muscleHeading: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center"
+  },
+  groupCount: {
+    color: palette.muted,
+    fontWeight: "800"
+  },
   searchBox: {
     minHeight: 46,
     borderWidth: 1,
@@ -104,24 +96,11 @@ const styles = StyleSheet.create({
   exerciseRow: {
     borderTopWidth: 1,
     borderTopColor: palette.border,
-    paddingTop: spacing.md,
+    minHeight: 58,
+    paddingVertical: spacing.sm,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.md
-  },
-  checkbox: {
-    width: 26,
-    height: 26,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: palette.border,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: palette.surface
-  },
-  checkboxActive: {
-    backgroundColor: palette.ink,
-    borderColor: palette.ink
   },
   exerciseInfo: {
     flex: 1,
@@ -130,6 +109,12 @@ const styles = StyleSheet.create({
   },
   exerciseName: {
     color: palette.ink,
-    fontWeight: "900"
+    fontSize: 16,
+    lineHeight: 20
+  },
+  muscleMeta: {
+    color: palette.muted,
+    fontSize: 12,
+    lineHeight: 16
   }
-});
+}));

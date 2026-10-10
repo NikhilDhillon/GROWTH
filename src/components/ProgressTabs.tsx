@@ -1,18 +1,19 @@
 import { Pressable, StyleSheet, View } from "react-native";
 
 import { Body } from "@/components/Text";
-import { palette, spacing } from "@/utils/theme";
+import { createThemedStyles } from "@/utils/themedStyles";
+import { spacing } from "@/utils/theme";
 import { pressableFeedback } from "@/utils/touch";
 
-export type ProgressTab = "overview" | "strength" | "body";
+export type ProgressTab = "overview" | "strength" | "body" | "bulk";
 
 const tabs: Array<{ key: ProgressTab; label: string }> = [
-  { key: "overview", label: "Overview" },
   { key: "strength", label: "Strength" },
   { key: "body", label: "Body" }
 ];
 
 export function ProgressTabs({ value, onChange }: { value: ProgressTab; onChange: (tab: ProgressTab) => void }) {
+  const { palette, styles } = useStyles();
   return (
     <View accessibilityRole="tablist" style={styles.container}>
       {tabs.map((tab) => {
@@ -33,7 +34,7 @@ export function ProgressTabs({ value, onChange }: { value: ProgressTab; onChange
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
   container: {
     flexDirection: "row",
     gap: spacing.xs,
@@ -45,7 +46,7 @@ const styles = StyleSheet.create({
   },
   tab: {
     flex: 1,
-    minHeight: 42,
+    minHeight: 44,
     borderRadius: 8,
     alignItems: "center",
     justifyContent: "center",
@@ -61,4 +62,4 @@ const styles = StyleSheet.create({
   textActive: {
     color: palette.surface
   }
-});
+}));

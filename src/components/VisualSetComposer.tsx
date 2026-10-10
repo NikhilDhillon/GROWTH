@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import { Pressable, StyleSheet, TextInput, useWindowDimensions, View } from "react-native";
 import { Copy, Minus, Plus, RotateCcw, Trash2 } from "lucide-react-native";
 
 import { Body, Label } from "@/components/Text";
 import { ExerciseLoadType } from "@/constants/exercises";
+import type { GuidedObservationContext } from "@/services/guidedWorkout/guidedObservationService";
 import { LoggedSetDraft, UnitSystem } from "@/types";
-import { palette, spacing } from "@/utils/theme";
+import { createThemedStyles } from "@/utils/themedStyles";
+import { spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { formatWeightInput, weightToStorageUnit } from "@/utils/units";
 import { createEmptyPlateCounts } from "@/utils/workout";
@@ -39,6 +41,10 @@ type Props = {
   barWeight: string;
   plateCounts: Record<string, number>;
   targets?: SetComposerTarget[];
+  observationContext?: GuidedObservationContext;
+  disabled?: boolean;
+  readOnlyValues?: boolean;
+  onBarbellApply?: (input: { barWeight: string; plateCounts: Record<string, number>; sets: LoggedSetDraft[] }) => void;
   onBarWeightChange: (value: string) => void;
   onPlateCountsChange: (counts: Record<string, number>) => void;
   onSetsChange: (sets: LoggedSetDraft[]) => void;
@@ -52,10 +58,15 @@ export function VisualSetComposer({
   barWeight,
   plateCounts,
   targets = [],
+  observationContext,
+  disabled = false,
+  readOnlyValues = false,
+  onBarbellApply,
   onBarWeightChange,
   onPlateCountsChange,
   onSetsChange
 }: Props) {
+  const { palette, styles } = useStyles();
   const { width } = useWindowDimensions();
   const compact = width < 600;
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
@@ -63,25 +74,10 @@ export function VisualSetComposer({
   const [editorBarWeight, setEditorBarWeight] = useState(barWeight || "45");
   const [editorPlateCounts, setEditorPlateCounts] = useState<PlateCounts>(normalizePlateCounts(plateCounts));
   const targetByIndex = useMemo(() => new Map(targets.map((target) => [target.draftIndex, target])), [targets]);
-  const targetRepsPrefillKey = useMemo(() => targets.map((target) => `${target.draftIndex}:${target.targetReps ?? ""}`).join("|"), [targets]);
-  const appliedTargetRepsPrefillKeyRef = useRef("");
 
   useEffect(() => {
     if (activeIndex !== null && activeIndex >= sets.length) setActiveIndex(null);
   }, [activeIndex, sets.length]);
-
-  useEffect(() => {
-    if (!targetRepsPrefillKey || appliedTargetRepsPrefillKeyRef.current === targetRepsPrefillKey) return;
-    const nextSets = sets.map((set, index) => {
-      if (set.reps.trim()) return set;
-      const targetReps = targetByIndex.get(index)?.targetReps;
-      return isPositiveInteger(targetReps) ? { ...set, reps: String(targetReps) } : set;
-    });
-    appliedTargetRepsPrefillKeyRef.current = targetRepsPrefillKey;
-    if (nextSets.some((set, index) => set !== sets[index])) {
-      onSetsChange(nextSets);
-    }
-  }, [onSetsChange, sets, targetByIndex, targetRepsPrefillKey]);
 
   useEffect(() => {
     if (activeIndex === null) return;
@@ -104,6 +100,7 @@ export function VisualSetComposer({
   }, [activeIndex, barWeight, plateCounts, sets, supportsBarbell, targetByIndex, unitSystem]);
 
   function updateSet(index: number, patch: Partial<LoggedSetDraft>) {
+    if (disabled || readOnlyValues) return;
     onSetsChange(sets.map((set, itemIndex) => (itemIndex === index ? { ...set, ...patch } : set)));
   }
 
@@ -115,25 +112,35 @@ export function VisualSetComposer({
     updateSet(index, { reps: next > 0 ? String(next) : "" });
   }
 
-  function applyLoad(index: number, load: string, mode: ApplyMode) {
-    if (!load.trim()) return;
-    onSetsChange(sets.map((set, itemIndex) => {
+  function setsWithLoad(index: number, load: string, mode: ApplyMode) {
+    return sets.map((set, itemIndex) => {
       const shouldApply = mode === "one"
         ? itemIndex === index
         : mode === "working"
           ? !set.isWarmup
           : itemIndex >= index && !set.isWarmup;
       return shouldApply ? { ...set, weight: load } : set;
-    }));
+    });
+  }
+
+  function applyLoad(index: number, load: string, mode: ApplyMode) {
+    if (disabled || readOnlyValues || !load.trim()) return;
+    onSetsChange(setsWithLoad(index, load, mode));
     setActiveIndex(null);
   }
 
   function applyEditorLoad(mode: ApplyMode) {
-    if (activeIndex === null) return;
+    if (disabled || readOnlyValues || activeIndex === null) return;
     if (supportsBarbell) {
+      const load = formatWeightInput(parseLoad(editorTotalLoad), unitSystem);
+      if (onBarbellApply) {
+        onBarbellApply({ barWeight: editorBarWeight, plateCounts: editorPlateCounts, sets: setsWithLoad(activeIndex, load, mode) });
+        setActiveIndex(null);
+        return;
+      }
       onBarWeightChange(editorBarWeight);
       onPlateCountsChange(editorPlateCounts);
-      applyLoad(activeIndex, formatWeightInput(parseLoad(editorTotalLoad), unitSystem), mode);
+      applyLoad(activeIndex, load, mode);
       return;
     }
   }
@@ -176,12 +183,13 @@ export function VisualSetComposer({
   }
 
   return (
-    <View style={styles.composer}>
+    <View style={styles.composer} pointerEvents={disabled ? "none" : "auto"}>
       <View style={styles.headerRow}>
         <View style={styles.flex}>
           <Label>Sets</Label>
         </View>
       </View>
+      {observationContext ? <Body style={styles.hintText}>Adjust anything you did differently. Every filled-in set is saved; delete sets you skipped.</Body> : null}
 
       {sets.map((set, index) => {
         const active = activeIndex === index;
@@ -197,66 +205,76 @@ export function VisualSetComposer({
               <View style={styles.setBadge}>
                 <Label style={styles.setBadgeText}>{index + 1}</Label>
               </View>
-              {supportsBarbell ? (
-                <>
-                  <Pressable
-                    accessibilityLabel={`Edit load for set ${index + 1}`}
-                    hitSlop={touchHitSlop}
-                    onPress={() => setActiveIndex(active ? null : index)}
-                    style={pressableFeedback([styles.loadCell, active && styles.loadCellActive])}
-                  >
-                    {targetDisplay ? <View style={styles.targetRail} /> : null}
-                    <LoadedBar
-                      counts={displayLoad ? calculatePlateCounts(String(weightToStorageUnit(parseLoad(displayLoad), unitSystem)), barWeight) : createEmptyPlateCounts()}
+              <View style={styles.setBody}>
+              <View style={styles.setPrimaryRow}>
+                <View style={styles.weightField}>
+                  <Label>Weight</Label>
+                  <View style={styles.directWeight}>
+                    <TextInput
+                      accessibilityLabel={`Weight for set ${index + 1}`}
+                      style={[styles.input, styles.weightInput, compact && styles.weightInputCompact]}
+                      value={set.weight}
+                      editable={!disabled && !readOnlyValues}
+                      onChangeText={(weight) => updateSet(index, { weight })}
+                      keyboardType="decimal-pad"
+                      inputMode="decimal"
+                      placeholder={targetDisplay || "Weight"}
                     />
-                  </Pressable>
-                  <View style={styles.loadMeta}>
-                    <Body style={styles.loadValue}>{displayLoad ? `${displayLoad} ${unitSystem}` : "Load"}</Body>
-                    {target?.targetReps ? <Label style={styles.targetLabel}>target {target.targetReps}</Label> : target?.increaseWeight ? <Label style={styles.targetLabel}>heavier attempt</Label> : null}
+                    <Body style={styles.unitText}>{unitSystem}</Body>
                   </View>
-                  <Pressable accessibilityLabel={`Copy load from set ${index + 1} down`} hitSlop={touchHitSlop} onPress={() => copyLoadDown(index, displayLoad)} style={pressableFeedback([styles.copyDownButton, !displayLoad.trim() && styles.disabledButton])}>
-                    <Copy size={14} color={displayLoad.trim() ? palette.ink : palette.muted} />
-                  </Pressable>
-                </>
-              ) : (
-                <View style={[styles.directWeight, compact && styles.directWeightCompact]}>
-                  <TextInput
-                    accessibilityLabel={`Weight for set ${index + 1}`}
-                    style={[styles.input, styles.weightInput, compact && styles.weightInputCompact]}
-                    value={set.weight}
-                    onChangeText={(weight) => updateSet(index, { weight })}
-                    keyboardType="decimal-pad"
-                    inputMode="decimal"
-                    placeholder={targetDisplay || "Weight"}
-                  />
-                  <Body style={styles.unitText}>{unitSystem}</Body>
                 </View>
-              )}
-              <View style={styles.repsStepper}>
-                <Pressable accessibilityLabel={`Decrease reps for set ${index + 1}`} hitSlop={touchHitSlop} onPress={() => adjustReps(index, -1)} style={pressableFeedback(styles.repsStepButton)}>
-                  <Minus size={14} color={palette.ink} />
-                </Pressable>
-                <TextInput
-                  style={[styles.input, styles.repsInput]}
-                  value={set.reps}
-                  onChangeText={(reps) => updateSet(index, { reps })}
-                  keyboardType="number-pad"
-                  inputMode="numeric"
-                  placeholder={target?.targetReps ? `${target.targetReps}` : "reps"}
-                />
-                <Pressable accessibilityLabel={`Increase reps for set ${index + 1}`} hitSlop={touchHitSlop} onPress={() => adjustReps(index, 1)} style={pressableFeedback(styles.repsStepButton)}>
-                  <Plus size={14} color={palette.ink} />
-                </Pressable>
+                <View style={styles.repsField}>
+                  <Label>Reps</Label>
+                  <View style={[styles.repsStepper, compact && styles.repsStepperCompact]}>
+                    <Pressable disabled={disabled || readOnlyValues} accessibilityLabel={`Decrease reps for set ${index + 1}`} hitSlop={touchHitSlop} onPress={() => adjustReps(index, -1)} style={pressableFeedback([styles.repsStepButton, compact && styles.repsStepButtonCompact])}>
+                      <Minus size={14} color={palette.ink} />
+                    </Pressable>
+                    <TextInput
+                      accessibilityLabel={`Reps for set ${index + 1}`}
+                      style={[styles.input, styles.repsInput, compact && styles.repsInputCompact]}
+                      value={set.reps}
+                      editable={!disabled && !readOnlyValues}
+                      onChangeText={(reps) => updateSet(index, { reps })}
+                      keyboardType="number-pad"
+                      inputMode="numeric"
+                      placeholder={target?.targetReps ? `${target.targetReps}` : "reps"}
+                    />
+                    <Pressable disabled={disabled || readOnlyValues} accessibilityLabel={`Increase reps for set ${index + 1}`} hitSlop={touchHitSlop} onPress={() => adjustReps(index, 1)} style={pressableFeedback([styles.repsStepButton, compact && styles.repsStepButtonCompact])}>
+                      <Plus size={14} color={palette.ink} />
+                    </Pressable>
+                  </View>
+                </View>
               </View>
-              <View style={[styles.setActions, compact && styles.setActionsCompact]}>
-                <Pressable onPress={() => updateSet(index, { isWarmup: !set.isWarmup })} style={pressableFeedback([styles.kindButton, set.isWarmup && styles.kindButtonActive])}>
+              {set.weight.trim() || targetDisplay || target?.targetReps || target?.increaseWeight ? (
+                <View style={styles.setHints}>
+                  {set.weight.trim() ? <Label style={styles.loadState}>Entered</Label> : targetDisplay ? <Label style={styles.loadState}>Suggested {targetDisplay}</Label> : null}
+                  {target?.targetReps ? <Label style={styles.targetLabel}>Target {target.targetReps} reps</Label> : target?.increaseWeight ? <Label style={styles.targetLabel}>Heavier attempt</Label> : null}
+                </View>
+              ) : null}
+              <View style={styles.setFooter}>
+                <Pressable disabled={disabled || readOnlyValues} onPress={() => updateSet(index, { isWarmup: !set.isWarmup })} style={pressableFeedback([styles.kindButton, set.isWarmup && styles.kindButtonActive])}>
                   <Body style={[styles.kindText, set.isWarmup && styles.kindTextActive]}>{set.isWarmup ? "Warm-up" : "Working"}</Body>
                 </Pressable>
-                <Pressable accessibilityLabel="Remove set" hitSlop={touchHitSlop} onPress={() => onSetsChange(sets.filter((_, itemIndex) => itemIndex !== index))} style={pressableFeedback(styles.iconButton)}>
+                {supportsBarbell ? (
+                  <Pressable
+                    disabled={disabled || readOnlyValues}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Open plate calculator for set ${index + 1}`}
+                    accessibilityState={{ expanded: active }}
+                    hitSlop={touchHitSlop}
+                    onPress={() => setActiveIndex(active ? null : index)}
+                    style={pressableFeedback([styles.plateCalculatorButton, active && styles.plateCalculatorButtonActive, (disabled || readOnlyValues) && styles.disabledButton])}
+                  >
+                    <Body style={[styles.plateCalculatorText, active && styles.plateCalculatorTextActive]}>Load plates</Body>
+                  </Pressable>
+                ) : null}
+                <Pressable disabled={disabled || readOnlyValues} accessibilityLabel="Remove set" hitSlop={touchHitSlop} onPress={() => onSetsChange(sets.filter((_, itemIndex) => itemIndex !== index))} style={pressableFeedback(styles.iconButton)}>
                   <Trash2 size={16} color={palette.danger} />
                 </Pressable>
               </View>
+              </View>
             </View>
+
 
             {active && supportsBarbell ? (
               <View style={styles.editor}>
@@ -268,36 +286,35 @@ export function VisualSetComposer({
                   onTotalLoad={changeEditorTotalLoad}
                   onPlateCount={changeEditorPlateCount}
                   onAdjustTotal={adjustEditorTotal}
+                  disabled={disabled || readOnlyValues}
                   onReset={() => {
                     setEditorBarWeight("45");
                     setEditorTotalLoad("45");
                     setEditorPlateCounts(createEmptyPlateCounts());
                   }}
                 />
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <View style={styles.editorActions}>
-                    <Pressable hitSlop={touchHitSlop} onPress={() => applyEditorLoad("one")} style={pressableFeedback(styles.actionButton)}>
-                      <Body style={styles.buttonText}>Apply set</Body>
-                    </Pressable>
-                    <Pressable hitSlop={touchHitSlop} onPress={() => applyEditorLoad("working")} style={pressableFeedback(styles.actionButton)}>
-                      <Body style={styles.buttonText}>All working</Body>
-                    </Pressable>
-                    <Pressable hitSlop={touchHitSlop} onPress={() => applyEditorLoad("down")} style={pressableFeedback(styles.actionButton)}>
-                      <Body style={styles.buttonText}>From here down</Body>
-                    </Pressable>
-                    <Pressable hitSlop={touchHitSlop} onPress={() => copyPrevious(index)} style={pressableFeedback(styles.actionButton)}>
-                      <Copy size={16} color={palette.ink} />
-                      <Body style={styles.buttonText}>Copy previous</Body>
-                    </Pressable>
-                  </View>
-                </ScrollView>
+                <View style={styles.editorActions}>
+                  <Pressable disabled={disabled || readOnlyValues} hitSlop={touchHitSlop} onPress={() => applyEditorLoad("one")} style={pressableFeedback([styles.actionButton, styles.actionPrimary, (disabled || readOnlyValues) && styles.disabledButton])}>
+                    <Body numberOfLines={1} style={[styles.buttonText, styles.actionText, styles.actionPrimaryText]}>Apply to set</Body>
+                  </Pressable>
+                  <Pressable disabled={disabled || readOnlyValues} hitSlop={touchHitSlop} onPress={() => applyEditorLoad("working")} style={pressableFeedback([styles.actionButton, (disabled || readOnlyValues) && styles.disabledButton])}>
+                    <Body numberOfLines={1} style={[styles.buttonText, styles.actionText]}>All working sets</Body>
+                  </Pressable>
+                  <Pressable disabled={disabled || readOnlyValues} hitSlop={touchHitSlop} onPress={() => applyEditorLoad("down")} style={pressableFeedback([styles.actionButton, (disabled || readOnlyValues) && styles.disabledButton])}>
+                    <Body numberOfLines={1} style={[styles.buttonText, styles.actionText]}>This and later sets</Body>
+                  </Pressable>
+                  <Pressable disabled={disabled || readOnlyValues || index === 0} hitSlop={touchHitSlop} onPress={() => copyPrevious(index)} style={pressableFeedback([styles.actionButton, (disabled || readOnlyValues || index === 0) && styles.disabledButton])}>
+                    <Copy size={15} color={palette.ink} />
+                    <Body numberOfLines={1} style={[styles.buttonText, styles.actionText]}>Copy previous</Body>
+                  </Pressable>
+                </View>
               </View>
             ) : null}
           </View>
         );
       })}
 
-      <Pressable hitSlop={touchHitSlop} onPress={() => onSetsChange([...sets, { reps: "", weight: "" }])} style={pressableFeedback(styles.addButton)}>
+      <Pressable disabled={disabled || readOnlyValues} hitSlop={touchHitSlop} onPress={() => onSetsChange([...sets, { reps: "", weight: "" }])} style={pressableFeedback(styles.addButton)}>
         <Plus size={18} color={palette.ink} />
         <Body style={styles.buttonText}>Add set</Body>
       </Pressable>
@@ -313,7 +330,8 @@ function BarbellEditor({
   onTotalLoad,
   onPlateCount,
   onAdjustTotal,
-  onReset
+  onReset,
+  disabled
 }: {
   barWeight: string;
   totalLoad: string;
@@ -323,15 +341,17 @@ function BarbellEditor({
   onPlateCount: (plate: PlateWeight, amount: number) => void;
   onAdjustTotal: (amount: number) => void;
   onReset: () => void;
+  disabled: boolean;
 }) {
+  const { palette, styles } = useStyles();
   return (
     <>
       <View style={styles.editorHeader}>
         <View style={styles.flex}>
-          <Label>Loaded bar</Label>
-          <Body style={styles.hintText}>Counts are plates per side.</Body>
+          <Label>Plate calculator</Label>
+          <Body style={styles.hintText}>Set the target total. Plate counts are per side.</Body>
         </View>
-        <Pressable hitSlop={touchHitSlop} onPress={onReset} style={pressableFeedback(styles.smallIconButton)}>
+        <Pressable disabled={disabled} accessibilityLabel="Reset plate calculator" hitSlop={touchHitSlop} onPress={onReset} style={pressableFeedback(styles.smallIconButton)}>
           <RotateCcw size={16} color={palette.ink} />
         </Pressable>
       </View>
@@ -339,20 +359,24 @@ function BarbellEditor({
         <LoadedBar
           counts={plateCounts}
           large
-          onPlatePress={(plate) => onPlateCount(plate, -1)}
+          onPlatePress={disabled ? undefined : (plate) => onPlateCount(plate, -1)}
         />
       </View>
+      <Body style={styles.hintText}>Target {totalLoad} lb · loaded {formatLoadedBarWeight(calculateLoadedBarWeight(barWeight, plateCounts))} lb</Body>
       <View style={styles.editorInputRow}>
-        <Label>Total</Label>
-        <TextInput style={[styles.input, styles.smallInput]} value={totalLoad} onChangeText={onTotalLoad} keyboardType="decimal-pad" inputMode="decimal" />
-        <Body>lb</Body>
-        <Label>Bar</Label>
-        <TextInput style={[styles.input, styles.smallInput]} value={barWeight} onChangeText={onBarWeight} keyboardType="decimal-pad" inputMode="decimal" />
+        <View style={styles.editorField}>
+          <Label>Target (lb)</Label>
+          <TextInput editable={!disabled} accessibilityLabel="Target total load in pounds" style={[styles.input, styles.editorInput]} value={totalLoad} onChangeText={onTotalLoad} keyboardType="decimal-pad" inputMode="decimal" />
+        </View>
+        <View style={styles.editorField}>
+          <Label>Bar (lb)</Label>
+          <TextInput editable={!disabled} accessibilityLabel="Bar weight in pounds" style={[styles.input, styles.editorInput]} value={barWeight} onChangeText={onBarWeight} keyboardType="decimal-pad" inputMode="decimal" />
+        </View>
       </View>
       <View style={styles.quickButtons}>
         {[-10, -5, 5, 10].map((amount) => (
-          <Pressable key={amount} hitSlop={touchHitSlop} onPress={() => onAdjustTotal(amount)} style={pressableFeedback(styles.quickButton)}>
-            <Body style={styles.buttonText}>{amount > 0 ? `+${amount}` : amount}</Body>
+          <Pressable key={amount} accessibilityLabel={`${amount > 0 ? "Add" : "Remove"} ${Math.abs(amount)} lb`} disabled={disabled} hitSlop={touchHitSlop} onPress={() => onAdjustTotal(amount)} style={pressableFeedback(styles.quickButton)}>
+            <Body style={styles.buttonText}>{amount > 0 ? `+${amount}` : `−${Math.abs(amount)}`}</Body>
           </Pressable>
         ))}
       </View>
@@ -361,19 +385,20 @@ function BarbellEditor({
           <View key={plate} style={styles.plateControl}>
             <Pressable
               accessibilityLabel={`Add ${plate} lb plate to bar`}
+              disabled={disabled}
               hitSlop={touchHitSlop}
               onPress={() => onPlateCount(plate, 1)}
               style={pressableFeedback(styles.plateTapHandle)}
             >
               <View style={[styles.plateSwatch, { backgroundColor: plateVisuals[plate].backgroundColor }]} />
-              <Body style={styles.plateText}>{plate}</Body>
+              <Body style={styles.plateText}>{plate} lb</Body>
             </Pressable>
-            <Pressable hitSlop={touchHitSlop} onPress={() => onPlateCount(plate, -1)} style={pressableFeedback(styles.countButton)}>
-              <Body style={styles.buttonText}>-</Body>
+            <Pressable accessibilityLabel={`Remove one ${plate} lb plate per side`} disabled={disabled || plateCounts[plate] === 0} hitSlop={touchHitSlop} onPress={() => onPlateCount(plate, -1)} style={pressableFeedback([styles.countButton, plateCounts[plate] === 0 && styles.disabledButton])}>
+              <Minus size={14} color={palette.ink} />
             </Pressable>
             <Body style={styles.countText}>{plateCounts[plate]}</Body>
-            <Pressable hitSlop={touchHitSlop} onPress={() => onPlateCount(plate, 1)} style={pressableFeedback(styles.countButton)}>
-              <Body style={styles.buttonText}>+</Body>
+            <Pressable accessibilityLabel={`Add one ${plate} lb plate per side`} disabled={disabled} hitSlop={touchHitSlop} onPress={() => onPlateCount(plate, 1)} style={pressableFeedback(styles.countButton)}>
+              <Plus size={14} color={palette.ink} />
             </Pressable>
           </View>
         ))}
@@ -391,6 +416,7 @@ function LoadedBar({
   large?: boolean;
   onPlatePress?: (plate: PlateWeight) => void;
 }) {
+  const { palette, styles } = useStyles();
   function renderPlate(side: "left" | "right", plate: PlateWeight, index: number) {
     const plateView = <View style={[styles.plate, plateVisuals[plate], large && styles.plateLarge]} />;
     if (!onPlatePress) return <View key={`${side}-${plate}-${index}`}>{plateView}</View>;
@@ -461,7 +487,7 @@ function isPositiveInteger(value: unknown) {
   return Number.isInteger(value) && Number(value) > 0;
 }
 
-const styles = StyleSheet.create({
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
   composer: {
     gap: spacing.sm
   },
@@ -487,20 +513,36 @@ const styles = StyleSheet.create({
     gap: spacing.sm
   },
   setLaneActive: {
-    borderColor: palette.accent,
-    backgroundColor: palette.accentSoft
+    borderColor: palette.ink,
+    backgroundColor: palette.surface
   },
   setRow: {
     flexDirection: "row",
     alignItems: "center",
-    flexWrap: "wrap",
+    gap: spacing.sm,
+    minWidth: 0
+  },
+  setBody: {
+    flex: 1,
+    minWidth: 0,
+    gap: spacing.xs
+  },
+  setPrimaryRow: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "flex-end",
     gap: spacing.xs,
     minWidth: 0
   },
+  setHints: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    columnGap: spacing.md
+  },
   setBadge: {
-    width: 26,
-    height: 34,
-    borderRadius: 7,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
     backgroundColor: palette.surfaceAlt,
     alignItems: "center",
     justifyContent: "center",
@@ -508,7 +550,11 @@ const styles = StyleSheet.create({
   },
   setBadgeText: {
     color: palette.ink,
-    fontWeight: "900"
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 0,
+    fontWeight: "800",
+    fontVariant: ["tabular-nums"]
   },
   loadCell: {
     width: 116,
@@ -540,19 +586,17 @@ const styles = StyleSheet.create({
     minWidth: 68,
     gap: 2
   },
+  weightField: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2
+  },
   directWeight: {
-    flexGrow: 1,
-    flexBasis: 150,
-    minWidth: 140,
+    width: "100%",
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs
-  },
-  directWeightCompact: {
-    flexGrow: 0,
-    flexBasis: "auto",
-    width: 126,
-    minWidth: 0
   },
   weightInput: {
     flex: 1,
@@ -572,7 +616,35 @@ const styles = StyleSheet.create({
   },
   targetLabel: {
     color: palette.muted,
-    fontSize: 11
+    fontSize: 10,
+    lineHeight: 14
+  },
+  loadState: {
+    color: palette.muted,
+    fontSize: 10,
+    lineHeight: 14
+  },
+  plateCalculatorButton: {
+    minHeight: 36,
+    borderRadius: 999,
+    backgroundColor: palette.surfaceAlt,
+    justifyContent: "center",
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderColor: "transparent",
+    ...fastTouchStyle
+  },
+  plateCalculatorButtonActive: {
+    borderColor: palette.ink,
+    backgroundColor: palette.accentSoft
+  },
+  plateCalculatorText: {
+    color: palette.ink,
+    fontSize: 12,
+    fontWeight: "700"
+  },
+  plateCalculatorTextActive: {
+    color: palette.accent
   },
   copyDownButton: {
     width: 36,
@@ -605,66 +677,77 @@ const styles = StyleSheet.create({
     textAlign: "center"
   },
   repsStepper: {
-    minHeight: 40,
+    minHeight: 42,
     flexDirection: "row",
     alignItems: "center",
     flexShrink: 0,
     gap: 4
   },
+  repsStepperCompact: {
+    gap: 3
+  },
+  repsInputCompact: {
+    width: 40,
+    minWidth: 0,
+    paddingHorizontal: 2
+  },
+  repsField: {
+    flexShrink: 0,
+    gap: 2
+  },
+  setFooter: {
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+  },
   repsStepButton: {
     width: 34,
-    height: 40,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: palette.surface,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: palette.surfaceAlt,
     alignItems: "center",
     justifyContent: "center",
     ...fastTouchStyle
+  },
+  repsStepButtonCompact: {
+    width: 32,
+    height: 42
   },
   setActions: {
     flexDirection: "row",
     alignItems: "center",
     gap: spacing.xs
   },
-  setActionsCompact: {
-    width: "100%",
-    paddingLeft: 34
-  },
   kindButton: {
-    minHeight: 40,
-    minWidth: 72,
+    minHeight: 36,
     flexShrink: 0,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: palette.border,
+    borderRadius: 999,
+    alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: spacing.xs,
-    backgroundColor: palette.surface,
+    paddingHorizontal: spacing.md,
+    backgroundColor: palette.surfaceAlt,
     ...fastTouchStyle
   },
   kindButtonActive: {
-    backgroundColor: palette.ink,
-    borderColor: palette.ink
+    backgroundColor: palette.warning
   },
   kindText: {
     color: palette.ink,
-    fontSize: 11,
-    fontWeight: "800"
+    fontSize: 12,
+    fontWeight: "700"
   },
   kindTextActive: {
     color: palette.surface
   },
   iconButton: {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     flexShrink: 0,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: palette.border,
+    marginLeft: "auto",
+    borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: palette.surface,
     ...fastTouchStyle
   },
   editor: {
@@ -680,9 +763,15 @@ const styles = StyleSheet.create({
   },
   editorInputRow: {
     flexDirection: "row",
-    alignItems: "center",
-    flexWrap: "wrap",
     gap: spacing.sm
+  },
+  editorField: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4
+  },
+  editorInput: {
+    width: "100%"
   },
   smallInput: {
     width: 76,
@@ -694,57 +783,65 @@ const styles = StyleSheet.create({
   },
   quickButtons: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
+    gap: spacing.xs
   },
   quickButton: {
-    minHeight: 36,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: palette.surface,
+    flex: 1,
+    minWidth: 0,
+    minHeight: 38,
+    borderRadius: 10,
+    backgroundColor: palette.surfaceAlt,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: spacing.md,
     ...fastTouchStyle
   },
   editorActions: {
+    width: "100%",
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: spacing.sm,
     paddingBottom: 2
   },
   actionButton: {
-    minHeight: 40,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: palette.surface,
+    flexGrow: 1,
+    flexBasis: "45%",
+    minHeight: 44,
+    borderRadius: 12,
+    backgroundColor: palette.surfaceAlt,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: spacing.xs,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
     ...fastTouchStyle
+  },
+  actionPrimary: {
+    backgroundColor: palette.ink
+  },
+  actionPrimaryText: {
+    color: palette.surface
+  },
+  actionText: {
+    fontSize: 13
   },
   addButton: {
     minHeight: 44,
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
+    borderStyle: "dashed",
     borderColor: palette.border,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: spacing.sm,
-    backgroundColor: palette.surface,
     ...fastTouchStyle
   },
   smallIconButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: palette.surface,
+    width: 36,
+    height: 36,
+    borderRadius: 999,
+    backgroundColor: palette.surfaceAlt,
     alignItems: "center",
     justifyContent: "center",
     ...fastTouchStyle
@@ -803,28 +900,25 @@ const styles = StyleSheet.create({
     width: 94
   },
   plateControls: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: spacing.sm
-  },
-  plateControl: {
-    minHeight: 36,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: spacing.xs,
-    borderWidth: 1,
-    borderColor: palette.border,
-    borderRadius: 8,
-    backgroundColor: palette.surface,
+    borderRadius: 12,
+    backgroundColor: palette.surfaceAlt,
     paddingHorizontal: spacing.sm
   },
-  plateTapHandle: {
-    minHeight: 32,
+  plateControl: {
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.xs,
-    borderRadius: 7,
-    paddingHorizontal: spacing.xs,
+    gap: spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: palette.border
+  },
+  plateTapHandle: {
+    flex: 1,
+    minHeight: 40,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    borderRadius: 8,
     ...fastTouchStyle
   },
   plateSwatch: {
@@ -833,24 +927,29 @@ const styles = StyleSheet.create({
     borderRadius: 2
   },
   plateText: {
-    fontWeight: "900"
+    color: palette.ink,
+    fontWeight: "700"
   },
   countButton: {
-    width: 26,
-    height: 28,
-    borderRadius: 7,
+    width: 34,
+    height: 34,
+    borderRadius: 999,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: palette.surfaceAlt,
+    backgroundColor: palette.surface,
     ...fastTouchStyle
   },
   countText: {
-    minWidth: 14,
+    minWidth: 22,
     textAlign: "center",
-    fontWeight: "900"
+    color: palette.ink,
+    fontWeight: "800",
+    fontVariant: ["tabular-nums"]
   },
   buttonText: {
     color: palette.ink,
-    fontWeight: "900"
+    fontWeight: "900",
+    flexShrink: 1,
+    textAlign: "center"
   },
-});
+}));

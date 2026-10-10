@@ -1,4 +1,5 @@
 import { WorkoutSession, WorkoutSet } from "@/types";
+import { assertCalendarDate, isCalendarDate } from "@/domain/calendar";
 
 export function latestSetsForExercise(input: {
   exerciseId: number;
@@ -7,14 +8,16 @@ export function latestSetsForExercise(input: {
   machineProfileId?: string | null;
   machineScoped?: boolean;
   includeWarmups?: boolean;
+  asOfDate?: string;
 }) {
+  if (input.asOfDate !== undefined) assertCalendarDate(input.asOfDate);
   const sessionById = new Map(input.sessions.map((session) => [session.id, session]));
   const grouped = input.sets
     .filter((set) => set.exercise_id === input.exerciseId)
     .filter((set) => input.includeWarmups || !set.is_warmup)
     .filter((set) => {
       const sessionMachineProfileId = sessionById.get(set.session_id)?.machine_profile_id ?? null;
-      if (input.machineScoped) return Boolean(input.machineProfileId) && sessionMachineProfileId === input.machineProfileId;
+      if (input.machineScoped) return sessionMachineProfileId === (input.machineProfileId ?? null);
       return !input.machineProfileId || sessionMachineProfileId === input.machineProfileId;
     })
     .reduce<Map<number, WorkoutSet[]>>((output, set) => {
@@ -25,9 +28,10 @@ export function latestSetsForExercise(input: {
   const latest = [...grouped.entries()]
     .map(([sessionId, groupedSets]) => ({
       sessionId,
-      date: sessionById.get(sessionId)?.workout_date ?? groupedSets[0].created_at.slice(0, 10),
+      date: sessionById.get(sessionId)?.workout_date ?? "",
       sets: groupedSets.sort((left, right) => left.set_number - right.set_number)
     }))
+    .filter((entry) => isCalendarDate(entry.date) && (!input.asOfDate || entry.date <= input.asOfDate))
     .sort((left, right) => left.date.localeCompare(right.date) || left.sessionId - right.sessionId)
     .at(-1);
 

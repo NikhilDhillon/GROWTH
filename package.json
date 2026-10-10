@@ -14,27 +14,28 @@
   },
   "dependencies": {
     "@react-native-community/datetimepicker": "8.6.0",
-    "@react-navigation/native": "latest",
-    "@react-navigation/native-stack": "latest",
-    "@supabase/supabase-js": "^2.105.4",
-    "@vercel/analytics": "^2.0.1",
-    "expo": "latest",
-    "expo-sqlite": "latest",
-    "expo-status-bar": "latest",
-    "lucide-react-native": "latest",
+    "@react-navigation/native": "7.2.4",
+    "@react-navigation/native-stack": "7.15.1",
+    "@supabase/supabase-js": "2.105.4",
+    "@vercel/analytics": "2.0.1",
+    "expo": "55.0.24",
+    "expo-sqlite": "55.0.16",
+    "expo-status-bar": "55.0.6",
+    "expo-system-ui": "55.0.18",
+    "lucide-react-native": "1.16.0",
     "react": "19.2.0",
-    "react-dom": "^19.2.0",
+    "react-dom": "19.2.0",
     "react-native": "0.83.6",
-    "react-native-gesture-handler": "~2.30.0",
-    "react-native-safe-area-context": "~5.6.2",
-    "react-native-screens": "~4.23.0",
+    "react-native-gesture-handler": "2.30.1",
+    "react-native-safe-area-context": "5.6.2",
+    "react-native-screens": "4.23.0",
     "react-native-svg": "15.15.3",
-    "react-native-web": "^0.21.0",
-    "zustand": "latest"
+    "react-native-web": "0.21.2",
+    "zustand": "5.0.13"
   },
   "devDependencies": {
-    "@types/react": "latest",
-    "typescript": "latest",
-    "vitest": "^3.2.4"
+    "@types/react": "19.2.14",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
   }
 }

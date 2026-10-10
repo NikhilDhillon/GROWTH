@@ -5,17 +5,19 @@ import { ArrowLeft, ArrowRightLeft, Check, Plus, X } from "lucide-react-native";
 
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
-import { Body, Label, SectionTitle, Title } from "@/components/Text";
+import { Body, Label, SectionTitle } from "@/components/Text";
 import { categoryForExercise, guidedCategoryLabels } from "@/constants/guidedWorkout";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { GuidedExerciseCategory, GuidedWorkoutPreferences } from "@/types";
-import { palette, spacing } from "@/utils/theme";
+import { createThemedStyles } from "@/utils/themedStyles";
+import { spacing } from "@/utils/theme";
 import { pressableFeedback } from "@/utils/touch";
 
 const guidedCategories = Object.keys(guidedCategoryLabels) as GuidedExerciseCategory[];
 type NumericPreference = keyof Omit<GuidedWorkoutPreferences, "exerciseCategories">;
 
 export function GuidedWorkoutSettingsScreen() {
+  const { palette, styles } = useStyles();
   const navigation = useNavigation<{ navigate: (route: string) => void }>();
   const exercises = useFitnessStore((state) => state.exercises);
   const savedPreferences = useFitnessStore((state) => state.guidedWorkoutPreferences);
@@ -71,15 +73,10 @@ export function GuidedWorkoutSettingsScreen() {
 
   return (
     <Screen>
-      <View style={styles.titleRow}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Back to settings" onPress={() => navigation.navigate("Settings")} style={pressableFeedback(styles.backButton)}>
-          <ArrowLeft size={19} color={palette.ink} />
-        </Pressable>
-        <View>
-          <Label>Guided workout</Label>
-          <Title>Preferences</Title>
-        </View>
-      </View>
+      <Pressable accessibilityRole="button" accessibilityLabel="Back to settings" onPress={() => navigation.navigate("Settings")} style={pressableFeedback(styles.backLink)}>
+        <ArrowLeft size={17} color={palette.ink} />
+        <Body style={styles.backLinkText}>Settings</Body>
+      </Pressable>
 
       <Panel>
         <SectionTitle>Progression targets</SectionTitle>
@@ -184,6 +181,7 @@ export function GuidedWorkoutSettingsScreen() {
 }
 
 function PreferenceField({ label, value, onChange }: { label: string; value: number; onChange: (value: string) => void }) {
+  const { palette, styles } = useStyles();
   return (
     <View style={styles.preferenceField}>
       <Label>{label}</Label>
@@ -192,7 +190,9 @@ function PreferenceField({ label, value, onChange }: { label: string; value: num
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
+  backLink: { alignSelf: "flex-start", minHeight: 36, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.md, borderRadius: 999, backgroundColor: palette.surfaceAlt },
+  backLinkText: { color: palette.ink, fontWeight: "700", fontSize: 13 },
   titleRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -298,8 +298,9 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     borderWidth: 1,
     borderColor: palette.border,
-    borderRadius: 8,
-    paddingHorizontal: spacing.sm
+    borderRadius: 12,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: palette.surfaceAlt
   },
   secondaryButtonText: {
     color: palette.ink,
@@ -346,4 +347,4 @@ const styles = StyleSheet.create({
     color: palette.danger,
     fontWeight: "800"
   }
-});
+}));

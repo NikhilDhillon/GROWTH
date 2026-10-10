@@ -1,35 +1,53 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Modal, Pressable, StyleSheet, TextInput, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
-import { Check, ChevronRight, Plus, Timer, X } from "lucide-react-native";
+import { Check, ChevronRight, Timer, X } from "lucide-react-native";
 
+import { BottomSheet } from "@/components/BottomSheet";
+import { SearchableExercisePicker } from "@/components/SearchableExercisePicker";
 import { MachineProfilePanel } from "@/components/MachineProfilePanel";
+import { DetailsDisclosure } from "@/components/DetailsDisclosure";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { SetComposerTarget, VisualSetComposer } from "@/components/VisualSetComposer";
-import { activePlannedExerciseMuscles, emptyActiveExercise, exerciseMuscleToSplitMuscle, splitMuscleToExerciseMuscle } from "@/constants/activeWorkout";
+import { emptyActiveExercise } from "@/constants/activeWorkout";
 import { ExerciseLoadType, getExerciseLoadType, isBodyweightLoadType, isMachineLoadType, supportsBarbellCalculator } from "@/constants/exercises";
 import { guidedCategoryLabels } from "@/constants/guidedWorkout";
 import { preferredMachineProfile, profileAppliesToExercise } from "@/constants/machineProfiles";
-import { cloneTrainingSplitDays } from "@/constants/trainingSplit";
-import { getClosestBodyweightForDate } from "@/services/body/bodyWeightService";
-import { buildGuidedRecommendation, buildGuidedSessionOutcome } from "@/services/guidedWorkout/guidedWorkoutService";
-import { calculateSessionPerformance, findStrengthReference } from "@/services/strength/strengthService";
+import { WorkoutValidationError } from "@/database/workoutWrite";
+import { isCalendarDate } from "@/domain/calendar";
+import type { RecoveredWorkoutDraft } from "@/domain/workoutLifecycle";
+import { resolveWorkoutSummary } from "@/domain/workoutHistory";
+import { getBodyweightEstimateForDate, getClosestBodyweightForDate } from "@/services/body/bodyWeightService";
+import { bodyweightLookupMessage } from "@/services/workouts/recordingContext";
+import { buildGuidedPrescription, buildGuidedRecommendation } from "@/services/guidedWorkout/guidedWorkoutService";
+import { assertGuidedObservationsConfirmed, buildUnconfirmedGuidedSets, canConfirmGuidedObservation, confirmGuidedObservation, GuidedCommitAttempt, isGuidedObservationConfirmed, sameGuidedExerciseDraft, sameGuidedSetValues } from "@/services/guidedWorkout/guidedObservationService";
+import { calculateSessionPerformance, findStrengthReference, performanceHistoryForContext } from "@/services/strength/strengthService";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { ActiveWorkout, CompletedGuidedWorkout, Exercise, GuidedWorkoutPreferences, LoggedSetDraft, MachineProfile, MuscleGroup, SplitMuscle, TrainingSplitDay, UnitSystem, WorkoutSession, WorkoutSet } from "@/types";
-import { muscles, palette, spacing } from "@/utils/theme";
+import { ActiveWorkout, CompletedGuidedWorkout, Exercise, LoggedSetDraft, MachineProfile, UnitSystem, WorkoutSession, WorkoutSet } from "@/types";
+import { createThemedStyles } from "@/utils/themedStyles";
+import { spacing } from "@/utils/theme";
 import { pressableFeedback, touchHitSlop } from "@/utils/touch";
-import { formatBodyWeight, formatWeight, formatWeightInput, weightFromStorageUnit, weightToStorageUnit } from "@/utils/units";
+import { formatBodyWeight, formatWeight, weightFromStorageUnit, weightToStorageUnit } from "@/utils/units";
 import { createEmptyPlateCounts, formatElapsedWorkoutTime } from "@/utils/workout";
+import { createRequestId } from "@/utils/requestId";
 
 export function GuidedWorkoutScreen() {
+  const { palette, styles } = useStyles();
   const activeWorkout = useFitnessStore((state) => state.activeWorkout);
+  const exercises = useFitnessStore((state) => state.exercises);
+  const recoveredDrafts = useFitnessStore((state) => state.recoveredWorkoutDrafts);
+  const conflict = useFitnessStore((state) => state.activeDraftConflict);
+  const reloadSavedDraft = useFitnessStore((state) => state.reloadSavedWorkoutDraft);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
   const navigation = useNavigation<{ navigate: (route: string, params?: object) => void }>();
 
   if (!activeWorkout) {
     return (
       <Screen>
+        {draftRecoveryPanels(exercises, recoveredDrafts ?? [], conflict, () => void reloadSavedDraft().catch((caught) => setRecoveryError(errorMessage(caught))), styles)}
+        {recoveryError ? <Body style={styles.error}>{recoveryError}</Body> : null}
         <Panel>
           <SectionTitle>No workout in progress</SectionTitle>
           <Body>Start a guided workout from Home.</Body>
@@ -44,29 +62,56 @@ export function GuidedWorkoutScreen() {
   return <ActiveGuidedWorkoutScreen activeWorkout={activeWorkout} />;
 }
 
+function draftRecoveryPanels(exercises: Exercise[], drafts: RecoveredWorkoutDraft[], conflict: boolean, reload: () => void, styles: ReturnType<typeof useStyles>["styles"]) {
+  return <>
+    {conflict ? <Panel>
+      <SectionTitle>Workout draft conflict</SectionTitle>
+      <Body>A newer version is saved. Your entered values are kept below for recovery.</Body>
+      <Pressable onPress={reload} style={pressableFeedback(styles.secondaryButton)}><Body style={styles.buttonText}>Reload saved draft</Body></Pressable>
+    </Panel> : null}
+    {drafts.map((recovery) => <Panel key={recovery.id}>
+      <SectionTitle>Recovered draft</SectionTitle>
+      <Body>{recovery.draft.workoutDate} · {exercises.find((item) => item.id === recovery.draft.currentExercise.exerciseId)?.name ?? "Unresolved exercise"}</Body>
+      {recovery.draft.currentExercise.sets.map((set, index) => <Body key={index}>
+        {`Set ${index + 1}: ${set.weight || "—"} ${recovery.draft.currentExercise.requestUnit ?? "(unit unrecorded)"} × ${set.reps || "—"}`}
+      </Body>)}
+      {recovery.draft.currentExercise.notes ? <Body>{recovery.draft.currentExercise.notes}</Body> : null}
+    </Panel>)}
+  </>;
+}
+
 function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWorkout }) {
+  const { palette, styles } = useStyles();
   const navigation = useNavigation<{ navigate: (route: string, params?: object) => void }>();
   const exercises = useFitnessStore((state) => state.exercises);
   const sessions = useFitnessStore((state) => state.sessions);
   const sets = useFitnessStore((state) => state.sets);
+  const completedGuidedWorkouts = useFitnessStore((state) => state.completedGuidedWorkouts);
+  const workoutArchiveEvidence = useFitnessStore((state) => state.workoutArchiveEvidence);
+  const workoutRecords = useFitnessStore((state) => state.workoutRecords);
+  const workoutReferences = useFitnessStore((state) => state.workoutReferences);
+  const draftConflict = useFitnessStore((state) => state.activeDraftConflict);
+  const recoveredDrafts = useFitnessStore((state) => state.recoveredWorkoutDrafts);
+  const reloadSavedDraft = useFitnessStore((state) => state.reloadSavedWorkoutDraft);
   const bodyWeightLogs = useFitnessStore((state) => state.bodyWeightLogs);
   const bodyWeightUnit = useFitnessStore((state) => state.bodyUnitPreferences.weight);
   const exercisePoints = useFitnessStore((state) => state.exercisePoints);
   const machineProfiles = useFitnessStore((state) => state.machineProfiles);
-  const trainingSplit = useFitnessStore((state) => state.trainingSplit);
-  const unitSystem = useFitnessStore((state) => state.unitSystem);
+  const preferredUnitSystem = useFitnessStore((state) => state.unitSystem);
   const guidedWorkoutPreferences = useFitnessStore((state) => state.guidedWorkoutPreferences);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
   const saveMachineProfile = useFitnessStore((state) => state.saveMachineProfile);
   const deleteMachineProfile = useFitnessStore((state) => state.deleteMachineProfile);
-  const saveTrainingSplit = useFitnessStore((state) => state.saveTrainingSplit);
   const updateActiveWorkout = useFitnessStore((state) => state.updateActiveWorkout);
   const finishActiveWorkout = useFitnessStore((state) => state.finishActiveWorkout);
+  const activeWorkoutFinalizing = useFitnessStore((state) => state.activeWorkoutFinalizing);
   const [clock, setClock] = useState(Date.now());
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [showAlternateMuscles, setShowAlternateMuscles] = useState(false);
+  const savingRef = useRef(false);
+  const recordingLocked = saving || activeWorkoutFinalizing || draftConflict;
+  const [showCompleted, setShowCompleted] = useState(false);
 
   useEffect(() => {
     const interval = setInterval(() => setClock(Date.now()), 1000);
@@ -74,16 +119,25 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
   }, []);
 
   const workout = activeWorkout;
+  const recorded = useMemo(() => resolveWorkoutSummary({
+    sessions, sets, exercises, activeWorkout, completedGuidedWorkouts, workoutArchiveEvidence, workoutRecords, workoutReferences
+  }, activeWorkout), [sessions, sets, exercises, activeWorkout, completedGuidedWorkouts, workoutArchiveEvidence, workoutRecords, workoutReferences]);
   const current = workout.currentExercise;
-  const pendingMuscle = workout.pendingMuscle;
-  const chooseReplace = workout.schedulePrompt === "replace";
+  const unitSystem = current.requestUnit ?? preferredUnitSystem;
+  const pendingSave = Boolean(current.requestId);
   const selectedExercise = exercises.find((exercise) => exercise.id === current.exerciseId) ?? null;
-  const visibleExercises = current.muscle ? exercises.filter((exercise) => exercise.primary_muscle === current.muscle) : [];
-  const plannedMuscles = activePlannedExerciseMuscles(workout);
-  const displayedMuscles = showAlternateMuscles
-    ? muscles
-    : [...plannedMuscles, ...(current.muscle && !plannedMuscles.includes(current.muscle) ? [current.muscle] : [])];
   const loadType = getExerciseLoadType(selectedExercise?.name ?? "");
+  const observationContext = selectedExercise ? {
+    exerciseId: selectedExercise.id,
+    workoutDate: workout.workoutDate,
+    machineProfileId: isMachineLoadType(loadType) ? current.machineProfileId : null,
+    unitSystem
+  } : undefined;
+  const confirmationReviewNeeded = pendingSave && (!current.requestUnit || !observationContext
+    || current.sets.some((set) => (set.reps.trim() || set.weight.trim()) && !isGuidedObservationConfirmed(set, observationContext)));
+  const displayedSets = pendingSave && !current.requestUnit
+    ? current.sets.map((set) => ({ ...set, observationConfirmation: undefined }))
+    : current.sets;
   const selectedBodyWeight = isBodyweightLoadType(loadType) ? getClosestBodyweightForDate(workout.workoutDate, bodyWeightLogs) : null;
   const selectedMachineProfile = machineProfiles.find((profile) => profile.id === current.machineProfileId) ?? null;
   const lastMachineLoad = selectedExercise && isMachineLoadType(loadType)
@@ -93,6 +147,7 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
         profile: selectedMachineProfile,
         sessions,
         sets,
+        asOfDate: workout.workoutDate,
         unitSystem
       })
     : null;
@@ -112,15 +167,19 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
       : " for the selected machine tag"
     : "";
   const composerTargets = useMemo<SetComposerTarget[]>(() => {
-    return recommendation?.targets.map((target) => ({
-      draftIndex: target.draftIndex,
-      weight: target.priorWeight,
-      targetReps: target.targetReps,
-      label: setRoleLabel(target.role, target.workingSetNumber),
-      increaseWeight: target.increaseWeight
-    })) ?? [];
-  }, [recommendation]);
-  const bestPerformance = selectedExercise ? findStrengthReference(exercisePoints.filter((point) => point.exerciseId === selectedExercise.id)) : undefined;
+    if (current.prescription) {
+      const workingIndexes = current.sets.map((set, index) => set.isWarmup ? -1 : index).filter((index) => index >= 0);
+      return current.prescription.sets.filter((target) => !target.isWarmup).map((target) => ({
+        draftIndex: workingIndexes[target.setNumber - 1] ?? current.sets.length + target.setNumber - workingIndexes.length - 1,
+        weight: target.targetLoadLb ?? undefined, targetReps: target.targetReps?.minimum,
+        label: current.prescription!.category === "top_set" ? target.setNumber === 1 ? "Top set" : `Back-off set ${target.setNumber - 1}` : `Set ${target.setNumber}`,
+        increaseWeight: target.targetLoadLb === null && target.targetReps === null
+      }));
+    }
+    return recommendation?.targets.map((target) => ({ draftIndex: target.draftIndex, weight: target.priorWeight,
+      targetReps: target.targetReps, label: setRoleLabel(target.role, target.workingSetNumber), increaseWeight: target.increaseWeight })) ?? [];
+  }, [recommendation, current.prescription, current.sets]);
+  const bestPerformance = selectedExercise ? findStrengthReference(performanceHistoryForContext(exercisePoints, { exerciseId: selectedExercise.id, asOfDate: workout.workoutDate, loadType, machineProfileId: current.machineProfileId, sessions })) : undefined;
   const projectedPerformance = selectedExercise
     ? calculateSessionPerformance(
         current.sets
@@ -131,159 +190,167 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
         { loadType, bodyWeight: selectedBodyWeight?.weight }
       )
     : null;
-  const sourceDay = trainingSplit.days.find((day) => day.key === workout.sourceDayKey);
 
   function persist(updater: (workout: ActiveWorkout) => ActiveWorkout) {
-    void updateActiveWorkout(updater(workout)).catch((caught) => setError(errorMessage(caught)));
+    if (savingRef.current || useFitnessStore.getState().activeWorkoutFinalizing || useFitnessStore.getState().activeDraftConflict) return;
+    const latest = useFitnessStore.getState().activeWorkout;
+    if (!latest || latest.startedAt !== workout.startedAt) return;
+    if (latest.currentExercise.requestId) {
+      setError("A save is pending. Retry the same recorded values before changing this draft.");
+      return;
+    }
+    void updateActiveWorkout(updater(latest)).catch((caught) => setError(errorMessage(caught)));
+  }
+
+  function withPrescription(active: ActiveWorkout, draft: ActiveWorkout["currentExercise"]) {
+    const exercise = exercises.find((item) => item.id === draft.exerciseId);
+    if (!exercise) return { ...draft, prescription: undefined };
+    const changed = active.currentExercise.exerciseId !== draft.exerciseId || active.currentExercise.machineProfileId !== draft.machineProfileId;
+    if (draft.prescription && !changed) return draft;
+    const type = getExerciseLoadType(exercise.name);
+    const recommendation = buildGuidedRecommendation({ exercise, preferences: guidedWorkoutPreferences, sessions, sets,
+      workoutDate: active.workoutDate, draftWarmups: draft.sets.map((set) => Boolean(set.isWarmup)),
+      machineProfileId: isMachineLoadType(type) ? draft.machineProfileId : null, machineScoped: isMachineLoadType(type) });
+    const prescription = buildGuidedPrescription({ exerciseId: exercise.id, recommendation, generatedAt: new Date().toISOString() });
+    prescription.equipment = isMachineLoadType(type)
+      ? draft.machineProfileId ? { kind: "machine_profile", machineProfileId: draft.machineProfileId } : { kind: "unknown", reason: "No machine profile was selected." }
+      : { kind: "non_machine", loadType: type };
+    return { ...draft, prescription };
   }
 
   function updateDraft(patch: Partial<ActiveWorkout["currentExercise"]>) {
-    persist((workout) => ({ ...workout, currentExercise: { ...workout.currentExercise, ...patch } }));
+    persist((active) => ({ ...active, currentExercise: withPrescription(active, { ...active.currentExercise, ...patch }) }));
   }
 
-  function selectMuscle(muscle: MuscleGroup) {
-    if (plannedMuscles.includes(muscle)) {
-      setShowAlternateMuscles(false);
-      persist((active) => ({ ...active, pendingMuscle: null, schedulePrompt: null, currentExercise: { ...active.currentExercise, muscle, exerciseId: null, machineProfileId: null } }));
+  useEffect(() => {
+    if (selectedExercise && !current.prescription && !pendingSave && !recordingLocked) updateDraft({});
+  }, [selectedExercise?.id, current.prescription, pendingSave, recordingLocked]);
+
+  function updateDisplayedSets(sets: LoggedSetDraft[]) {
+    if (savingRef.current || useFitnessStore.getState().activeWorkoutFinalizing || useFitnessStore.getState().activeDraftConflict) return;
+    const latestState = useFitnessStore.getState();
+    const latest = latestState.activeWorkout;
+    if (!latest || latest.startedAt !== workout.startedAt) return;
+    if (!latest.currentExercise.requestId) {
+      updateDraft({ sets, requestUnit: latest.currentExercise.requestUnit ?? unitSystem });
       return;
     }
-    persist((active) => ({ ...active, pendingMuscle: muscle, schedulePrompt: "off_plan" }));
-  }
-
-  function useOffPlanMuscleForWorkout() {
-    if (!pendingMuscle) return;
-    setShowAlternateMuscles(false);
-    persist((active) => ({ ...active, pendingMuscle: null, schedulePrompt: null, currentExercise: { ...active.currentExercise, muscle: pendingMuscle, exerciseId: null, machineProfileId: null } }));
-  }
-
-  async function addOffPlanMuscle() {
-    if (!pendingMuscle) return;
-    const splitMuscle = exerciseMuscleToSplitMuscle(pendingMuscle);
-    const days = cloneTrainingSplitDays(trainingSplit.days);
-    const today = days.find((day) => day.key === workout.todayDayKey);
-    if (today && !today.muscles.includes(splitMuscle)) today.muscles.push(splitMuscle);
-    await saveScheduleAndSelect(days, pendingMuscle, `${splitMuscle} was added to today's weekly split.`);
-  }
-
-  async function replacePlannedMuscle(replaced: SplitMuscle) {
-    if (!pendingMuscle) return;
-    const days = cloneTrainingSplitDays(trainingSplit.days);
-    const today = days.find((day) => day.key === workout.todayDayKey);
-    if (today) {
-      const position = today.muscles.indexOf(replaced);
-      if (position >= 0) today.muscles[position] = exerciseMuscleToSplitMuscle(pendingMuscle);
-    }
-    await saveScheduleAndSelect(days, pendingMuscle, `${replaced} was replaced with ${exerciseMuscleToSplitMuscle(pendingMuscle)} in today's weekly split.`);
-  }
-
-  async function saveScheduleAndSelect(days: TrainingSplitDay[], muscle: MuscleGroup, scheduleChange: string) {
-    try {
-      await saveTrainingSplit(days);
-      setShowAlternateMuscles(false);
-      persist((workout) => ({
-        ...workout,
-        plannedMuscles: [...(days.find((day) => day.key === workout.todayDayKey)?.muscles ?? workout.plannedMuscles)],
-        currentExercise: { ...workout.currentExercise, muscle, exerciseId: null, machineProfileId: null },
-        pendingMuscle: null,
-        schedulePrompt: null,
-        scheduleChanges: [...workout.scheduleChanges, scheduleChange]
-      }));
-    } catch (caught) {
-      setError(errorMessage(caught));
-    }
-  }
-
-  async function chooseRestDay(day: TrainingSplitDay, saveSwap: boolean) {
-    try {
-      if (saveSwap) {
-        const days = cloneTrainingSplitDays(trainingSplit.days);
-        const today = days.find((item) => item.key === workout.todayDayKey);
-        const selected = days.find((item) => item.key === day.key);
-        if (today && selected) {
-          today.muscles = [...selected.muscles];
-          selected.muscles = [];
-          await saveTrainingSplit(days);
-        }
+    const latestExercise = latestState.exercises.find((exercise) => exercise.id === latest.currentExercise.exerciseId);
+    if (latest.currentExercise.requestUnit && latestExercise) {
+      const context = {
+        exerciseId: latestExercise.id, workoutDate: latest.workoutDate,
+        machineProfileId: isMachineLoadType(getExerciseLoadType(latestExercise.name)) ? latest.currentExercise.machineProfileId : null,
+        unitSystem: latest.currentExercise.requestUnit
+      };
+      if (latest.currentExercise.sets.every((set) => (!set.reps.trim() && !set.weight.trim()) || isGuidedObservationConfirmed(set, context))) {
+        setError("A save is pending. Retry the same recorded values before changing this draft.");
+        return;
       }
-      await updateActiveWorkout({
-        ...workout,
-        sourceDayKey: day.key,
-        plannedMuscles: [...day.muscles],
-        currentExercise: emptyActiveExercise(),
-        pendingMuscle: null,
-        schedulePrompt: null,
-        scheduleChanges: saveSwap
-          ? [...workout.scheduleChanges, `Today's rest day was swapped with ${day.label}.`]
-          : workout.scheduleChanges
-      });
-    } catch (caught) {
-      setError(errorMessage(caught));
     }
+    // A legacy pending draft may review its confirmation; its attempted values stay intact.
+    if (!sameGuidedSetValues(latest.currentExercise.sets, sets)) {
+      setError("A save is pending. Its values must stay unchanged until the retry is resolved.");
+      return;
+    }
+    void updateActiveWorkout({
+      ...latest,
+      currentExercise: { ...latest.currentExercise, sets, requestUnit: latest.currentExercise.requestUnit ?? unitSystem }
+    }).catch((caught) => setError(errorMessage(caught)));
   }
 
   async function completeCurrent(endAfterSave: boolean) {
-    if (!selectedExercise) {
-      if (endAfterSave && !hasEnteredSets(current.sets)) {
-        await finish();
-      } else {
-        setError("Choose an exercise and enter working sets first.");
-      }
-      return;
-    }
-    if (endAfterSave && !hasEnteredSets(current.sets)) {
-      await finish();
-      return;
-    }
+    if (savingRef.current || useFitnessStore.getState().activeWorkoutFinalizing || useFitnessStore.getState().activeDraftConflict) return;
     setSaving(true);
+    savingRef.current = true;
     setError(null);
+    let newRequestId: string | null = null;
+    let canonicalCommitted = false;
     try {
-      await saveWorkout({
-        exerciseId: selectedExercise.id,
-        workoutDate: workout.workoutDate,
-        notes: current.notes,
-        machineProfileId: isMachineLoadType(loadType) ? current.machineProfileId : null,
-        sets: current.sets
-      });
-      const savedState = useFitnessStore.getState();
-      const sessionId = savedState.sessions
-        .filter((session) => session.workout_date === workout.workoutDate)
-        .filter((session) => savedState.sets.some((set) => set.session_id === session.id && set.exercise_id === selectedExercise.id))
-        .sort((left, right) => left.id - right.id)
-        .at(-1)?.id;
-      const completedExercise = {
-        exerciseId: selectedExercise.id,
-        sessionId,
-        machineProfileId: isMachineLoadType(loadType) ? current.machineProfileId : null,
-        machineProfileLabel: isMachineLoadType(loadType) ? selectedMachineProfile?.label ?? null : null,
-        exerciseName: selectedExercise.name,
-        muscle: selectedExercise.primary_muscle,
-        sets: current.sets,
-        completedAt: new Date().toISOString(),
-        guidedOutcome: buildGuidedSessionOutcome({
-          exercise: selectedExercise,
-          preferences: guidedWorkoutPreferences,
-          recommendation,
-          sets: current.sets
-        })
-      };
-      if (endAfterSave) {
-        await finish({ ...workout, completedExercises: [...workout.completedExercises, completedExercise] });
+      const state = useFitnessStore.getState();
+      const snapshot = state.activeWorkout;
+      if (!snapshot || snapshot.startedAt !== workout.startedAt) throw new Error("Your active workout changed. Review the current draft before saving.");
+      const draft = snapshot.currentExercise;
+      const recordingUnit = draft.requestUnit ?? (draft.requestId ? undefined : state.unitSystem);
+      if (!recordingUnit) throw new Error("This saved draft has no recorded unit. Check the displayed units, then save again.");
+      const exercise = state.exercises.find((item) => item.id === draft.exerciseId);
+      if (endAfterSave && !hasEnteredSets(draft.sets)) {
+        if (draft.requestId) throw new Error("A save is pending. Retry it before discarding or finishing this workout.");
+        await finish(snapshot);
         return;
       }
-      await updateActiveWorkout({
-        ...workout,
-        completedExercises: [...workout.completedExercises, completedExercise],
-        currentExercise: emptyActiveExercise()
+      if (!exercise) throw new Error("Choose an exercise and enter working sets first.");
+      const recordingLoadType = getExerciseLoadType(exercise.name);
+      const machineProfileId = isMachineLoadType(recordingLoadType) ? draft.machineProfileId : null;
+      const recordingContext = { exerciseId: exercise.id, workoutDate: snapshot.workoutDate, machineProfileId, unitSystem: recordingUnit };
+      // Saving is the performed signal: every set with reps and load is confirmed here, so there is
+      // no per-set tap. Confirmation fingerprints the values, so a retry confirms identically.
+      const partial = draft.sets.findIndex((set) => (set.reps.trim() || set.weight.trim()) && !canConfirmGuidedObservation(set));
+      if (partial >= 0) throw new Error(`Set ${partial + 1} needs both reps and load. Fill it in or delete it.`);
+      const performed = { ...draft, sets: draft.sets.map((set) => canConfirmGuidedObservation(set) ? confirmGuidedObservation(set, recordingContext) : set) };
+      assertGuidedObservationsConfirmed(performed.sets, recordingContext);
+      const requestId = draft.requestId ?? createRequestId();
+      if (!draft.requestId) newRequestId = requestId;
+      const attempt: GuidedCommitAttempt = {
+        workoutId: snapshot.startedAt, workoutDate: snapshot.workoutDate, unitSystem: recordingUnit,
+        draft: { ...withPrescription(snapshot, performed), requestId, requestUnit: recordingUnit }
+      };
+      // Optimistic state may contain an identity whose previous draft write failed.
+      // Establish the exact durable retry payload before every canonical attempt.
+      if (!draft.requestId || state.activeWorkoutDirty || !sameGuidedExerciseDraft(draft, attempt.draft)) await updateActiveWorkout({ ...snapshot, currentExercise: attempt.draft });
+      const prepared = useFitnessStore.getState();
+      if (prepared.currentUser?.id !== state.currentUser?.id) throw new Error("Your account changed. Review your workout before retrying.");
+      if (!prepared.activeWorkout || prepared.activeWorkout.startedAt !== attempt.workoutId
+        || prepared.activeWorkout.workoutDate !== attempt.workoutDate || prepared.activeWorkout.currentExercise.requestUnit !== attempt.unitSystem
+        || !sameGuidedExerciseDraft(prepared.activeWorkout.currentExercise, attempt.draft)) {
+        throw new Error("Your draft changed while preparing the save. Review it before retrying; no new observation was recorded by this attempt.");
+      }
+      const sessionId = await saveWorkout({
+        origin: "guided",
+        expectedActive: prepared.activeWorkout,
+        requestId,
+        unitSystem: recordingUnit,
+        exerciseId: exercise.id,
+        workoutDate: snapshot.workoutDate,
+        notes: draft.notes,
+        machineProfileId,
+        sets: performed.sets
       });
-      setShowAlternateMuscles(false);
+      canonicalCommitted = true;
+      const latest = useFitnessStore.getState();
+      if (latest.currentUser?.id !== state.currentUser?.id) throw new Error("Exercise saved. Your account changed while saving; the current account's draft was kept.");
+      if (!latest.activeWorkout) throw new Error("Exercise saved. The active workout was already closed; review the saved entry in Logs.");
+      if (latest.activeWorkout.workoutId !== snapshot.workoutId || latest.activeWorkout.startedAt !== snapshot.startedAt) {
+        throw new Error("Exercise saved. Your active workout changed while saving; the newer workout was kept.");
+      }
+      const recordedEntry = latest.activeWorkout.completedExercises.find((entry) => entry.sessionId === sessionId && entry.exerciseId === exercise.id);
+      if (!recordedEntry) throw new Error("This entry was already recorded by an earlier attempt. Its original data was preserved; review it in Logs before reconciling this draft.");
+      if (endAfterSave && !latest.activeWorkout.currentExercise.exerciseId) {
+        await finish(latest.activeWorkout);
+        return;
+      }
+      if (latest.activeWorkout.currentExercise.exerciseId) setError("Exercise saved. A newer draft was kept and the workout remains open; review it before continuing.");
     } catch (caught) {
+      // Validation of a reused request proves nothing about its earlier uncertain attempt.
+      if (caught instanceof WorkoutValidationError && newRequestId && !canonicalCommitted) {
+        const latest = useFitnessStore.getState().activeWorkout;
+        if (latest?.startedAt === workout.startedAt && latest.currentExercise.requestId === newRequestId) {
+          try {
+            await updateActiveWorkout({ ...latest, currentExercise: { ...latest.currentExercise, requestId: undefined, requestUnit: undefined } });
+          } catch (releaseError) {
+            setError(`${errorMessage(caught)} ${errorMessage(releaseError)}`);
+            return;
+          }
+        }
+      }
       setError(errorMessage(caught));
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
 
-  async function finish(completedWorkout = workout) {
+  async function finish(completedWorkout = useFitnessStore.getState().activeWorkout) {
+    if (!completedWorkout || completedWorkout.startedAt !== workout.startedAt) throw new Error("Your active workout changed. Review it before finishing.");
     if (!completedWorkout.completedExercises.length) {
       await finishActiveWorkout();
       setConfirmEnd(false);
@@ -293,139 +360,63 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
     const finishedAt = new Date().toISOString();
     const summary: CompletedGuidedWorkout = {
       ...completedWorkout,
-      id: `${completedWorkout.startedAt}-${finishedAt}`,
+      id: completedWorkout.startedAt,
       finishedAt
     };
+    if (!completedWorkout.workoutId) throw new Error("The saved workout identity is unavailable. Reload and review the draft before finishing.");
     await finishActiveWorkout(summary);
     setConfirmEnd(false);
-    navigation.navigate("WorkoutSummary", { workout: summary, finishedAt });
+    navigation.navigate("WorkoutSummary", { workoutId: completedWorkout.workoutId });
   }
 
-  if (!activeWorkout.plannedMuscles.length) {
-    return (
-      <Screen>
-        <View style={styles.titleRow}>
-          <View style={styles.titleCopy}>
-            <Label>Guided workout</Label>
-            <Title>Rest day override</Title>
-          </View>
-          <TimerDisplay startedAt={activeWorkout.startedAt} now={clock} />
-        </View>
-        <Panel>
-          <SectionTitle>Today is scheduled for rest</SectionTitle>
-          <Body>Choose a training day to follow. You can use it only for this workout or swap it with today in your synchronized split.</Body>
-          {trainingSplit.days.filter((day) => day.muscles.length).map((day) => (
-            <View key={day.key} style={styles.planRow}>
-              <View style={styles.flex}>
-                <Label>{day.label}</Label>
-                <Body>{day.muscles.join(" + ")}</Body>
-              </View>
-              <Pressable onPress={() => void chooseRestDay(day, false)} style={pressableFeedback(styles.secondaryButton)}>
-                <Body style={styles.buttonText}>Use today</Body>
-              </Pressable>
-              <Pressable onPress={() => void chooseRestDay(day, true)} style={pressableFeedback(styles.secondaryButton)}>
-                <Body style={styles.buttonText}>Swap & save</Body>
-              </Pressable>
-            </View>
-          ))}
-          {error ? <Body style={styles.error}>{error}</Body> : null}
-        </Panel>
-      </Screen>
-    );
+  async function finishFromAction() {
+    if (savingRef.current || useFitnessStore.getState().activeWorkoutFinalizing || useFitnessStore.getState().activeDraftConflict) return;
+    savingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      if (useFitnessStore.getState().activeWorkout?.currentExercise.requestId) throw new Error("A save is pending. Retry it before discarding or finishing this workout.");
+      await finish();
+    } catch (caught) {
+      setError(errorMessage(caught));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   }
 
   return (
     <Screen>
+      {draftRecoveryPanels(exercises, recoveredDrafts ?? [], draftConflict, () => void reloadSavedDraft().catch((caught) => setError(errorMessage(caught))), styles)}
       <View style={styles.titleRow}>
         <View style={styles.titleCopy}>
-          <Label>Guided workout</Label>
-          <Title>{activeWorkout.workoutLabel ?? sourceDay?.label ?? "Today's"} training</Title>
-          <Body>{activeWorkout.plannedMuscles.join(" + ")}</Body>
+          <Title>{activeWorkout.workoutLabel ?? (activeWorkout.plannedMuscles.join(" / ") || "Workout")}</Title>
+          <Body>{activeWorkout.completedExercises.length ? `${activeWorkout.completedExercises.length} ${activeWorkout.completedExercises.length === 1 ? "exercise" : "exercises"} recorded` : "Pick your first exercise"}</Body>
         </View>
         <TimerDisplay startedAt={activeWorkout.startedAt} now={clock} />
       </View>
 
-      {activeWorkout.completedExercises.map((exercise, index) => (
-        <Panel key={`${exercise.exerciseId}-${exercise.completedAt}`}>
-          <View style={styles.summaryRow}>
-            <Check size={18} color={palette.success} />
-            <SectionTitle>Exercise {index + 1}: {exercise.exerciseName}</SectionTitle>
-            <ChevronRight size={18} color={palette.muted} />
-          </View>
-          <Body>{exercise.sets.filter((set) => set.reps || set.weight).map((set) => `${set.isWarmup ? "Warm-up: " : ""}${set.weight} ${unitSystem} x ${set.reps}`).join(" | ")}</Body>
-          {exercise.machineProfileLabel ? <Label>{exercise.machineProfileLabel}</Label> : null}
-        </Panel>
-      ))}
+      {recorded.resolution !== "complete" ? <Panel><Body accessibilityRole="alert">Some completed exercise links need review. Their archived values are preserved, but only linked recorded work is shown here.</Body></Panel> : null}
+
 
       <Panel>
-        <SectionTitle>Exercise {activeWorkout.completedExercises.length + 1}</SectionTitle>
-        <Body>Choose one of this workout's muscle groups for your current exercise.</Body>
-        <View style={styles.chips}>
-          {displayedMuscles.map((muscle) => (
-            <Pressable key={muscle} onPress={() => selectMuscle(muscle)} style={pressableFeedback([styles.chip, current.muscle === muscle && styles.chipActive])}>
-              <Body style={[styles.chipText, current.muscle === muscle && styles.chipTextActive]}>{muscle === "Core" ? "Abs" : muscle}</Body>
-            </Pressable>
-          ))}
-        </View>
-        <Pressable onPress={() => setShowAlternateMuscles((visible) => !visible)} style={pressableFeedback(styles.secondaryButton)}>
-          <Plus size={17} color={palette.ink} />
-          <Body style={styles.buttonText}>{showAlternateMuscles ? "Hide other muscle groups" : "Add another muscle"}</Body>
-        </Pressable>
-        {pendingMuscle ? (
-          <View style={styles.prompt}>
-            <Body>{pendingMuscle === "Core" ? "Abs" : pendingMuscle} is not planned today. Use it only now or update the weekly split?</Body>
-            <View style={styles.actions}>
-              <Pressable onPress={useOffPlanMuscleForWorkout} style={pressableFeedback(styles.secondaryButton)}>
-                <Body style={styles.buttonText}>This workout only</Body>
-              </Pressable>
-              <Pressable onPress={() => persist((active) => ({ ...active, schedulePrompt: "replace" }))} style={pressableFeedback(styles.secondaryButton)}>
-                <Body style={styles.buttonText}>Update weekly split</Body>
-              </Pressable>
-            </View>
-            {chooseReplace ? (
-              <>
-                <Pressable onPress={() => void addOffPlanMuscle()} style={pressableFeedback(styles.secondaryButton)}>
-                  <Body style={styles.buttonText}>Add to today</Body>
-                </Pressable>
-                <Body>Or replace a planned muscle:</Body>
-                <View style={styles.chips}>
-                  {activeWorkout.plannedMuscles.map((muscle) => (
-                    <Pressable key={muscle} onPress={() => void replacePlannedMuscle(muscle)} style={pressableFeedback(styles.secondaryButton)}>
-                      <Body style={styles.buttonText}>Replace {muscle}</Body>
-                    </Pressable>
-                  ))}
-                </View>
-              </>
-            ) : null}
-          </View>
-        ) : null}
-
-        {current.muscle ? (
-          <>
-            <Body>Choose an exercise:</Body>
-            <View style={styles.chips}>
-              {visibleExercises.map((exercise) => (
-                <Pressable key={exercise.id} onPress={() => chooseExercise(exercise.id)} style={pressableFeedback([styles.chip, current.exerciseId === exercise.id && styles.chipActive])}>
-                  <Body style={[styles.chipText, current.exerciseId === exercise.id && styles.chipTextActive]}>{exercise.name}</Body>
-                </Pressable>
-              ))}
-            </View>
-          </>
-        ) : null}
+        <SearchableExercisePicker exercises={exercises} selectedId={current.exerciseId} caption={`Exercise ${activeWorkout.completedExercises.length + 1}`} disabled={recordingLocked || pendingSave} onSelect={chooseExercise}
+          suggested={suggestedExercises(exercises, activeWorkout.plannedMuscles, activeWorkout.completedExercises.map((entry) => entry.exerciseId), sessions, sets)}
+          suggestedLabel={activeWorkout.plannedMuscles.length ? `Suggested for ${activeWorkout.plannedMuscles.join(" / ")}` : "Suggested"} />
       </Panel>
 
       {selectedExercise ? (
         <Panel>
           <View style={styles.summaryRow}>
             <View style={styles.flex}>
-              <SectionTitle>{selectedExercise.name}</SectionTitle>
-              <Label>{recommendation ? guidedCategoryLabels[recommendation.category] : ""}</Label>
-              <Body>{bestPerformance ? `Best e1RM ${formatWeight(bestPerformance.estimated1RM, unitSystem)} | ${bestPerformance.performancePoints.toFixed(1)} points` : "No best performance yet."}</Body>
+              {recommendation ? <Label>{guidedCategoryLabels[recommendation.category]}</Label> : null}
+              <Body>{bestPerformance ? `Best e1RM ${formatWeight(bestPerformance.estimated1RM, unitSystem)} · ${bestPerformance.performancePoints.toFixed(1)} points` : "No best performance yet."}</Body>
             </View>
           </View>
 
-          <View style={styles.guidance}>
-            <Label>Guided target</Label>
+          <DetailsDisclosure title="Guidance and previous results">
+            <View style={styles.guidance}>
+            <Label>Suggested for this session</Label>
             {recommendation?.category === "unguided" ? (
               <Body>No rep or load guidance for pull-ups and dips. Use your last session as reference.</Body>
             ) : (
@@ -443,18 +434,20 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
                 {!recommendation?.latest ? <Body>No previous working sets logged{previousLogScope} yet.</Body> : null}
               </>
             )}
-            {recommendation?.latest ? <Body>Most recent log{previousLogScope} ({recommendation.latest.date}): {formatSessionSets(recommendation.latest.sets, unitSystem)}</Body> : null}
+            {recommendation?.latest ? <Body>Most recent logged work{previousLogScope} ({recommendation.latest.date}): {formatSessionSets(recommendation.latest.sets, unitSystem)}</Body> : null}
             {recommendation?.category === "top_set" ? (
               <>
-                {recommendation.topSetBest ? <Body>Best top set ({recommendation.topSetBest.date}): {formatSessionSets(recommendation.topSetBest.sets.slice(0, 1), unitSystem)}</Body> : null}
-                {recommendation.backoffBest ? <Body>Best back-off block ({recommendation.backoffBest.date}): {formatSessionSets(recommendation.backoffBest.sets.slice(1), unitSystem)}</Body> : null}
+                {recommendation.topSetBest ? <Body>Best logged top set ({recommendation.topSetBest.date}): {formatSessionSets(recommendation.topSetBest.sets.slice(0, 1), unitSystem)}</Body> : null}
+                {recommendation.backoffBest ? <Body>Best logged back-off block ({recommendation.backoffBest.date}): {formatSessionSets(recommendation.backoffBest.sets.slice(1), unitSystem)}</Body> : null}
               </>
-            ) : recommendation?.best ? <Body>Best completed target ({recommendation.best.date}): {formatSessionSets(recommendation.best.sets, unitSystem)}</Body> : null}
-          </View>
+            ) : recommendation?.best ? <Body>Best logged target ({recommendation.best.date}): {formatSessionSets(recommendation.best.sets, unitSystem)}</Body> : null}
+            </View>
+          </DetailsDisclosure>
 
           {isBodyweightLoadType(loadType) ? (
             <Body>{loadInstruction(loadType, selectedBodyWeight?.weight, bodyWeightUnit)}</Body>
           ) : null}
+          {isBodyweightLoadType(loadType) ? <Body>{bodyweightLookupMessage(getBodyweightEstimateForDate(workout.workoutDate, bodyWeightLogs), bodyWeightUnit)}</Body> : null}
 
           {isMachineLoadType(loadType) ? (
             <MachineProfilePanel
@@ -471,65 +464,91 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
           ) : null}
 
           <VisualSetComposer
-            sets={current.sets}
+            sets={displayedSets}
             loadType={loadType}
             unitSystem={unitSystem}
             supportsBarbell={supportsBarbellCalculator(selectedExercise.name)}
             barWeight={current.barWeight}
             plateCounts={current.plateCounts}
             targets={composerTargets}
+            observationContext={observationContext}
+            disabled={recordingLocked || (pendingSave && !confirmationReviewNeeded)}
+            readOnlyValues={pendingSave}
+            onBarbellApply={(patch) => updateDraft(patch)}
             onBarWeightChange={(barWeight) => updateDraft({ barWeight })}
             onPlateCountsChange={(plateCounts) => updateDraft({ plateCounts })}
-            onSetsChange={(sets) => updateDraft({ sets })}
+            onSetsChange={updateDisplayedSets}
           />
-          <TextInput style={[styles.input, styles.notes]} value={current.notes} onChangeText={(notes) => updateDraft({ notes })} multiline placeholder="Notes" />
-          {projectedPerformance ? <Body>Projected performance: {projectedPerformance.performancePoints.toFixed(1)} points | e1RM {formatWeight(projectedPerformance.estimated1RM, unitSystem)}</Body> : null}
+          {pendingSave ? <Body>A save is pending. These values use {unitSystem} and stay unchanged while you retry.{!current.requestUnit ? " Check these units before retrying." : ""}</Body> : null}
+          <Pressable accessibilityRole="button" disabled={recordingLocked || !selectedExercise} onPress={() => void completeCurrent(false)} style={pressableFeedback(styles.primaryButton)}>
+            <Body style={styles.primaryText}>{recordingLocked ? "Saving…" : pendingSave ? "Retry exercise save" : "Save & next exercise"}</Body>
+          </Pressable>
+          <DetailsDisclosure title="Add exercise notes">
+            <TextInput accessibilityLabel="Exercise notes" style={[styles.input, styles.notes]} value={current.notes} editable={!recordingLocked && !pendingSave} onChangeText={(notes) => updateDraft({ notes })} multiline placeholder="Optional context" />
+          </DetailsDisclosure>
+          {projectedPerformance ? <Body>Session feedback: {projectedPerformance.performancePoints.toFixed(1)} | e1RM {formatWeight(projectedPerformance.estimated1RM, unitSystem)}</Body> : null}
         </Panel>
       ) : null}
 
       {error ? <Body style={styles.error}>{error}</Body> : null}
+      {activeWorkoutFinalizing ? <Body>Finishing this workout. Recording stays locked until it completes.</Body> : null}
       <View style={styles.footerActions}>
-        <Pressable disabled={saving} onPress={() => setConfirmEnd(true)} style={pressableFeedback(styles.endButton)}>
+        <Pressable disabled={recordingLocked} onPress={() => setConfirmEnd(true)} style={pressableFeedback(styles.endButton)}>
           <Body style={styles.buttonText}>End workout</Body>
-        </Pressable>
-        <Pressable disabled={saving || !selectedExercise} onPress={() => void completeCurrent(false)} style={pressableFeedback(styles.primaryButton)}>
-          <Body style={styles.primaryText}>{saving ? "Saving..." : "Next exercise"}</Body>
         </Pressable>
       </View>
 
-      <Modal visible={confirmEnd} transparent animationType="fade" onRequestClose={() => setConfirmEnd(false)}>
-        <View style={styles.modalLayer}>
-          <View style={styles.modalCard}>
-            <View style={styles.summaryRow}>
-              <SectionTitle>End workout?</SectionTitle>
-              <Pressable onPress={() => setConfirmEnd(false)}><X size={20} color={palette.ink} /></Pressable>
-            </View>
-            <Body>{hasEnteredSets(current.sets) && selectedExercise
-              ? "You have entered sets for the current exercise. Save them in this workout or discard them before finishing."
+      {recorded.entries.length ? <Panel>
+        <Pressable accessibilityRole="button" accessibilityState={{ expanded: showCompleted }} onPress={() => setShowCompleted(!showCompleted)} style={pressableFeedback(styles.secondaryButton)}>
+          <Body style={styles.buttonText}>{showCompleted ? "Hide recorded exercises" : `Show ${recorded.entries.length} recorded ${recorded.entries.length === 1 ? "exercise" : "exercises"}`}</Body>
+        </Pressable>
+      </Panel> : null}
+      {showCompleted ? <View style={{ gap: spacing.md }}>
+      {recorded.entries.map((entry, index) => (
+        <Panel key={entry.id}>
+          <View style={styles.summaryRow}>
+            <Check size={18} color={palette.success} />
+            <SectionTitle>Exercise {index + 1}: {exercises.find((exercise) => exercise.id === entry.exerciseId)?.name ?? "Recorded exercise"}</SectionTitle>
+            <ChevronRight size={18} color={palette.muted} />
+          </View>
+          <Body>{entry.sets.map((set) => `${set.isWarmup ? "Warm-up: " : ""}${formatWeight(set.loadLb, unitSystem)} x ${set.reps}`).join(" | ")}</Body>
+          {entry.machineProfileId ? <Label>{machineProfiles.find((profile) => profile.id === entry.machineProfileId)?.label ?? "Recorded machine"}</Label> : null}
+        </Panel>
+      ))}
+      </View> : null}
+
+      <Modal visible={confirmEnd} transparent animationType="none" statusBarTranslucent onRequestClose={() => setConfirmEnd(false)}>
+        <BottomSheet title="End workout?" closeLabel="Continue workout" onClose={() => setConfirmEnd(false)}>
+          <View style={styles.sheetBody}>
+            <Body>{pendingSave
+              ? "A save is pending. Retry its unchanged values before finishing this workout."
+              : hasEnteredSets(current.sets) && selectedExercise
+              ? "This exercise has entered sets that aren't saved yet. Save it first, or discard it and finish."
               : activeWorkout.completedExercises.length
                 ? "Your completed exercises are saved. Finish to view your session summary."
                 : "No exercises have been completed. Finishing now will discard this empty workout."}</Body>
+            {error ? <Body style={styles.error}>{error}</Body> : null}
             <View style={styles.actions}>
               <Pressable onPress={() => setConfirmEnd(false)} style={pressableFeedback(styles.secondaryButton)}>
                 <Body style={styles.buttonText}>Continue workout</Body>
               </Pressable>
               {hasEnteredSets(current.sets) && selectedExercise ? (
                 <>
-                  <Pressable disabled={saving} onPress={() => void finish()} style={pressableFeedback(styles.secondaryButton)}>
+                  <Pressable disabled={recordingLocked || pendingSave} onPress={() => void finishFromAction()} style={pressableFeedback(styles.secondaryButton)}>
                     <Body style={styles.buttonText}>Discard current & finish</Body>
                   </Pressable>
-                  <Pressable disabled={saving} onPress={() => void completeCurrent(true)} style={pressableFeedback(styles.primaryButton)}>
+                  <Pressable disabled={recordingLocked} onPress={() => void completeCurrent(true)} style={pressableFeedback(styles.primaryButton)}>
                     <Body style={styles.primaryText}>Save current & finish</Body>
                   </Pressable>
                 </>
               ) : (
-                <Pressable disabled={saving} onPress={() => void finish()} style={pressableFeedback(styles.primaryButton)}>
+                <Pressable disabled={recordingLocked} onPress={() => void finishFromAction()} style={pressableFeedback(styles.primaryButton)}>
                   <Body style={styles.primaryText}>{activeWorkout.completedExercises.length ? "Finish workout" : "Discard workout"}</Body>
                 </Pressable>
               )}
             </View>
           </View>
-        </View>
+        </BottomSheet>
       </Modal>
     </Screen>
   );
@@ -545,8 +564,10 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
       : null;
     updateDraft({
       exerciseId,
+      muscle: exercise?.primary_muscle ?? current.muscle,
       machineProfileId,
-      sets: exercise ? buildSmartGuidedSets({
+      requestId: undefined,
+      sets: exercise ? buildUnconfirmedGuidedSets({
         exercise,
         preferences: guidedWorkoutPreferences,
         sessions,
@@ -564,65 +585,13 @@ function ActiveGuidedWorkoutScreen({ activeWorkout }: { activeWorkout: ActiveWor
 }
 
 function TimerDisplay({ startedAt, now }: { startedAt: string; now: number }) {
+  const { palette, styles } = useStyles();
   return (
     <View style={styles.timer}>
       <Timer size={18} color={palette.accent} />
       <Body style={styles.timerText}>{formatElapsedWorkoutTime(startedAt, now)}</Body>
     </View>
   );
-}
-
-function buildSmartGuidedSets(input: {
-  exercise: Exercise;
-  preferences: GuidedWorkoutPreferences;
-  sessions: WorkoutSession[];
-  sets: WorkoutSet[];
-  workoutDate: string;
-  machineProfileId?: string | null;
-  machineScoped?: boolean;
-  unitSystem: UnitSystem;
-}): LoggedSetDraft[] {
-  const baseSets: LoggedSetDraft[] = [{ reps: "", weight: "" }, { reps: "", weight: "" }, { reps: "", weight: "" }];
-  const recommendation = buildGuidedRecommendation({
-    exercise: input.exercise,
-    preferences: input.preferences,
-    sessions: input.sessions,
-    sets: input.sets,
-    workoutDate: input.workoutDate,
-    draftWarmups: baseSets.map((set) => Boolean(set.isWarmup)),
-    machineProfileId: input.machineProfileId,
-    machineScoped: input.machineScoped
-  });
-  const targetCount = Math.max(3, recommendation.targets.reduce((max, target) => Math.max(max, target.draftIndex + 1), 0), recommendation.latest?.sets.length ?? 0);
-  const nextSets = Array.from({ length: targetCount }, (): LoggedSetDraft => ({ reps: "", weight: "" }));
-
-  if (recommendation.category === "unguided" && recommendation.latest?.sets.length) {
-    return recommendation.latest.sets.map((set) => ({
-      reps: String(set.reps),
-      weight: formatWeightInput(set.weight, input.unitSystem),
-      isWarmup: Boolean(set.is_warmup)
-    }));
-  }
-
-  for (const target of recommendation.targets) {
-    const targetReps = Number(target.targetReps);
-    if (Number.isInteger(targetReps) && targetReps > 0) {
-      nextSets[target.draftIndex] = {
-        ...nextSets[target.draftIndex],
-        reps: String(targetReps)
-      };
-    }
-    if (target.increaseWeight) continue;
-    const sourceWeight = target.priorWeight ?? recommendation.latest?.sets[target.workingSetNumber - 1]?.weight;
-    if (Number.isFinite(sourceWeight)) {
-      nextSets[target.draftIndex] = {
-        ...nextSets[target.draftIndex],
-        weight: formatWeightInput(Number(sourceWeight), input.unitSystem)
-      };
-    }
-  }
-
-  return nextSets;
 }
 
 function loadInstruction(loadType: ExerciseLoadType, bodyWeight: number | undefined, bodyWeightUnit: "lb" | "kg") {
@@ -659,14 +628,19 @@ function latestMachineLoadForExercise(input: {
   sessions: Array<{ id: number; workout_date: string; machine_profile_id?: string | null }>;
   sets: Array<{ exercise_id: number; session_id: number; weight: number; set_number: number; created_at: string; is_warmup?: number | boolean | null }>;
   unitSystem: "lb" | "kg";
+  asOfDate: string;
 }) {
   const sessionById = new Map(input.sessions.map((session) => [session.id, session]));
   const matching = input.sets
     .filter((set) => set.exercise_id === input.exerciseId && !set.is_warmup)
-    .filter((set) => Boolean(input.machineProfileId) && sessionById.get(set.session_id)?.machine_profile_id === input.machineProfileId)
+    .filter((set) => (sessionById.get(set.session_id)?.machine_profile_id ?? null) === (input.machineProfileId ?? null))
+    .filter((set) => {
+      const date = sessionById.get(set.session_id)?.workout_date;
+      return isCalendarDate(date) && isCalendarDate(input.asOfDate) && date <= input.asOfDate;
+    })
     .sort((left, right) => {
-      const leftDate = sessionById.get(left.session_id)?.workout_date ?? left.created_at.slice(0, 10);
-      const rightDate = sessionById.get(right.session_id)?.workout_date ?? right.created_at.slice(0, 10);
+      const leftDate = sessionById.get(left.session_id)!.workout_date;
+      const rightDate = sessionById.get(right.session_id)!.workout_date;
       return leftDate.localeCompare(rightDate) || left.session_id - right.session_id || left.set_number - right.set_number;
     });
   const weight = matching.at(-1)?.weight;
@@ -676,26 +650,21 @@ function latestMachineLoadForExercise(input: {
   return Number(Number(weight).toFixed(1));
 }
 
-const styles = StyleSheet.create({
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
   titleRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: spacing.md },
   titleCopy: { flex: 1, minWidth: 0 },
   flex: { flex: 1, gap: spacing.xs },
   timer: { flexShrink: 0, flexDirection: "row", alignItems: "center", gap: spacing.xs, backgroundColor: palette.accentSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: 12 },
   timerText: { color: palette.ink, fontWeight: "900", fontVariant: ["tabular-nums"] },
   summaryRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  chip: { paddingHorizontal: spacing.md, minHeight: 40, justifyContent: "center", borderRadius: 8, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surfaceAlt },
-  chipActive: { backgroundColor: palette.ink, borderColor: palette.ink },
-  chipText: { color: palette.ink, fontWeight: "800" },
-  chipTextActive: { color: palette.surface },
-  prompt: { backgroundColor: palette.accentSoft, padding: spacing.md, borderRadius: 10, gap: spacing.sm },
   guidance: { backgroundColor: palette.surfaceAlt, borderRadius: 10, padding: spacing.md, gap: spacing.xs },
-  actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, alignItems: "center" },
-  footerActions: { flexDirection: "row", justifyContent: "flex-end", gap: spacing.sm },
+  // Primary action is declared last for reading order, shown first visually.
+  actions: { flexDirection: "column-reverse", gap: spacing.sm },
+  footerActions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-end", gap: spacing.sm },
   primaryButton: { minHeight: 46, borderRadius: 9, backgroundColor: palette.ink, alignItems: "center", justifyContent: "center", flexDirection: "row", paddingHorizontal: spacing.lg },
   primaryText: { color: palette.surface, fontWeight: "900" },
-  secondaryButton: { minHeight: 42, borderRadius: 8, borderWidth: 1, borderColor: palette.border, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: spacing.xs, paddingHorizontal: spacing.md },
-  endButton: { minHeight: 46, borderRadius: 9, borderWidth: 1, borderColor: palette.border, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.lg },
+  secondaryButton: { minHeight: 44, borderRadius: 12, borderWidth: 1, borderColor: palette.border, alignItems: "center", justifyContent: "center", flexDirection: "row", gap: spacing.xs, paddingHorizontal: spacing.md, backgroundColor: palette.surfaceAlt},
+  endButton: { minHeight: 44, borderRadius: 12, backgroundColor: palette.surfaceAlt, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.lg },
   buttonText: { color: palette.ink, fontWeight: "800" },
   setRow: { flexDirection: "row", alignItems: "center", gap: spacing.xs, width: "100%", minWidth: 0 },
   setNumber: { width: 18, textAlign: "center", flexShrink: 0 },
@@ -709,7 +678,7 @@ const styles = StyleSheet.create({
   iconButton: { width: 42, height: 42, flexShrink: 0, borderRadius: 8, borderWidth: 1, borderColor: palette.border, alignItems: "center", justifyContent: "center" },
   barCalculator: { backgroundColor: palette.surfaceAlt, borderRadius: 10, padding: spacing.md, gap: spacing.md },
   calculatorInputRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  resetButton: { minHeight: 38, borderRadius: 8, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, justifyContent: "center", paddingHorizontal: spacing.md },
+  resetButton: { minHeight: 44, borderRadius: 8, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, justifyContent: "center", paddingHorizontal: spacing.md },
   barInput: { width: 68 },
   loadedBar: { height: 62, flexDirection: "row", alignItems: "center", justifyContent: "center" },
   plateStack: { flexDirection: "row", alignItems: "center", height: 62 },
@@ -719,8 +688,20 @@ const styles = StyleSheet.create({
   plateControl: { flexDirection: "row", alignItems: "center", gap: spacing.xs, borderWidth: 1, borderColor: palette.border, borderRadius: 8, padding: spacing.xs },
   swatch: { width: 8, height: 20, borderRadius: 2 },
   countButton: { width: 26, height: 30, alignItems: "center", justifyContent: "center", backgroundColor: palette.surface, borderRadius: 6 },
-  planRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, borderTopWidth: 1, borderTopColor: palette.border, paddingTop: spacing.sm },
   error: { color: palette.danger, fontWeight: "800" },
-  modalLayer: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", alignItems: "center", justifyContent: "center", padding: spacing.lg },
-  modalCard: { width: "100%", maxWidth: 460, borderRadius: 14, backgroundColor: palette.surface, padding: spacing.lg, gap: spacing.md }
-});
+  sheetBody: { paddingHorizontal: spacing.sm, gap: spacing.md }
+}));
+
+/** Planned-muscle exercises not yet done in this workout, most recently trained first. */
+function suggestedExercises(exercises: Exercise[], plannedMuscles: readonly string[], doneIds: Array<number | null | undefined>, sessions: Array<{ id: number; workout_date: string }>, sets: Array<{ session_id: number; exercise_id: number }>) {
+  if (!plannedMuscles.length) return [];
+  const lastTrained = new Map<number, string>();
+  const dateBySession = new Map(sessions.map((session) => [session.id, session.workout_date]));
+  for (const set of sets) {
+    const date = dateBySession.get(set.session_id);
+    if (date && date > (lastTrained.get(set.exercise_id) ?? "")) lastTrained.set(set.exercise_id, date);
+  }
+  const done = new Set(doneIds);
+  return exercises.filter((exercise) => plannedMuscles.includes(exercise.primary_muscle) && !done.has(exercise.id))
+    .sort((a, b) => (lastTrained.get(b.id) ?? "").localeCompare(lastTrained.get(a.id) ?? "") || a.name.localeCompare(b.name));
+}

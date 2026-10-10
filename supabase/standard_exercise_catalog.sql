@@ -1,9 +1,25 @@
+begin;
+
+-- Catalog installation is additive. Legacy ownership and duplicate names need
+-- explicit reconciliation; never discard their records to install a catalog.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'exercises' and column_name = 'user_id'
+  ) then
+    raise exception 'Legacy exercise ownership must be reconciled explicitly before installing the shared catalog. All existing data is preserved.';
+  end if;
+  if exists (select 1 from public.exercises group by name having count(*) > 1) then
+    raise exception 'Duplicate exercise names require explicit reconciliation. All existing data is preserved.';
+  end if;
+end;
+$$;
+
+lock table public.exercises in share row exclusive mode;
 drop policy if exists "exercises are owned by their user" on public.exercises;
 drop policy if exists "standard exercises are readable by authenticated users" on public.exercises;
 
-drop index if exists public.exercises_user_id_idx;
-
-alter table public.exercises drop column if exists user_id;
 alter table public.exercises alter column is_strength_exercise set default 0;
 
 create table if not exists public.user_exercise_preferences (
@@ -19,13 +35,7 @@ alter table public.exercises enable row level security;
 alter table public.user_exercise_preferences enable row level security;
 drop policy if exists "exercise preferences are owned by their user" on public.user_exercise_preferences;
 
-truncate table
-  public.user_exercise_preferences,
-  public.muscle_strength_config,
-  public.workout_sets,
-  public.workout_sessions,
-  public.exercises
-restart identity cascade;
+create unique index if not exists exercises_name_idx on public.exercises(name);
 
 insert into public.exercises (name, primary_muscle, secondary_muscle, is_strength_exercise) values
   ('Barbell Bench Press', 'Chest', null, 0),
@@ -88,7 +98,8 @@ insert into public.exercises (name, primary_muscle, secondary_muscle, is_strengt
   ('Hanging Leg Raise', 'Core', null, 0),
   ('Ab Wheel Rollout', 'Core', null, 0),
   ('Decline Sit-Up', 'Core', null, 0),
-  ('Pallof Press', 'Core', null, 0);
+  ('Pallof Press', 'Core', null, 0)
+on conflict (name) do nothing;
 
 create unique index if not exists exercises_name_idx on public.exercises(name);
 create index if not exists user_exercise_preferences_user_id_idx on public.user_exercise_preferences(user_id);
@@ -102,3 +113,5 @@ create policy "exercise preferences are owned by their user" on public.user_exer
 
 grant select on public.exercises to authenticated;
 grant select, insert, update, delete on public.user_exercise_preferences to authenticated;
+
+commit;

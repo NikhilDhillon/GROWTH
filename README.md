@@ -1,50 +1,42 @@
 # GROWTH
 
-A web-based strength analytics tracker built with Expo Web, React Native, TypeScript, Zustand, and Supabase.
+A strength and body-progress tracker built with Expo, React Native, TypeScript, Zustand, and Supabase.
 
-Live site: https://growth-lift-tracker.vercel.app
+[Live site](https://growth-lift-tracker.vercel.app) — the local work described here has not been deployed.
 
-The app focuses on individual strength-exercise progression, not just workout logging:
+- Home, Record, Progress, and History, with supporting tools under More.
+- Neutral ChatGPT-style light/dark colors that follow the system appearance automatically, including live changes.
+- Guided and Quick workout recording with recoverable input drafts.
+- Daily bodyweight and optional sparse tape measurements in one check-in.
+- Versioned Performance Points: first eligible session per exercise/equipment context = 100; 45% strength, 35% working volume, 20% fatigue resistance. Absolute observations remain visible.
+- Fixed aggregate cohorts with coverage and freshness; bodyweight estimates use prior observations up to 14 calendar days old.
+- Friend comparisons from narrow, portable exercise projections; private notes, machine tags, and body observations stay private. Shared plans require direct consent.
+- Atomic, account-bound imports with provenance, duplicate protection, and actual committed counts.
 
-- Log exercises, sets, reps, weight, and notes
-- Register and log in with Supabase Auth
-- Calculate estimated 1RM with `weight x (1 + reps / 30)`
-- Score eligible failure-set sessions using best e1RM, failure-set volume, and fatigue resistance
-- Calculate Performance Points as `100 x (0.45 strength + 0.35 volume + 0.20 resistance)` normalized against the prior best-strength session, with rolling 7/30/365-day progress compared to the preceding equal-length period
-- Rank friend exercise leaderboards using best estimated 1RM
-- Mark selected exercises as strength exercises
-- Show graphs and PRs for each strength exercise
-
-## Web Development
+## Development
 
 ```sh
-npm install
+npm ci
 npm run web
-```
-
-The local web app runs with Expo at a localhost URL such as:
-
-```text
-http://localhost:8083
-```
-
-## Web Build
-
-```sh
+npm test
+npm run typecheck
 npm run build
 ```
 
-The production web export is written to `dist/`.
+The web export is written to `dist/`. `vercel.json` supplies filesystem-first SPA rewrites so deep links and draft recovery survive reloads. Native development uses `npm run ios` or `npm run android`.
 
-## Structure
+## Implementation and rollout
 
-```text
-src/
-  components/
-  database/
-  screens/
-  services/
-  store/
-  types/
-  utils/
-```
+- [Phases 2–3 domain and recording](PHASE2_DOMAIN.md), [recording lifecycle](PHASE3_RECORDING.md)
+- [Phases 4–5 status](PHASE45_PROGRESS.md)
+- [Import behavior](PHASE6_IMPORT.md), [sharing contracts](supabase/PHASE6_SOCIAL.md)
+- [Phase 6 deployment order](supabase/PHASE6_DEPLOYMENT.md)
+- [Phases 6–7 verification](PHASE67_COMPLETION.md), [cleanup audit](PHASE7_CLEANUP.md)
+
+Apply migrations in documented order before releasing the matching cloud client. Local SQL harnesses under `supabase/tests/` create disposable databases and never verify deployed production state.
+
+## Appearance
+
+Color definitions stay separate from UI hooks: `src/utils/theme.ts` contains pure palette/spacing data, and `src/utils/themedStyles.ts` subscribes to system appearance and selects cached light/dark styles. Recording state and account navigation keys do not depend on appearance, so a theme change preserves open forms. Web inputs inherit `color-scheme`; native status bars and navigation colors adapt as well.
+
+Expo is configured with `userInterfaceStyle: automatic` and the SDK-matched `expo-system-ui` package for Android. Native builds need to include this configuration. See [Expo's system theme guidance](https://docs.expo.dev/develop/user-interface/color-themes/) and [React Native's Appearance subscription](https://reactnative.dev/docs/appearance).

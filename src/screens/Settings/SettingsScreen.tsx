@@ -1,16 +1,19 @@
 import { useState } from "react";
 import { Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
-import { Check, ChevronDown, ChevronRight, ChevronUp, FileUp, LogOut } from "lucide-react-native";
+import { Check, ChevronRight, FileUp, LogOut } from "lucide-react-native";
 
+import { DetailsDisclosure } from "@/components/DetailsDisclosure";
+import { Avatar } from "@/components/Avatar";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
-import { Body, Label, SectionTitle, Title } from "@/components/Text";
+import { Body, Label, SectionTitle } from "@/components/Text";
 import { categoryForExercise, guidedCategoryLabels } from "@/constants/guidedWorkout";
 import { ImportPreview, parseImportData } from "@/services/import/importService";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { GuidedExerciseCategory } from "@/types";
-import { palette, spacing } from "@/utils/theme";
+import { createThemedStyles } from "@/utils/themedStyles";
+import { spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback } from "@/utils/touch";
 
 const sampleImportJson = `{
@@ -42,7 +45,7 @@ const sampleImportJson = `{
         {
           "name": "Barbell Bench Press",
           "sets": [
-            { "reps": 5, "weight": 225 },
+            { "reps": 5, "weight": 225, "rir": 2 },
             { "reps": 5, "weight": 225 }
           ]
         }
@@ -52,6 +55,7 @@ const sampleImportJson = `{
 }`;
 
 export function SettingsScreen() {
+  const { palette, styles } = useStyles();
   const navigation = useNavigation<{ navigate: (route: string) => void }>();
   const exercises = useFitnessStore((state) => state.exercises);
   const currentUser = useFitnessStore((state) => state.currentUser);
@@ -62,13 +66,12 @@ export function SettingsScreen() {
   const setBodyUnitPreferences = useFitnessStore((state) => state.setBodyUnitPreferences);
   const importTrainingData = useFitnessStore((state) => state.importTrainingData);
   const guidedWorkoutPreferences = useFitnessStore((state) => state.guidedWorkoutPreferences);
-  const strengthCount = exercises.filter((exercise) => exercise.is_strength_exercise).length;
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [selectedFileText, setSelectedFileText] = useState("");
+  const [previewAccountId, setPreviewAccountId] = useState<string | number | null>(null);
   const [isImporting, setIsImporting] = useState(false);
-  const [showFormula, setShowFormula] = useState(false);
   const guidedCounts = (Object.keys(guidedCategoryLabels) as GuidedExerciseCategory[]).map((category) => ({
     category,
     count: exercises.filter((exercise) => categoryForExercise(exercise.name, guidedWorkoutPreferences) === category).length
@@ -80,24 +83,31 @@ export function SettingsScreen() {
     try {
       const nextPreview = parseImportData(text, exercises);
       setPreview(nextPreview);
-      setImportMessage(`Ready: ${nextPreview.bodyWeightCount} weight entries, ${nextPreview.bodyMeasurementCount} body check-ins, ${nextPreview.workoutCount} workout logs, ${nextPreview.setCount} sets.`);
+      setPreviewAccountId(currentUser?.id ?? null);
+      setImportMessage(`Preview · ${nextPreview.bodyWeightCount} weights · ${nextPreview.bodyMeasurementCount} check-ins · ${nextPreview.workoutCount} workouts · ${nextPreview.setCount} sets`);
     } catch (error) {
       setPreview(null);
+      setPreviewAccountId(null);
       setImportError(error instanceof Error ? error.message : "Could not validate import data.");
     }
   }
 
   async function handleImport() {
-    const selectedPreview = preview ?? parseImportData(selectedFileText, exercises);
     setIsImporting(true);
     setImportError(null);
     try {
-      await importTrainingData(selectedPreview);
+      const selectedPreview = preview ?? parseImportData(selectedFileText, exercises);
+      const importInput = { ...selectedPreview, expectedAccountId: previewAccountId ?? undefined };
+      const result = await importTrainingData(importInput);
       setSelectedFileText("");
       setPreview(null);
-      setImportMessage(`Imported ${selectedPreview.bodyWeightCount} weight entries, ${selectedPreview.bodyMeasurementCount} body check-ins, and ${selectedPreview.workoutCount} workout logs.`);
+      setPreviewAccountId(null);
+      setImportMessage(
+        `Imported ${result.inserted.bodyCheckIns} check-ins · ${result.inserted.workouts} workouts · ${result.inserted.sets} sets. Skipped ${result.skipped.bodyCheckIns} check-ins · ${result.skipped.workouts} workouts. Failed ${result.failed}.`
+      );
     } catch (error) {
-      setImportError(error instanceof Error ? error.message : "Could not import data.");
+      const detail = error instanceof Error ? error.message : "Could not import data.";
+      setImportError(`Import failed; no records were committed. ${detail}`);
     } finally {
       setIsImporting(false);
     }
@@ -128,26 +138,24 @@ export function SettingsScreen() {
 
   return (
     <Screen>
-      <View>
-        <Label>Account configuration</Label>
-        <Title>Settings</Title>
-      </View>
 
       <Panel>
         <SectionTitle>Account</SectionTitle>
-        <Body>{currentUser ? `${currentUser.name} (${currentUser.email})` : "Not signed in"}</Body>
-        <Pressable style={styles.logoutButton} onPress={() => void logout()}>
-          <LogOut size={18} color={palette.surface} />
-          <Body style={styles.logoutText}>Logout</Body>
+        <View style={styles.accountRow}>
+          <Avatar name={currentUser?.name.trim() || currentUser?.email || "?"} size={44} />
+          <View style={styles.accountText}>
+            <Body numberOfLines={1} style={styles.accountName}>{currentUser ? currentUser.name.trim() || currentUser.email.split("@")[0] : "Not signed in"}</Body>
+            {currentUser ? <Body numberOfLines={1}>{currentUser.email}</Body> : null}
+          </View>
+        </View>
+        <Pressable accessibilityRole="button" accessibilityLabel="Log out" onPress={() => void logout()} style={pressableFeedback(styles.logoutButton)}>
+          <LogOut size={16} color={palette.danger} />
+          <Body style={styles.logoutText}>Log out</Body>
         </Pressable>
       </Panel>
 
       <Panel>
-        <Pressable accessibilityRole="button" onPress={() => setShowFormula((current) => !current)} style={styles.collapsibleHeader}>
-          <SectionTitle>Performance Points formula</SectionTitle>
-          {showFormula ? <ChevronUp size={20} color={palette.ink} /> : <ChevronDown size={20} color={palette.ink} />}
-        </Pressable>
-        {showFormula ? (
+        <DetailsDisclosure title="Performance Points formula">
           <View style={styles.formulaDetails}>
             <Body>Eligible sessions use two or more working sets with positive whole-number reps; warm-up sets are excluded.</Body>
             <Body>Estimated 1RM = weight x (1 + min(reps, 10) / 30)</Body>
@@ -156,12 +164,12 @@ export function SettingsScreen() {
             <Body>Points = 100 x (0.45 normalized strength + 0.35 normalized volume + 0.20 normalized resistance)</Body>
             <Body>Each session is normalized against the exercise's prior best-strength session.</Body>
           </View>
-        ) : null}
+        </DetailsDisclosure>
       </Panel>
 
       <Panel>
         <SectionTitle>Exercise tracking</SectionTitle>
-        <Body>{exercises.length} standard exercises available. {strengthCount} selected for logging and scoring.</Body>
+        <Body>{exercises.length} exercises available to record.</Body>
       </Panel>
 
       <Panel>
@@ -172,27 +180,33 @@ export function SettingsScreen() {
             <ChevronRight size={17} color={palette.ink} />
           </Pressable>
         </View>
-        <Body style={styles.importNotice}>Working-set targets control the prompts shown during a guided workout. Warm-up sets never count toward progression or best sessions.</Body>
-        <View style={styles.summaryGrid}>
-          <Body>Hypertrophy: {guidedWorkoutPreferences.hypertrophyTargetReps} reps, -{guidedWorkoutPreferences.hypertrophyRepDecrement} per set</Body>
-          <Body>Strength: {guidedWorkoutPreferences.strengthTargetReps} reps</Body>
-          <Body>Top-set: {guidedWorkoutPreferences.topSetTargetReps} reps</Body>
-          <Body>Back-off start: {guidedWorkoutPreferences.backoffPercentage}%</Body>
-          <Body>Progression pause: {guidedWorkoutPreferences.inactivityDays} days</Body>
-        </View>
-        <Body>{guidedCounts.map(({ category, count }) => `${guidedCategoryLabels[category]}: ${count}`).join(" | ")}</Body>
+        <Body style={styles.importNotice}>Set rep targets and progression rules for guided sessions.</Body>
+        <DetailsDisclosure title="Current targets and categories">
+          <View style={styles.summaryGrid}>
+            <Body>Hypertrophy: {guidedWorkoutPreferences.hypertrophyTargetReps} reps, -{guidedWorkoutPreferences.hypertrophyRepDecrement} per set</Body>
+            <Body>Strength: {guidedWorkoutPreferences.strengthTargetReps} reps</Body>
+            <Body>Top-set: {guidedWorkoutPreferences.topSetTargetReps} reps</Body>
+            <Body>Back-off start: {guidedWorkoutPreferences.backoffPercentage}%</Body>
+            <Body>Progression pause: {guidedWorkoutPreferences.inactivityDays} days</Body>
+          </View>
+          <Body>{guidedCounts.map(({ category, count }) => `${guidedCategoryLabels[category]}: ${count}`).join(" | ")}</Body>
+          <Body>Warm-up sets never count toward progression or best sessions.</Body>
+        </DetailsDisclosure>
       </Panel>
 
       <Panel>
         <SectionTitle>Import</SectionTitle>
-        <Body style={styles.importNotice}>Paste JSON matching this structure. Exercise names must match the app exercise catalog.</Body>
-        <TextInput
-          style={[styles.importInput, styles.sampleInput]}
-          value={sampleImportJson}
-          multiline
-          editable={false}
-          textAlignVertical="top"
-        />
+        <Body style={styles.importNotice}>Import workouts and body check-ins from a JSON backup.</Body>
+        <DetailsDisclosure title="JSON format and import rules">
+          <Body style={styles.importNotice}>Exercise names must match the app catalog. Existing workout sources are skipped. Body check-ins fill empty dates; occupied dates are preserved.</Body>
+          <TextInput
+            style={[styles.importInput, styles.sampleInput]}
+            value={sampleImportJson}
+            multiline
+            editable={false}
+            textAlignVertical="top"
+          />
+        </DetailsDisclosure>
         <View style={styles.importActions}>
           {Platform.OS === "web" ? (
             <Pressable onPress={chooseImportFile} style={pressableFeedback(styles.secondaryButton)}>
@@ -253,29 +267,41 @@ export function SettingsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  collapsibleHeader: {
-    minHeight: 40,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.md
-  },
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
   formulaDetails: {
     gap: spacing.sm
   },
+  accountRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.md
+  },
+  accountText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2
+  },
+  accountName: {
+    color: palette.ink,
+    fontSize: 16,
+    fontWeight: "700"
+  },
   logoutButton: {
-    minHeight: 46,
-    borderRadius: 8,
-    backgroundColor: palette.ink,
+    alignSelf: "flex-start",
+    minHeight: 40,
+    paddingHorizontal: spacing.md,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
-    gap: spacing.sm
+    gap: spacing.sm,
+    ...fastTouchStyle
   },
   logoutText: {
-    color: palette.surface,
-    fontWeight: "900"
+    color: palette.danger,
+    fontWeight: "700"
   },
   importInput: {
     minHeight: 132,
@@ -301,7 +327,7 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     minHeight: 44,
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: palette.border,
     alignItems: "center",
@@ -309,7 +335,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: spacing.sm,
     paddingHorizontal: spacing.md,
-    ...fastTouchStyle
+    ...fastTouchStyle,
+    backgroundColor: palette.surfaceAlt
   },
   secondaryButtonText: {
     color: palette.ink,
@@ -391,4 +418,4 @@ const styles = StyleSheet.create({
   unitTextActive: {
     color: palette.surface
   }
-});
+}));

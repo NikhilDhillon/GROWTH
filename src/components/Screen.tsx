@@ -2,9 +2,11 @@ import { ReactNode } from "react";
 import { Platform, ScrollView, StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { palette, spacing } from "@/utils/theme";
+import { createThemedStyles } from "@/utils/themedStyles";
+import { spacing } from "@/utils/theme";
 
 export function Screen({ children, scroll = true }: { children: ReactNode; scroll?: boolean }) {
+  const { palette, styles } = useStyles();
   const content = <View style={styles.inner}>{children}</View>;
 
   return (
@@ -24,7 +26,7 @@ export function Screen({ children, scroll = true }: { children: ReactNode; scrol
   );
 }
 
-const styles = StyleSheet.create({
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: palette.background
@@ -41,4 +43,4 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     gap: spacing.lg
   }
-});
+}));

@@ -62,6 +62,10 @@ export type WorkoutSession = {
   workout_date: string;
   notes?: string | null;
   machine_profile_id?: string | null;
+  /** Unit of the current recorded revision; historical rows may not have this evidence. */
+  input_unit?: UnitSystem | null;
+  /** Capture origin, independent of the editable observation values. */
+  recording_origin?: "manual" | "guided" | "import" | null;
   created_at: string;
 };
 
@@ -116,6 +120,8 @@ export type BodyMeasurementLog = {
   logged_date: string;
   created_at: string;
   updated_at: string;
+  weight_input_unit?: UnitSystem | null;
+  circumference_input_unit?: CircumferenceUnit | null;
 };
 
 export type User = {
@@ -160,6 +166,8 @@ export type SocialData = {
   friends: Friend[];
   invites: FriendInvite[];
   leaderboard: LeaderboardEntry[];
+  /** Explicit direct consenting recipients of weekly plan edits, including self. */
+  syncMemberIds?: string[];
   notice?: string | null;
 };
 
@@ -188,9 +196,17 @@ export type LoggedSetDraft = {
   reps: string;
   weight: string;
   isWarmup?: boolean;
+  /** Explicit guided confirmation, valid only for the entered values and recording context. */
+  observationConfirmation?: string;
 };
 
 export type ActiveWorkoutExerciseDraft = {
+  /** The prescription shown for this draft; it never supplies performed observations. */
+  prescription?: import("@/domain/types").Prescription;
+  /** Persisted operation identity, never a second copy of completed observations. */
+  requestId?: string;
+  /** Explicit unit bound to entered values and pending writes, so retries cannot reinterpret them. */
+  requestUnit?: UnitSystem;
   muscle: MuscleGroup | null;
   exerciseId: number | null;
   machineProfileId?: string | null;
@@ -219,11 +235,17 @@ export type GuidedSessionOutcome = {
 };
 
 export type ActiveWorkout = {
+  /** Durable aggregate identity, independent of its start time. Legacy drafts are upgraded explicitly. */
+  workoutId?: string;
+  /** Optimistic concurrency token assigned by persistence. */
+  revision?: number;
   startedAt: string;
   workoutDate: string;
   todayDayKey: string;
   sourceDayKey: string;
   workoutLabel?: string;
+  /** Explicit template identity; historical labels do not imply a template ID. */
+  templateId?: string;
   plannedMuscles: SplitMuscle[];
   completedExercises: CompletedWorkoutExercise[];
   currentExercise: ActiveWorkoutExerciseDraft;
@@ -262,17 +284,53 @@ export type ExerciseScorePoint = {
   volume: number;
   topSet: number;
   workingSets: Array<{ weight: number; reps: number }>;
+  /** Historical calculations always use the first eligible entry in this context. */
+  metricVersion?: string;
+  comparisonKey?: string;
+  baselineSessionId?: number;
+  comparisonContext?: import("@/domain/types").ComparisonContext;
+  comparability?: "comparable" | "self_context";
+  machineProfileId?: string | null;
+  loadType?: import("@/constants/exercises").ExerciseLoadType;
+  bodyWeightEstimate?: BodyWeightEstimationEvidence | null;
+};
+
+export type BodyWeightEstimationEvidence = {
+  observationId: number;
+  observationDate: string;
+  ageCalendarDays: number;
+  weightLb: number;
+  /** The weight is an observation; carrying it to another day is an estimate. */
+  isEstimated: boolean;
+};
+
+export type MuscleScoreCoverage = {
+  source: "configured" | "first_observed";
+  cohortStartDate: string | null;
+  members: Array<{ exerciseId: number; comparisonKey: string | null; weightFactor: number }>;
+  includedSessionIds: number[];
+  includedObservations: Array<{ exerciseId: number; sessionId: number; date: string; comparisonKey: string; score: number }>;
+  missingExerciseIds: number[];
+  staleExerciseIds: number[];
+  exclusions: Array<{ sessionId: number; reason: string }>;
+  totalWeight: number;
+  availableWeight: number;
+  complete: boolean;
 };
 
 export type MuscleScorePoint = {
   muscle: MuscleGroup;
   date: string;
-  score: number;
+  /** Missing or stale cohort members withhold the full aggregate. */
+  score: number | null;
+  metricVersion?: string;
+  cohortKey?: string;
+  coverage?: MuscleScoreCoverage;
 };
 
 export type BulkAnalyticsRange = "7d" | "14d" | "30d" | "60d" | "90d" | "all";
 
 export type BulkAnalyticsScope =
-  | { scope: "exercise"; exerciseId: number }
+  | { scope: "exercise"; exerciseId: number; comparisonKey?: string }
   | { scope: "muscle"; muscleGroup: MuscleGroup }
   | { scope: "overall" };

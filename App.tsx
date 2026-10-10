@@ -1,22 +1,27 @@
 import "react-native-gesture-handler";
 
 import { Analytics } from "@vercel/analytics/react";
-import { NavigationContainer, createNavigationContainerRef } from "@react-navigation/native";
+import { DefaultTheme, CommonActions, NavigationContainer, createNavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { BarChart3, Dumbbell, Home, LineChart, ListChecks, Menu, Scale, Settings, Users, X } from "lucide-react-native";
+import { BarChart3, Dumbbell, Home, ListChecks, Menu, Plus, Settings, Users } from "lucide-react-native";
 import type { ComponentType } from "react";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
-import { palette, spacing } from "@/utils/theme";
-import { pressableFeedback, touchHitSlop } from "@/utils/touch";
+import { Avatar } from "@/components/Avatar";
+import { BottomSheet } from "@/components/BottomSheet";
+import { createThemedStyles } from "@/utils/themedStyles";
+import { spacing } from "@/utils/theme";
+import { pressableFeedback } from "@/utils/touch";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { HomeScreen } from "@/screens/Home/HomeScreen";
+import { RecordScreen } from "@/screens/Record/RecordScreen";
 import { WorkoutScreen } from "@/screens/Workout/WorkoutScreen";
 import { ExerciseScreen } from "@/screens/Exercise/ExerciseScreen";
 import { BodyweightScreen } from "@/screens/Bodyweight/BodyweightScreen";
+import { BodyCheckInScreen } from "@/screens/BodyCheckIn/BodyCheckInScreen";
 import { ProgressScreen } from "@/screens/Progress/ProgressScreen";
 import { SettingsScreen } from "@/screens/Settings/SettingsScreen";
 import { GuidedWorkoutSettingsScreen } from "@/screens/Settings/GuidedWorkoutSettingsScreen";
@@ -25,67 +30,85 @@ import { LogsScreen } from "@/screens/Logs/LogsScreen";
 import { SocialScreen } from "@/screens/Social/SocialScreen";
 import { GuidedWorkoutScreen } from "@/screens/Workout/GuidedWorkoutScreen";
 import { WorkoutSummaryScreen } from "@/screens/Workout/WorkoutSummaryScreen";
-import type { ActiveWorkout } from "@/types";
+import { appLinking, navigationSection, routeTitles } from "@/navigation/appNavigation";
+import type { AppRouteName, PrimaryRouteName, RootStackParamList } from "@/navigation/appNavigation";
 
-type RootStackParamList = {
-  Home: undefined;
-  Log: undefined;
-  Exercises: undefined;
-  Bodyweight: undefined;
-  Progress: undefined;
-  Social: undefined;
-  Logs: undefined;
-  Settings: undefined;
-  GuidedWorkoutSettings: undefined;
-  ActiveWorkout: undefined;
-  WorkoutSummary: { workout: ActiveWorkout; finishedAt: string };
-};
-
-type AppRouteName = Exclude<keyof RootStackParamList, "ActiveWorkout" | "GuidedWorkoutSettings" | "WorkoutSummary">;
-type CurrentRouteName = keyof RootStackParamList;
+type CurrentRouteName = AppRouteName;
 type NavIcon = ComponentType<{ color: string; size: number }>;
+type Destination = { key: string; name: AppRouteName; label: string; Icon: NavIcon; params?: Record<string, unknown> };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
-const appRoutes: Array<{ name: AppRouteName; label: string; component: ComponentType; Icon: NavIcon }> = [
-  { name: "Home", label: "Home", component: HomeScreen, Icon: Home },
-  { name: "Log", label: "Log", component: WorkoutScreen, Icon: Dumbbell },
-  { name: "Exercises", label: "Exercises", component: ExerciseScreen, Icon: LineChart },
-  { name: "Bodyweight", label: "Bodyweight", component: BodyweightScreen, Icon: Scale },
-  { name: "Progress", label: "Progress", component: ProgressScreen, Icon: BarChart3 },
-  { name: "Social", label: "Social", component: SocialScreen, Icon: Users },
-  { name: "Logs", label: "Logs", component: LogsScreen, Icon: ListChecks },
-  { name: "Settings", label: "Settings", component: SettingsScreen, Icon: Settings }
+const appRoutes: Array<{ name: AppRouteName; component: ComponentType }> = [
+  { name: "Home", component: HomeScreen },
+  { name: "Record", component: RecordScreen },
+  { name: "Log", component: WorkoutScreen },
+  { name: "Exercises", component: ExerciseScreen },
+  { name: "Bodyweight", component: BodyweightScreen },
+  { name: "Progress", component: ProgressScreen },
+  { name: "Social", component: SocialScreen },
+  { name: "Logs", component: LogsScreen },
+  { name: "Settings", component: SettingsScreen }
+];
+const primaryRoutes: Array<Destination & { name: PrimaryRouteName }> = [
+  { key: "Home", name: "Home", label: "Home", Icon: Home },
+  { key: "Record", name: "Record", label: "Record", Icon: Plus },
+  { key: "Progress", name: "Progress", label: "Progress", Icon: BarChart3 },
+  { key: "Logs", name: "Logs", label: "History", Icon: ListChecks }
+];
+const moreRoutes: Destination[] = [
+  { key: "Exercises", name: "Exercises", label: "Exercises", Icon: Dumbbell },
+  { key: "Social", name: "Social", label: "Social", Icon: Users },
+  { key: "Settings", name: "Settings", label: "Settings", Icon: Settings },
 ];
 
 export default function App() {
+  const { palette, styles, colorScheme } = useStyles();
   const { width } = useWindowDimensions();
   const hydrate = useFitnessStore((state) => state.hydrate);
   const loading = useFitnessStore((state) => state.loading);
   const currentUser = useFitnessStore((state) => state.currentUser);
+  const dataError = useFitnessStore((state) => state.dataError);
+  const dataLoading = useFitnessStore((state) => state.dataLoading);
+  const operationNotice = useFitnessStore((state) => state.operationNotice);
   const acceptFriendInvite = useFitnessStore((state) => state.acceptFriendInvite);
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(() => isRecoveryUrl());
   const [pendingInviteToken, setPendingInviteToken] = useState(() => getInviteToken());
   const [activeRouteName, setActiveRouteName] = useState<CurrentRouteName>("Home");
+  const [moreOpen, setMoreOpen] = useState(false);
   const isLaptopWeb = Platform.OS === "web" && width >= 768;
 
   function updateActiveRoute() {
     const routeName = navigationRef.getCurrentRoute()?.name;
-    if (isAppRouteName(routeName) || routeName === "ActiveWorkout" || routeName === "GuidedWorkoutSettings" || routeName === "WorkoutSummary") {
+    if (isAppRouteName(routeName) || routeName === "ActiveWorkout" || routeName === "GuidedWorkoutSettings" || routeName === "WorkoutSummary" || routeName === "BodyCheckIn") {
       setActiveRouteName(routeName);
     }
   }
 
-  function navigateApp(routeName: AppRouteName) {
-    if (navigationRef.isReady() && routeName !== activeRouteName) {
-      navigationRef.navigate(routeName);
+  function navigateApp(destination: Destination) {
+    setMoreOpen(false);
+    if (navigationRef.isReady() && (destination.name !== activeRouteName || destination.params)) {
+      navigationRef.dispatch(CommonActions.navigate({ name: destination.name, params: destination.params }));
     }
   }
 
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.documentElement.style.colorScheme = colorScheme;
+    document.documentElement.style.backgroundColor = palette.background;
+    let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.name = "theme-color";
+      document.head.appendChild(meta);
+    }
+    meta.content = palette.background;
+  }, [colorScheme, palette]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -132,7 +155,7 @@ export default function App() {
       if (typeof window !== "undefined") {
         const url = new URL(window.location.href);
         url.searchParams.delete("invite");
-        window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+        window.history.replaceState(window.history.state, document.title, `${url.pathname}${url.search}${url.hash}`);
       }
     });
   }, [acceptFriendInvite, currentUser, isPasswordRecovery, pendingInviteToken]);
@@ -150,8 +173,20 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <Analytics />
-      <NavigationContainer ref={navigationRef} onReady={updateActiveRoute} onStateChange={updateActiveRoute}>
-        <StatusBar style="dark" />
+      <NavigationContainer theme={{ ...DefaultTheme, dark: colorScheme === "dark", colors: { ...DefaultTheme.colors, primary: palette.accent, background: palette.background, card: palette.surface, text: palette.ink, border: palette.border, notification: palette.danger } }} key={currentUser?.id ?? "guest"} ref={navigationRef} linking={{ ...appLinking, enabled: Boolean(currentUser) && !isPasswordRecovery }} onReady={updateActiveRoute} onStateChange={updateActiveRoute}>
+        <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
+        {dataError || operationNotice ? (
+          <View style={{ backgroundColor: palette.surface, borderBottomWidth: 1, borderColor: palette.border, padding: spacing.md, gap: spacing.sm }}>
+            <Text accessibilityRole="alert" style={{ color: palette.ink }}>
+              {dataError ? `Could not refresh data. Your saved records are preserved. ${dataError}` : operationNotice}
+            </Text>
+            {dataError ? (
+              <Pressable accessibilityRole="button" disabled={dataLoading} onPress={() => void hydrate()} style={pressableFeedback({ paddingVertical: spacing.sm })}>
+                <Text style={{ color: palette.ink, fontWeight: "700" }}>{dataLoading ? "Retrying…" : "Retry loading"}</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
         {isPasswordRecovery ? (
           <AuthScreen
             forcePasswordUpdate
@@ -164,34 +199,28 @@ export default function App() {
           />
         ) : currentUser ? (
           <View style={[styles.appShell, isLaptopWeb && styles.appShellWithSidebar]}>
-            {isLaptopWeb ? (
-              <>
-                <AppSidebar activeRouteName={activeRouteName} onNavigate={navigateApp} />
-                <View style={styles.desktopUserBadge} pointerEvents="none">
-                  <Text style={styles.userBadgeText} numberOfLines={1}>{displayName(currentUser.name, currentUser.email)}</Text>
-                </View>
-              </>
-            ) : null}
+            {isLaptopWeb ? <AppSidebar activeRouteName={activeRouteName} onNavigate={navigateApp} /> : null}
             <Stack.Navigator
-              screenOptions={({ navigation, route }) => ({
+              screenOptions={({ route }) => ({
                 header: () =>
-                  isLaptopWeb ? null : (
+                  (
                     <AppHeader
-                      activeRouteName={route.name === "GuidedWorkoutSettings" ? "Settings" : isAppRouteName(route.name) ? route.name : "Log"}
-                      title={route.name === "GuidedWorkoutSettings" ? "Guided workout" : route.name === "WorkoutSummary" ? "Workout complete" : undefined}
+                      currentRouteName={route.name}
                       currentUserName={displayName(currentUser.name, currentUser.email)}
-                      onNavigate={(routeName) => navigation.navigate(routeName)}
                     />
                   )
               })}
             >
               {appRoutes.map((route) => (
-                <Stack.Screen key={route.name} name={route.name} component={route.component} />
+                <Stack.Screen key={route.name} name={route.name} component={route.component} getId={() => route.name} />
               ))}
-              <Stack.Screen name="GuidedWorkoutSettings" component={GuidedWorkoutSettingsScreen} />
-              <Stack.Screen name="ActiveWorkout" component={GuidedWorkoutScreen} />
-              <Stack.Screen name="WorkoutSummary" component={WorkoutSummaryScreen} />
+              <Stack.Screen name="GuidedWorkoutSettings" component={GuidedWorkoutSettingsScreen} getId={() => "GuidedWorkoutSettings"} />
+              <Stack.Screen name="BodyCheckIn" component={BodyCheckInScreen} getId={() => "BodyCheckIn"} />
+              <Stack.Screen name="ActiveWorkout" component={GuidedWorkoutScreen} getId={() => "ActiveWorkout"} />
+              <Stack.Screen name="WorkoutSummary" component={WorkoutSummaryScreen} getId={({ params }) => params?.workoutId} />
             </Stack.Navigator>
+            {!isLaptopWeb ? <MobileNavigation activeRouteName={activeRouteName} onNavigate={navigateApp} onMore={() => setMoreOpen(true)} /> : null}
+            <MoreMenu visible={moreOpen} onClose={() => setMoreOpen(false)} onNavigate={navigateApp} />
           </View>
         ) : (
           <AuthScreen />
@@ -213,154 +242,89 @@ function getInviteToken() {
 }
 
 function displayName(name: string, email: string) {
-  const trimmedName = name.trim();
-  if (trimmedName) return trimmedName.split(/\s+/)[0];
-  return email.split("@")[0] || "User";
+  return name.trim() || email.split("@")[0] || "User";
 }
 
 function isAppRouteName(value: unknown): value is AppRouteName {
-  return typeof value === "string" && appRoutes.some((route) => route.name === value);
+  return typeof value === "string" && value in routeTitles;
 }
 
-function AppHeader({
-  activeRouteName,
-  currentUserName,
-  onNavigate,
-  title,
-  showMenuButton = true
-}: {
-  activeRouteName: AppRouteName;
+function AppHeader({ currentRouteName, currentUserName }: {
+  currentRouteName: CurrentRouteName;
   currentUserName: string;
-  onNavigate: (routeName: AppRouteName) => void;
-  title?: string;
-  showMenuButton?: boolean;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const activeRoute = appRoutes.find((route) => route.name === activeRouteName) ?? appRoutes[0];
-
-  function navigateTo(routeName: AppRouteName) {
-    setMenuOpen(false);
-    if (routeName !== activeRouteName) {
-      onNavigate(routeName);
-    }
-  }
-
+  const { palette, styles } = useStyles();
   return (
     <SafeAreaView style={styles.headerSafe} edges={["top", "left", "right"]}>
       <View style={styles.header}>
-        {showMenuButton ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Open navigation menu"
-            hitSlop={touchHitSlop}
-            onPress={() => setMenuOpen(true)}
-            style={pressableFeedback(styles.iconButton)}
-          >
-            <Menu size={23} color={palette.ink} />
-          </Pressable>
-        ) : null}
-        <Text style={styles.headerTitle} numberOfLines={1}>{title ?? activeRoute.label}</Text>
-        <View style={styles.userBadge} pointerEvents="none">
-          <Text style={styles.userBadgeText} numberOfLines={1}>{currentUserName}</Text>
-        </View>
+        <Text style={styles.headerTitle} numberOfLines={1}>{routeTitles[currentRouteName]}</Text>
+        <Avatar name={currentUserName} />
       </View>
-
-      <Modal animationType="fade" transparent visible={menuOpen} onRequestClose={() => setMenuOpen(false)}>
-        <View style={styles.menuLayer}>
-          <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)} />
-          <SafeAreaView style={styles.menuSafe} edges={["top", "left", "right", "bottom"]}>
-            <View style={styles.menuPanel}>
-              <View style={styles.menuHeader}>
-                <Text style={styles.menuTitle}>Navigate</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Close navigation menu"
-                  hitSlop={touchHitSlop}
-                  onPress={() => setMenuOpen(false)}
-                  style={pressableFeedback(styles.iconButton)}
-                >
-                  <X size={22} color={palette.ink} />
-                </Pressable>
-              </View>
-
-              <ScrollView contentContainerStyle={styles.menuList} showsVerticalScrollIndicator={false}>
-                {appRoutes.map((route) => {
-                  const selected = route.name === activeRouteName;
-                  const Icon = route.Icon;
-                  const color = selected ? palette.ink : palette.muted;
-
-                  return (
-                    <Pressable
-                      key={route.name}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected }}
-                      onPress={() => navigateTo(route.name)}
-                      style={pressableFeedback([styles.menuItem, selected && styles.menuItemActive])}
-                    >
-                      <Icon size={22} color={color} />
-                      <Text style={[styles.menuItemText, selected && styles.menuItemTextActive]}>{route.label}</Text>
-                    </Pressable>
-                  );
-                })}
-              </ScrollView>
-            </View>
-          </SafeAreaView>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }
 
-function AppSidebar({
-  activeRouteName,
-  onNavigate
-}: {
+function MobileNavigation({ activeRouteName, onNavigate, onMore }: {
   activeRouteName: CurrentRouteName;
-  onNavigate: (routeName: AppRouteName) => void;
+  onNavigate: (destination: Destination) => void;
+  onMore: () => void;
 }) {
-  return (
-    <SafeAreaView style={styles.sidebarSafe} edges={["top", "left", "bottom"]}>
-      <View style={styles.sidebar}>
-        <View style={styles.sidebarHeader}>
-          <Text style={styles.sidebarBrand}>GROWTH</Text>
-        </View>
-
-        <ScrollView contentContainerStyle={styles.sidebarList} showsVerticalScrollIndicator={false}>
-          {appRoutes.map((route) => {
-            const selected = route.name === activeRouteName ||
-              (activeRouteName === "GuidedWorkoutSettings" && route.name === "Settings") ||
-              (activeRouteName === "WorkoutSummary" && route.name === "Log");
-            const Icon = route.Icon;
-            const color = selected ? palette.ink : palette.muted;
-
-            return (
-              <Pressable
-                key={route.name}
-                accessibilityRole="button"
-                accessibilityState={{ selected }}
-                onPress={() => {
-                  if (route.name !== activeRouteName) onNavigate(route.name);
-                }}
-                style={pressableFeedback([styles.menuItem, selected && styles.menuItemActive])}
-              >
-                <Icon size={21} color={color} />
-                <Text style={[styles.menuItemText, selected && styles.menuItemTextActive]}>{route.label}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
-    </SafeAreaView>
-  );
+  const { palette, styles } = useStyles();
+  const section = navigationSection(activeRouteName);
+  return <SafeAreaView style={styles.bottomSafe} edges={["bottom", "left", "right"]}>
+    <View style={styles.bottomBar}>
+      {primaryRoutes.map((route) => {
+        const selected = section === route.name;
+        const Icon = route.Icon;
+        return <Pressable key={route.key} accessibilityRole="button" accessibilityLabel={route.label} accessibilityState={{ selected }} onPress={() => onNavigate(route)} style={pressableFeedback([styles.bottomItem, selected && styles.bottomItemActive])}><Icon size={22} color={selected ? palette.ink : palette.muted} /><Text style={[styles.bottomLabel, selected && styles.menuItemTextActive]}>{route.label}</Text></Pressable>;
+      })}
+      <Pressable accessibilityRole="button" accessibilityLabel="More" accessibilityState={{ selected: section === "More" }} onPress={onMore} style={pressableFeedback([styles.bottomItem, section === "More" && styles.bottomItemActive])}><Menu size={22} color={section === "More" ? palette.ink : palette.muted} /><Text style={[styles.bottomLabel, section === "More" && styles.menuItemTextActive]}>More</Text></Pressable>
+    </View>
+  </SafeAreaView>;
 }
 
-const styles = StyleSheet.create({
+function DestinationButton({ destination, selected = false, onNavigate }: { destination: Destination; selected?: boolean; onNavigate: (destination: Destination) => void }) {
+  const { palette, styles } = useStyles();
+  const Icon = destination.Icon;
+  return <Pressable accessibilityRole="button" accessibilityLabel={destination.label} accessibilityState={{ selected }} onPress={() => onNavigate(destination)} style={pressableFeedback([styles.menuItem, selected && styles.menuItemActive])}><Icon size={20} color={selected ? palette.ink : palette.muted} /><Text numberOfLines={1} style={[styles.menuItemText, selected && styles.menuItemTextActive]}>{destination.label}</Text></Pressable>;
+}
+
+function MoreMenu({ visible, onClose, onNavigate }: { visible: boolean; onClose: () => void; onNavigate: (destination: Destination) => void }) {
+  return <Modal animationType="none" transparent statusBarTranslucent visible={visible} onRequestClose={onClose}>
+    <BottomSheet title="More" closeLabel="Close More menu" onClose={onClose}>
+      {moreRoutes.map((destination) => <DestinationButton key={destination.key} destination={destination} onNavigate={onNavigate} />)}
+    </BottomSheet>
+  </Modal>;
+}
+
+function AppSidebar({ activeRouteName, onNavigate }: { activeRouteName: CurrentRouteName; onNavigate: (destination: Destination) => void }) {
+  const { palette, styles } = useStyles();
+  const section = navigationSection(activeRouteName);
+  return <SafeAreaView style={styles.sidebarSafe} edges={["top", "left", "bottom"]}>
+    <View style={styles.sidebar}>
+      <View style={styles.sidebarHeader}><Text style={styles.sidebarBrand}>GROWTH</Text></View>
+      <ScrollView contentContainerStyle={styles.sidebarList} showsVerticalScrollIndicator={false}>
+        {primaryRoutes.map((destination) => <DestinationButton key={destination.key} destination={destination} selected={section === destination.name} onNavigate={onNavigate} />)}
+        <Text style={styles.sidebarGroup}>More</Text>
+        {moreRoutes.map((destination) => <DestinationButton key={destination.key} destination={destination} selected={destination.name === activeRouteName && !destination.params} onNavigate={onNavigate} />)}
+      </ScrollView>
+    </View>
+  </SafeAreaView>;
+}
+
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
   appShell: {
     flex: 1
   },
   appShellWithSidebar: {
     paddingLeft: 248
   },
+  bottomSafe: { backgroundColor: palette.surface, borderTopWidth: 1, borderColor: palette.border },
+  bottomBar: { flexDirection: "row", paddingHorizontal: spacing.xs, paddingVertical: spacing.xs, gap: 2 },
+  bottomItem: { flex: 1, minWidth: 44, minHeight: 56, borderRadius: 8, alignItems: "center", justifyContent: "center", gap: 4 },
+  bottomItemActive: { backgroundColor: palette.accentSoft },
+  bottomLabel: { color: palette.muted, fontSize: 11, fontWeight: "800" },
+  sidebarGroup: { color: palette.muted, fontSize: 12, fontWeight: "800", padding: spacing.md },
   headerSafe: {
     backgroundColor: palette.surface,
     borderBottomColor: palette.border,
@@ -373,8 +337,8 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     flexDirection: "row",
     alignItems: "center",
-    gap: spacing.md,
-    paddingHorizontal: spacing.lg,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm
   },
   sidebarSafe: {
@@ -408,90 +372,11 @@ const styles = StyleSheet.create({
   sidebarList: {
     gap: spacing.xs
   },
-  desktopUserBadge: {
-    position: "absolute",
-    top: spacing.lg,
-    right: spacing.xl,
-    zIndex: 20,
-    backgroundColor: palette.surface,
-    borderColor: palette.border,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    maxWidth: 160
-  },
-  iconButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: palette.surfaceAlt,
-    borderColor: palette.border,
-    borderWidth: 1
-  },
   headerTitle: {
     flex: 1,
     color: palette.ink,
     fontSize: 19,
     fontWeight: "900"
-  },
-  userBadge: {
-    backgroundColor: palette.surface,
-    borderColor: palette.border,
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    maxWidth: 128
-  },
-  userBadgeText: {
-    color: palette.ink,
-    fontSize: 13,
-    fontWeight: "900"
-  },
-  menuLayer: {
-    flex: 1
-  },
-  menuBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(23, 32, 28, 0.36)"
-  },
-  menuSafe: {
-    flex: 1,
-    justifyContent: "flex-start",
-    alignItems: "center",
-    padding: spacing.lg
-  },
-  menuPanel: {
-    width: "100%",
-    maxWidth: 460,
-    maxHeight: "100%",
-    backgroundColor: palette.surface,
-    borderColor: palette.border,
-    borderWidth: 1,
-    borderRadius: 8,
-    overflow: "hidden"
-  },
-  menuHeader: {
-    minHeight: 58,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: spacing.md,
-    paddingHorizontal: spacing.lg,
-    borderBottomColor: palette.border,
-    borderBottomWidth: 1
-  },
-  menuTitle: {
-    color: palette.ink,
-    fontSize: 18,
-    fontWeight: "900"
-  },
-  menuList: {
-    padding: spacing.sm,
-    gap: spacing.xs
   },
   menuItem: {
     minHeight: 52,
@@ -515,4 +400,4 @@ const styles = StyleSheet.create({
   menuItemTextActive: {
     color: palette.ink
   }
-});
+}));

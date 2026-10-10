@@ -1,221 +1,172 @@
-import { useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, StyleSheet, TextInput, useWindowDimensions, View } from "react-native";
-import { Check, Pencil, Plus, Save, Trash2, X } from "lucide-react-native";
+import { useNavigation } from "@react-navigation/native";
+import { ReactNode, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { Pencil, Plus, Trash2 } from "lucide-react-native";
 
-import { DatePickerField } from "@/components/DatePickerField";
+import { Button } from "@/components/Button";
 import { LineGraph } from "@/components/LineGraph";
+import { DetailsDisclosure } from "@/components/DetailsDisclosure";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
-import { Body, Label, SectionTitle, Title } from "@/components/Text";
+import { SegmentedControl } from "@/components/SegmentedControl";
+import { Body, Label, SectionTitle } from "@/components/Text";
+import { useReportContext } from "@/hooks/useReportContext";
+import { addCalendarDays } from "@/domain/calendar";
+import { normalizeBodyWeightLogs } from "@/services/body/bodyWeightService";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { BodyWeightLog } from "@/types";
-import { formatShortDate, todayIso } from "@/utils/date";
-import { palette, spacing } from "@/utils/theme";
+import { formatCompactDate, formatShortDate, todayIso } from "@/utils/date";
+import { deleteWithConfirmation } from "@/utils/deletion";
+import { createThemedStyles } from "@/utils/themedStyles";
+import { spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
-import { bodyWeightFromStorageUnit, formatBodyWeight, formatBodyWeightInput } from "@/utils/units";
+import { bodyWeightFromStorageUnit, formatBodyWeight } from "@/utils/units";
 
 type BodyweightRange = "week" | "month" | "year" | "all";
-type SaveState = "idle" | "saving" | "saved";
 
-const ranges: Array<{ key: BodyweightRange; label: string }> = [
-  { key: "week", label: "Week" },
-  { key: "month", label: "Month" },
-  { key: "year", label: "Year" },
-  { key: "all", label: "All" }
+const ranges: Array<{ key: BodyweightRange; label: string; accessibilityLabel: string }> = [
+  { key: "week", label: "1W", accessibilityLabel: "Week" },
+  { key: "month", label: "1M", accessibilityLabel: "Month" },
+  { key: "year", label: "1Y", accessibilityLabel: "Year" },
+  { key: "all", label: "All", accessibilityLabel: "All time" }
 ];
 
-export function BodyweightScreen() {
-  const { width } = useWindowDimensions();
+export function BodyweightScreen({ progressTabs }: { progressTabs?: ReactNode } = {}) {
+  const { palette, styles } = useStyles();
+  const navigation = useNavigation<{ navigate: (route: string, params: { checkInId?: number }) => void }>();
   const logs = useFitnessStore((state) => state.bodyWeightLogs);
   const unit = useFitnessStore((state) => state.bodyUnitPreferences.weight);
-  const saveBodyWeightLog = useFitnessStore((state) => state.saveBodyWeightLog);
-  const updateBodyWeightLog = useFitnessStore((state) => state.updateBodyWeightLog);
   const deleteBodyWeightLog = useFitnessStore((state) => state.deleteBodyWeightLog);
-  const [editing, setEditing] = useState<BodyWeightLog | null>(null);
-  const [loggedDate, setLoggedDate] = useState(todayIso());
-  const [weight, setWeight] = useState("");
-  const [range, setRange] = useState<BodyweightRange>("month");
-  const [showTrendLine, setShowTrendLine] = useState(false);
-  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const account = useFitnessStore((state) => state.currentUser?.id);
+  const reportContext = useReportContext(account, "bodyweight", { range: "month" as BodyweightRange, trend: false, averages: false }, validWeightContext);
+  const range = reportContext.value.range;
+  const showTrendLine = reportContext.value.trend;
+  const setRange = (range: BodyweightRange) => reportContext.update({ ...reportContext.value, range });
+  const setShowTrendLine = (fn: (current: boolean) => boolean) => reportContext.update({ ...reportContext.value, trend: fn(showTrendLine) });
+  const [showAllHistory, setShowAllHistory] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const latest = logs[0] ?? null;
-  const isCompact = width < 430;
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deletionPending = useRef(false);
   const sortedLogs = useMemo(
-    () => [...logs].sort((a, b) => a.logged_at.localeCompare(b.logged_at) || a.created_at.localeCompare(b.created_at)),
+    () => normalizeBodyWeightLogs(logs).filter((log) => log.logged_date! <= todayIso()),
     [logs]
   );
   const filteredLogs = filterLogsByRange(sortedLogs, range);
   const rangeAverage = averageBodyWeight(filteredLogs);
-  const graphPoints = range === "year" || range === "all"
+  const firstInRange = filteredLogs[0] ?? null;
+  const latestInRange = filteredLogs.at(-1) ?? null;
+  const rangeChange = firstInRange && latestInRange ? latestInRange.weight - firstInRange.weight : null;
+  const graphPoints = reportContext.value.averages
     ? buildMonthlyAveragePoints(filteredLogs, unit)
     : filteredLogs.map((log) => ({
-        date: log.logged_at.slice(0, 10),
-        label: formatShortDate(log.logged_at.slice(0, 10)),
+        key: `weight:${log.id}`, date: bodyweightDate(log),
+        label: formatCompactDate(bodyweightDate(log)),
         value: bodyWeightFromStorageUnit(log.weight, unit),
         details: [formatBodyWeight(log.weight, unit)]
       }));
 
-  async function handleSave() {
-    if (saveState === "saving") return;
-    setSaveState("saving");
-    setError(null);
+  async function confirmDelete(log: BodyWeightLog) {
+    if (deletionPending.current) return;
+    deletionPending.current = true;
+    setDeletingId(log.id);
+    setDeleteError(null);
     try {
-      if (editing) {
-        await updateBodyWeightLog({ id: editing.id, loggedDate, weight, unitSystem: unit });
-      } else {
-        await saveBodyWeightLog({ loggedDate, weight, unitSystem: unit });
-      }
-      clearForm();
-      setSaveState("saved");
-      setTimeout(() => setSaveState("idle"), 900);
-    } catch (saveError) {
-      setSaveState("idle");
-      setError(saveError instanceof Error ? saveError.message : "Could not save this bodyweight entry.");
-    }
-  }
-
-  function startEdit(log: BodyWeightLog) {
-    setEditing(log);
-    setLoggedDate(bodyweightDate(log));
-    setWeight(formatBodyWeightInput(log.weight, unit));
-    setError(null);
-  }
-
-  function clearForm() {
-    setEditing(null);
-    setLoggedDate(todayIso());
-    setWeight("");
-    setError(null);
-  }
-
-  function confirmDelete(log: BodyWeightLog) {
-    Alert.alert(
-      "Delete bodyweight entry?",
-      "Strength scores that use this bodyweight may change. Tape measurements saved on the same date will be preserved.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Delete", style: "destructive", onPress: () => void handleDelete(log.id) }
-      ]
-    );
-  }
-
-  async function handleDelete(id: number) {
-    if (deletingId !== null) return;
-    setDeletingId(id);
-    try {
-      await deleteBodyWeightLog(id);
-      if (editing?.id === id) clearForm();
+      const result = await deleteWithConfirmation({
+        title: "Delete bodyweight entry?",
+        message: "Strength scores that use this bodyweight may change. Tape measurements saved on the same date will be preserved.",
+        deleteRecord: () => deleteBodyWeightLog(log.id),
+        fallbackError: "Could not delete this bodyweight entry. Please retry."
+      });
+      if (result.status === "failed") setDeleteError(result.error);
     } finally {
+      deletionPending.current = false;
       setDeletingId(null);
     }
   }
 
   return (
     <Screen>
-      <View>
-        <Label>Weight tracking</Label>
-        <Title>Bodyweight</Title>
-      </View>
-
+      {progressTabs}
       <Panel>
-        <View style={styles.summaryRow}>
-          <View>
-            <Label>Latest</Label>
-            <SectionTitle>{latest ? formatBodyWeight(latest.weight, unit) : "--"}</SectionTitle>
-          </View>
-          <View style={styles.summaryMetric}>
-            <Label>{rangeAverageLabel(range)}</Label>
-            <SectionTitle>{rangeAverage !== null ? formatBodyWeight(rangeAverage, unit) : "--"}</SectionTitle>
-          </View>
-        </View>
-        <View style={styles.chipRow}>
-          {ranges.map((item) => (
-            <Pressable key={item.key} onPress={() => setRange(item.key)} style={pressableFeedback([styles.chip, range === item.key && styles.chipActive])}>
-              <Body style={[styles.chipText, range === item.key && styles.chipTextActive]}>{item.label}</Body>
-            </Pressable>
-          ))}
-          <Pressable accessibilityLabel="Toggle bodyweight trendline" onPress={() => setShowTrendLine((value) => !value)} style={pressableFeedback([styles.chip, showTrendLine && styles.trendChipActive])}>
-            <Body style={[styles.chipText, showTrendLine && styles.chipTextActive]}>Trendline</Body>
+        <View style={styles.panelHeader}>
+          <SectionTitle style={styles.flex}>Bodyweight</SectionTitle>
+          <Pressable accessibilityRole="button" accessibilityLabel="Record body check-in" onPress={() => navigation.navigate("BodyCheckIn", { checkInId: undefined })} style={pressableFeedback(styles.checkInButton)}>
+            <Plus size={16} color={palette.surface} />
+            <Body style={styles.checkInText}>Check-in</Body>
           </Pressable>
         </View>
         <LineGraph
           points={graphPoints}
-          maxPoints={graphPoints.length || 1}
           suffix={` ${unit}`}
+          tone="neutral"
+          height={190}
           emptyMessage={`Add a bodyweight entry to draw this ${rangeLabel(range)} trend.`}
           showTrendLine={showTrendLine}
         />
-      </Panel>
-
-      <Panel>
-        <View style={styles.summaryRow}>
-          <View>
-            <Label>{editing ? "Editing entry" : "New entry"}</Label>
-            <SectionTitle>{editing ? formatShortDate(bodyweightDate(editing)) : "Add bodyweight"}</SectionTitle>
+        <SegmentedControl variant="pills" accessibilityLabel="Bodyweight range" value={range} onChange={setRange} options={ranges} />
+        <View style={styles.statGrid}>
+          <View style={styles.stat}>
+            <Label numberOfLines={1}>Average</Label>
+            <Body numberOfLines={1} style={styles.statValue}>{rangeAverage === null ? "—" : formatBodyWeight(rangeAverage, unit)}</Body>
           </View>
-          {editing ? (
-            <Pressable accessibilityLabel="Cancel edit" hitSlop={touchHitSlop} onPress={clearForm} style={pressableFeedback(styles.iconButton)}>
-              <X size={18} color={palette.ink} />
-            </Pressable>
-          ) : null}
+          <View style={styles.stat}>
+            <Label numberOfLines={1}>Change</Label>
+            <Body numberOfLines={1} style={styles.statValue}>{rangeChange === null ? "—" : `${rangeChange >= 0 ? "+" : ""}${formatBodyWeight(rangeChange, unit)}`}</Body>
+          </View>
+          <View style={styles.stat}>
+            <Label numberOfLines={1}>Weigh-ins</Label>
+            <Body numberOfLines={1} style={styles.statValue}>{filteredLogs.length}</Body>
+          </View>
         </View>
-        <DatePickerField value={loggedDate} onChange={setLoggedDate} />
-        <View style={[styles.inputRow, isCompact && styles.inputRowCompact]}>
-          <View style={styles.inputControls}>
-            <TextInput
-              accessibilityLabel="Bodyweight"
-              style={styles.input}
-              value={weight}
-              onChangeText={setWeight}
-              keyboardType="decimal-pad"
-              inputMode="decimal"
-              placeholder={unit === "kg" ? "e.g. 80" : "e.g. 175"}
-            />
-            <View style={styles.unitBadge}>
-              <Body style={styles.unitBadgeText}>{unit}</Body>
-            </View>
-          </View>
-          <Pressable disabled={saveState === "saving"} hitSlop={touchHitSlop} style={pressableFeedback([styles.primaryButton, isCompact && styles.primaryButtonCompact])} onPress={() => void handleSave()}>
-            {saveState === "saving" ? <ActivityIndicator color={palette.surface} /> : saveState === "saved" ? <Check size={18} color={palette.surface} /> : editing ? <Save size={18} color={palette.surface} /> : <Plus size={18} color={palette.surface} />}
-            <Body style={styles.primaryButtonText}>{saveState === "saving" ? "Saving" : saveState === "saved" ? "Saved" : editing ? "Update" : "Add"}</Body>
+        <View style={styles.toggleRow}>
+          <Pressable accessibilityRole="switch" accessibilityLabel="Toggle bodyweight trendline" accessibilityState={{ checked: showTrendLine }} onPress={() => setShowTrendLine((value) => !value)} style={pressableFeedback([styles.toggle, showTrendLine && styles.toggleActive])}>
+            <View style={[styles.toggleDot, showTrendLine && styles.toggleDotActive]} />
+            <Body style={[styles.toggleText, showTrendLine && styles.toggleTextActive]}>Trendline</Body>
+          </Pressable>
+          <Pressable accessibilityRole="switch" accessibilityLabel="Toggle monthly averages" accessibilityState={{ checked: reportContext.value.averages }} onPress={() => reportContext.update({ ...reportContext.value, averages: !reportContext.value.averages })} style={pressableFeedback([styles.toggle, reportContext.value.averages && styles.toggleActive])}>
+            <View style={[styles.toggleDot, reportContext.value.averages && styles.toggleDotActive]} />
+            <Body style={[styles.toggleText, reportContext.value.averages && styles.toggleTextActive]}>Monthly averages</Body>
           </Pressable>
         </View>
-        {error ? <Body style={styles.errorText}>{error}</Body> : null}
+        <DetailsDisclosure title="About these points">
+          <Body>Recorded weigh-ins keep their actual dates. Monthly averages combine entries within each month and are labeled as averages. Daily weight entries are independent; tape measurements are optional and keep their own observation dates.</Body>
+        </DetailsDisclosure>
+        {reportContext.error ? <Body>{reportContext.error}</Body> : null}
       </Panel>
 
       <Panel>
         <SectionTitle>History</SectionTitle>
-        {logs.length ? logs.map((log) => (
+        {deleteError ? <Body accessibilityRole="alert" style={styles.errorText}>{deleteError}</Body> : null}
+        {sortedLogs.length ? [...sortedLogs].reverse().slice(0, showAllHistory ? undefined : 8).map((log) => (
           <View key={log.id} style={styles.logRow}>
             <View style={styles.logText}>
               <Body style={styles.logDate}>{formatShortDate(bodyweightDate(log))}</Body>
               <SectionTitle>{formatBodyWeight(log.weight, unit)}</SectionTitle>
             </View>
             <View style={styles.actions}>
-              <Pressable accessibilityLabel={`Edit bodyweight from ${bodyweightDate(log)}`} hitSlop={touchHitSlop} onPress={() => startEdit(log)} style={pressableFeedback(styles.iconButton)}>
+              <Pressable accessibilityLabel={`Edit bodyweight from ${bodyweightDate(log)}`} hitSlop={touchHitSlop} onPress={() => navigation.navigate("BodyCheckIn", { checkInId: log.id })} style={pressableFeedback(styles.iconButton)}>
                 <Pencil size={17} color={palette.ink} />
               </Pressable>
-              <Pressable disabled={deletingId === log.id} accessibilityLabel={`Delete bodyweight from ${bodyweightDate(log)}`} hitSlop={touchHitSlop} onPress={() => confirmDelete(log)} style={pressableFeedback(styles.iconButton)}>
+              <Pressable disabled={deletingId !== null} accessibilityLabel={`Delete bodyweight from ${bodyweightDate(log)}`} hitSlop={touchHitSlop} onPress={() => void confirmDelete(log)} style={pressableFeedback(styles.iconButton)}>
                 {deletingId === log.id ? <ActivityIndicator color={palette.danger} /> : <Trash2 size={17} color={palette.danger} />}
               </Pressable>
             </View>
           </View>
         )) : <Body>No bodyweight entries yet.</Body>}
+        {sortedLogs.length > 8 ? <Button variant="ghost" label={showAllHistory ? "Show fewer entries" : `Show all ${sortedLogs.length} entries`} onPress={() => setShowAllHistory((value) => !value)} style={styles.centered} /> : null}
       </Panel>
     </Screen>
   );
 }
 
+function validWeightContext(value: unknown): value is { range: BodyweightRange; trend: boolean; averages: boolean } {
+  const p = value as { range: string; trend: boolean; averages: boolean } | null;
+  return !!p && ["week", "month", "year", "all"].includes(p.range) && typeof p.trend === "boolean" && typeof p.averages === "boolean";
+}
 function filterLogsByRange(logs: BodyWeightLog[], range: BodyweightRange) {
-  if (range === "all") return logs;
-  const today = new Date(`${todayIso()}T00:00:00`);
-  const cutoff = new Date(today);
-  cutoff.setDate(today.getDate() - rangeDays(range) + 1);
-  return logs.filter((log) => {
-    const loggedDate = new Date(`${bodyweightDate(log)}T00:00:00`);
-    return loggedDate >= cutoff && loggedDate <= today;
-  });
+  const asOf = todayIso();
+  const cutoff = range === "all" ? "0001-01-01" : addCalendarDays(asOf, -rangeDays(range) + 1);
+  return logs.filter((log) => bodyweightDate(log) >= cutoff && bodyweightDate(log) <= asOf);
 }
 
 function rangeDays(range: Exclude<BodyweightRange, "all">) {
@@ -242,7 +193,7 @@ function buildMonthlyAveragePoints(logs: BodyWeightLog[], unit: "lb" | "kg") {
   return [...buckets.entries()].map(([month, monthLogs]) => {
     const average = averageBodyWeight(monthLogs) ?? 0;
     return {
-      date: month,
+      date: `${month}-01`,
       label: new Date(`${month}-01T00:00:00`).toLocaleDateString(undefined, { month: "short", year: "numeric" }),
       value: bodyWeightFromStorageUnit(average, unit),
       details: [`${monthLogs.length} ${monthLogs.length === 1 ? "entry" : "entries"} averaged`]
@@ -259,106 +210,91 @@ function bodyweightDate(log: BodyWeightLog) {
   return log.logged_date ?? log.logged_at.slice(0, 10);
 }
 
-const styles = StyleSheet.create({
-  summaryRow: {
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
+  panelHeader: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    flexWrap: "wrap",
     gap: spacing.md
   },
-  summaryMetric: {
-    alignItems: "flex-end",
-    minWidth: 120
+  flex: {
+    flex: 1,
+    minWidth: 0
   },
-  chipRow: {
+  centered: {
+    alignSelf: "center"
+  },
+  checkInButton: {
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderRadius: 10,
+    backgroundColor: palette.ink,
+    ...fastTouchStyle
+  },
+  checkInText: {
+    color: palette.surface,
+    fontSize: 13,
+    fontWeight: "700"
+  },
+  statGrid: {
+    flexDirection: "row",
+    gap: spacing.sm
+  },
+  stat: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+    padding: spacing.md,
+    borderRadius: 12,
+    backgroundColor: palette.surfaceAlt
+  },
+  statValue: {
+    color: palette.ink,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: "800",
+    fontVariant: ["tabular-nums"]
+  },
+  toggleRow: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: spacing.sm
   },
-  chip: {
-    minHeight: 40,
+  toggle: {
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: palette.border,
-    borderRadius: 8,
-    paddingHorizontal: spacing.md,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: palette.surface
+    ...fastTouchStyle
   },
-  chipActive: {
+  toggleActive: {
+    backgroundColor: palette.accentSoft,
+    borderColor: palette.ink
+  },
+  toggleDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: palette.muted
+  },
+  toggleDotActive: {
     backgroundColor: palette.ink,
     borderColor: palette.ink
   },
-  trendChipActive: {
-    backgroundColor: palette.blue,
-    borderColor: palette.blue
+  toggleText: {
+    color: palette.muted,
+    fontSize: 13,
+    fontWeight: "700"
   },
-  chipText: {
-    color: palette.ink,
-    fontWeight: "800"
-  },
-  chipTextActive: {
-    color: palette.surface
-  },
-  inputRow: {
-    flexDirection: "row",
-    gap: spacing.sm,
-    alignItems: "stretch"
-  },
-  inputRowCompact: {
-    flexDirection: "column"
-  },
-  inputControls: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    gap: spacing.sm
-  },
-  input: {
-    flex: 1,
-    minWidth: 0,
-    minHeight: 44,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: palette.surface,
-    borderRadius: 8,
-    paddingHorizontal: spacing.md,
-    color: palette.ink,
-    fontSize: 16,
-    fontWeight: "800"
-  },
-  unitBadge: {
-    minWidth: 52,
-    minHeight: 44,
-    borderRadius: 8,
-    backgroundColor: palette.ink,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: spacing.md
-  },
-  unitBadgeText: {
-    color: palette.surface,
-    fontWeight: "900"
-  },
-  primaryButton: {
-    minHeight: 44,
-    minWidth: 104,
-    borderRadius: 8,
-    backgroundColor: palette.ink,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
-    ...fastTouchStyle
-  },
-  primaryButtonCompact: {
-    width: "100%"
-  },
-  primaryButtonText: {
-    color: palette.surface,
-    fontWeight: "900"
+  toggleTextActive: {
+    color: palette.ink
   },
   errorText: {
     color: palette.danger,
@@ -382,17 +318,15 @@ const styles = StyleSheet.create({
   },
   actions: {
     flexDirection: "row",
-    gap: spacing.sm
+    gap: spacing.xs
   },
   iconButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: palette.border,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
     backgroundColor: palette.surfaceAlt,
     alignItems: "center",
     justifyContent: "center",
     ...fastTouchStyle
   }
-});
+}));

@@ -1,35 +1,39 @@
 import { ReactNode } from "react";
 import { StyleSheet, Text as NativeText, TextProps } from "react-native";
 
-import { palette } from "@/utils/theme";
+import { createThemedStyles } from "@/utils/themedStyles";
 
 export function Title({ children, style, ...props }: TextProps & { children: ReactNode }) {
+  const { palette, styles } = useStyles();
   return <NativeText {...props} style={[styles.title, style]}>{children}</NativeText>;
 }
 
 export function SectionTitle({ children, style, ...props }: TextProps & { children: ReactNode }) {
+  const { palette, styles } = useStyles();
   return <NativeText {...props} style={[styles.sectionTitle, style]}>{children}</NativeText>;
 }
 
 export function Body({ children, style, ...props }: TextProps & { children: ReactNode }) {
+  const { palette, styles } = useStyles();
   return <NativeText {...props} style={[styles.body, style]}>{children}</NativeText>;
 }
 
 export function Label({ children, style, ...props }: TextProps & { children: ReactNode }) {
+  const { palette, styles } = useStyles();
   return <NativeText {...props} style={[styles.label, style]}>{children}</NativeText>;
 }
 
-const styles = StyleSheet.create({
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
   title: {
     color: palette.ink,
     fontSize: 32,
-    fontWeight: "900",
-    letterSpacing: 0
+    fontWeight: "800",
+    letterSpacing: -0.8
   },
   sectionTitle: {
     color: palette.ink,
     fontSize: 18,
-    fontWeight: "800"
+    fontWeight: "700"
   },
   body: {
     color: palette.muted,
@@ -37,9 +41,10 @@ const styles = StyleSheet.create({
     lineHeight: 20
   },
   label: {
-    color: palette.ink,
-    fontSize: 12,
-    fontWeight: "800",
+    color: palette.muted,
+    fontSize: 11,
+    letterSpacing: 1.1,
+    fontWeight: "700",
     textTransform: "uppercase"
   }
-});
+}));

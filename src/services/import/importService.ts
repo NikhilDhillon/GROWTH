@@ -1,4 +1,6 @@
 import { BodyLimbMeasurement, BodyMeasurementValues, Exercise, UnitSystem } from "@/types";
+import { getExerciseLoadType, isBodyweightLoadType } from "@/constants/exercises";
+import { isCalendarDate } from "@/domain/calendar";
 import { bodyMeasurementDefinitions, circumferenceToStorageUnit } from "@/utils/bodyMeasurements";
 import { bodyWeightDisplayUnit, weightToStorageUnit } from "@/utils/units";
 
@@ -6,6 +8,8 @@ export type ImportBodyWeightLog = {
   loggedDate: string;
   weight: number;
   unit: UnitSystem;
+  /** Unit declared in the source file, when known. */
+  weightInputUnit?: UnitSystem | null;
 };
 
 export type ImportWorkoutLog = {
@@ -14,15 +18,22 @@ export type ImportWorkoutLog = {
   exerciseId: number;
   exerciseName: string;
   fingerprint: string;
+  /** Explicit file unit, distinct from the canonical pounds in sets. */
+  inputUnit?: UnitSystem;
   sets: Array<{
     reps: number;
     weight: number;
+    /** Explicit reps in reserve; omitted when the source does not know it. */
+    rir?: number;
+    isWarmup?: boolean;
   }>;
 };
 
 export type ImportBodyMeasurementLog = {
   loggedDate: string;
   weight: number | null;
+  weightInputUnit?: UnitSystem | null;
+  circumferenceInputUnit?: "in" | "cm" | null;
   measurements: BodyMeasurementValues;
   notes: string | null;
 };
@@ -42,6 +53,14 @@ export type ImportPreview = ParsedImportData & {
   setCount: number;
 };
 
+/** Counts returned by the persistence layer after an import transaction commits. */
+export type ImportResult = {
+  inserted: { bodyCheckIns: number; workouts: number; sets: number };
+  skipped: { bodyCheckIns: number; workouts: number };
+  /** A successful import is atomic, so failed is zero; thrown errors mean no batch committed. */
+  failed: number;
+};
+
 type ImportFile = {
   schemaVersion?: unknown;
   unit?: unknown;
@@ -51,8 +70,6 @@ type ImportFile = {
   bodyMeasurements?: unknown;
   workouts?: unknown;
 };
-
-const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 
 export function parseImportData(text: string, exercises: Exercise[]): ImportPreview {
   let raw: unknown;
@@ -72,8 +89,10 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
   }
 
   const workoutUnit = parseUnit(file.unit, "unit", true) ?? "lb";
-  const bodyweightUnit = parseUnit(file.bodyweightUnit, "bodyweightUnit", false) ?? bodyWeightDisplayUnit;
-  const bodyMeasurementUnit = parseCircumferenceUnit(file.bodyMeasurementUnit) ?? "in";
+  const declaredBodyweightUnit = parseUnit(file.bodyweightUnit, "bodyweightUnit", false);
+  const bodyweightUnit = declaredBodyweightUnit ?? bodyWeightDisplayUnit;
+  const declaredBodyMeasurementUnit = parseCircumferenceUnit(file.bodyMeasurementUnit);
+  const bodyMeasurementUnit = declaredBodyMeasurementUnit ?? "in";
   const exerciseByName = new Map(exercises.map((exercise) => [normalizeExerciseName(exercise.name), exercise]));
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -81,6 +100,13 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
   const bodyMeasurementsByDate = new Map<string, ImportBodyMeasurementLog>();
   const workouts: ImportWorkoutLog[] = [];
   const exerciseIdsToEnable = new Set<number>();
+
+  if (file.bodyweight !== undefined && declaredBodyweightUnit === null) {
+    warnings.push(`bodyweightUnit is missing; values were interpreted as ${bodyweightUnit}, and input-unit provenance remains unknown.`);
+  }
+  if (file.bodyMeasurements !== undefined && declaredBodyMeasurementUnit === null) {
+    warnings.push("bodyMeasurementUnit is missing; measurements were interpreted as inches, and circumference-unit provenance remains unknown.");
+  }
 
   if (file.bodyweight !== undefined) {
     if (!Array.isArray(file.bodyweight)) {
@@ -95,10 +121,12 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
         const date = readDate(entry.date, `${prefix}.date`, errors);
         const weight = readPositiveNumber(entry.weight, `${prefix}.weight`, errors);
         if (!date || weight === null) return;
+        if (bodyWeightByDate.has(date)) warnings.push(`Multiple bodyweight rows use ${date}; the last valid row was kept.`);
         bodyWeightByDate.set(date, {
           loggedDate: date,
           weight: weightToStorageUnit(weight, bodyweightUnit),
-          unit: bodyweightUnit
+          unit: bodyweightUnit,
+          weightInputUnit: declaredBodyweightUnit
         });
       });
     }
@@ -121,9 +149,12 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
           : readPositiveNumber(entry.weight, `${prefix}.weight`, errors);
         const measurements = parseBodyMeasurements(entry.measurements, bodyMeasurementUnit, prefix, errors);
         if (!date || (weight === null && !Object.keys(measurements).length)) return;
+        if (bodyMeasurementsByDate.has(date)) warnings.push(`Multiple body measurement rows use ${date}; the last valid row was kept.`);
         bodyMeasurementsByDate.set(date, {
           loggedDate: date,
           weight: weight === null ? null : weightToStorageUnit(weight, bodyweightUnit),
+          weightInputUnit: weight === null ? null : declaredBodyweightUnit,
+          circumferenceInputUnit: Object.keys(measurements).length ? declaredBodyMeasurementUnit : null,
           measurements,
           notes
         });
@@ -144,6 +175,9 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
         const date = readDate(workout.date, `${workoutPrefix}.date`, errors);
         const notes = typeof workout.notes === "string" ? workout.notes.trim() : "";
         const externalId = typeof workout.externalId === "string" ? workout.externalId.trim() : "";
+        if (externalId.includes("::")) {
+          errors.push(`${workoutPrefix}.externalId must not contain the reserved "::" delimiter.`);
+        }
 
         if (!Array.isArray(workout.exercises)) {
           errors.push(`${workoutPrefix}.exercises must be an array.`);
@@ -179,16 +213,27 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
             const reps = readPositiveInteger(setEntry.reps, `${setPrefix}.reps`, errors);
             const weight = readNonNegativeNumber(setEntry.weight, `${setPrefix}.weight`, errors);
             if (reps === null || weight === null) return [];
-            if (weight <= 0) {
-              errors.push(`${setPrefix}.weight must include external load for Performance Points.`);
+            if (weight === 0 && exercise && !isBodyweightLoadType(getExerciseLoadType(exercise.name))) {
+              errors.push(`${setPrefix}.weight must include external load for this exercise.`);
               return [];
             }
-            return [{ reps, weight: weightToStorageUnit(weight, workoutUnit) }];
+            if (setEntry.isWarmup !== undefined && typeof setEntry.isWarmup !== "boolean") {
+              errors.push(`${setPrefix}.isWarmup must be a boolean.`);
+              return [];
+            }
+            const rir = readRir(setEntry.rir, `${setPrefix}.rir`, errors);
+            if (setEntry.rir !== undefined && setEntry.rir !== null && rir === null) return [];
+            return [{
+              reps,
+              weight: weightToStorageUnit(weight, workoutUnit),
+              ...(rir !== null ? { rir } : {}),
+              ...(setEntry.isWarmup === true ? { isWarmup: true } : {})
+            }];
           });
 
-          if (!date || !exercise || sets.length < 2) {
-            if (date && exercise && sets.length === 1) {
-              errors.push(`${exercisePrefix}.sets must include at least two loaded sets for Performance Points.`);
+          if (!date || !exercise || !sets.length) {
+            if (date && exercise && !sets.length) {
+              errors.push(`${exercisePrefix}.sets must include at least one observed set.`);
             }
             return;
           }
@@ -199,6 +244,7 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
             notes,
             exerciseId: exercise.id,
             exerciseName: exercise.name,
+            inputUnit: workoutUnit,
             fingerprint: buildWorkoutFingerprint({
               externalId,
               workoutDate: date,
@@ -283,9 +329,9 @@ export function buildWorkoutFingerprint(input: {
   workoutDate: string;
   exerciseName: string;
   notes: string;
-  sets: Array<{ reps: number; weight: number }>;
+  sets: Array<{ reps: number; weight: number; rir?: number; isWarmup?: boolean }>;
 }) {
-  const setText = input.sets.map((set) => `${set.reps}x${roundWeight(set.weight)}`).join("|");
+  const setText = input.sets.map((set) => `${set.isWarmup ? "warmup:" : ""}${set.reps}x${roundWeight(set.weight)}${set.rir === undefined ? "" : `@${set.rir}rir`}`).join("|");
   const stableId = input.externalId ? `external:${input.externalId.trim()}` : "content";
   return [stableId, input.workoutDate, normalizeExerciseName(input.exerciseName), normalizeNotes(input.notes), setText].join("::");
 }
@@ -314,8 +360,8 @@ function parseCircumferenceUnit(value: unknown) {
 }
 
 function readDate(value: unknown, field: string, errors: string[]) {
-  if (typeof value !== "string" || !datePattern.test(value)) {
-    errors.push(`${field} must be YYYY-MM-DD.`);
+  if (!isCalendarDate(value)) {
+    errors.push(`${field} must be a real calendar date in YYYY-MM-DD format.`);
     return null;
   }
   return value;
@@ -343,6 +389,16 @@ function readPositiveInteger(value: unknown, field: string, errors: string[]) {
   const number = typeof value === "number" ? value : Number.NaN;
   if (!Number.isInteger(number) || number <= 0) {
     errors.push(`${field} must be an integer greater than 0.`);
+    return null;
+  }
+  return number;
+}
+
+function readRir(value: unknown, field: string, errors: string[]) {
+  if (value === undefined || value === null) return null;
+  const number = typeof value === "number" ? value : Number.NaN;
+  if (!Number.isFinite(number) || number < 0 || number > 10) {
+    errors.push(`${field} must be a number from 0 to 10 when provided.`);
     return null;
   }
   return number;

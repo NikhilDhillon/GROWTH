@@ -3,12 +3,17 @@ import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from "react
 import { Check, Copy, Link, RefreshCw, Share2, Trash2, Trophy, UserPlus, Users, X } from "lucide-react-native";
 
 import { Panel } from "@/components/Panel";
+import { SegmentedControl } from "@/components/SegmentedControl";
+import { DetailsDisclosure } from "@/components/DetailsDisclosure";
 import { Screen } from "@/components/Screen";
-import { Body, Label, SectionTitle, Title } from "@/components/Text";
+import { Body, Label, SectionTitle } from "@/components/Text";
 import { useFitnessStore } from "@/store/useFitnessStore";
+import { getExerciseLoadType, catalogExercises } from "@/constants/exercises";
+import { formatWeight } from "@/utils/units";
 import { LeaderboardEntry } from "@/types";
 import { formatShortDate } from "@/utils/date";
-import { palette, spacing } from "@/utils/theme";
+import { createThemedStyles } from "@/utils/themedStyles";
+import { spacing } from "@/utils/theme";
 import { pressableFeedback } from "@/utils/touch";
 
 type SocialTab = "leaderboard" | "friends" | "invite";
@@ -20,6 +25,7 @@ const tabs: Array<{ key: SocialTab; label: string }> = [
 ];
 
 export function SocialScreen() {
+  const { palette, styles } = useStyles();
   const currentUser = useFitnessStore((state) => state.currentUser);
   const exercises = useFitnessStore((state) => state.exercises);
   const socialData = useFitnessStore((state) => state.socialData);
@@ -42,7 +48,7 @@ export function SocialScreen() {
 
   const availableExerciseIds = useMemo(() => {
     const idsFromScores = new Set(socialData.leaderboard.map((entry) => entry.exercise_id));
-    const strengthIds = exercises.filter((exercise) => exercise.is_strength_exercise).map((exercise) => exercise.id);
+    const strengthIds = exercises.filter((exercise) => catalogExercises.some((e) => e.name === exercise.name) && getExerciseLoadType(exercise.name) === "external").map((exercise) => exercise.id);
     return [...new Set([...strengthIds, ...idsFromScores])];
   }, [exercises, socialData.leaderboard]);
 
@@ -61,6 +67,7 @@ export function SocialScreen() {
     .filter((entry) => entry.exercise_id === selectedExerciseId)
     .sort((a, b) => b.best_estimated_1rm - a.best_estimated_1rm || a.name.localeCompare(b.name));
   const acceptedFriends = socialData.friends.filter((friend) => friend.status === "accepted");
+  const syncFriends = acceptedFriends.filter((friend) => socialData.syncMemberIds?.includes(friend.id));
   const pendingFriends = socialData.friends.filter((friend) => friend.status === "pending");
   const inviteValue = lastInviteUrl ?? socialData.invites[0]?.invite_url ?? "";
 
@@ -92,20 +99,8 @@ export function SocialScreen() {
 
   return (
     <Screen>
-      <View>
-        <Label>Friends, opt-in split sync and exercise PRs</Label>
-        <Title>Social</Title>
-      </View>
 
-      <Panel>
-        <View style={styles.segmentRow}>
-          {tabs.map((item) => (
-            <Pressable key={item.key} onPress={() => setTab(item.key)} style={[styles.segmentButton, tab === item.key && styles.segmentButtonActive]}>
-              <Body style={[styles.segmentText, tab === item.key && styles.segmentTextActive]}>{item.label}</Body>
-            </Pressable>
-          ))}
-        </View>
-      </Panel>
+      <SegmentedControl accessibilityLabel="Social section" value={tab} onChange={setTab} options={tabs} />
 
       {socialData.notice ? (
         <Panel>
@@ -125,11 +120,15 @@ export function SocialScreen() {
         <>
           <Panel>
             <View style={styles.panelHeader}>
-              <View>
+              <View style={styles.panelHeaderText}>
                 <SectionTitle>Exercise</SectionTitle>
+                <Body>Best estimated 1RM · external-load exercises</Body>
+                <DetailsDisclosure title="How rankings work">
+                  <Body>Estimated 1RM uses recorded sets with reps capped at 10. Machine stacks and bodyweight-dependent loads stay private because equipment and body weight differ between people.</Body>
+                </DetailsDisclosure>
                 <Body>{acceptedFriends.length ? `${acceptedFriends.length} friends connected` : "Invite friends to compare best e1RM results."}</Body>
               </View>
-              <Pressable accessibilityRole="button" onPress={() => void loadSocial()} style={pressableFeedback(styles.iconButton)}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Refresh leaderboard" onPress={() => void loadSocial()} style={pressableFeedback(styles.iconButton)}>
                 {socialLoading ? <ActivityIndicator color={palette.ink} /> : <RefreshCw size={18} color={palette.ink} />}
               </Pressable>
             </View>
@@ -170,16 +169,18 @@ export function SocialScreen() {
             <View style={styles.panelHeader}>
               <View>
                 <SectionTitle>Friends</SectionTitle>
-                <Body>{acceptedFriends.length ? "Friends appear on leaderboards. Split schedules synchronize only after both people opt in." : "No friends yet."}</Body>
+                <Body>{syncFriends.length ? `Split recipients: ${syncFriends.map((friend) => friend.name).join(", ")}.` : "Split sharing is off."}</Body>
+                <Body>{acceptedFriends.length ? "Only named friends receive updates; each friend opts in separately." : "No friends yet."}</Body>
               </View>
               <Users size={22} color={palette.accent} />
             </View>
+            {acceptedFriends.length ? <Body style={styles.consequenceText}>Removing a friend ends leaderboard access and split sharing.</Body> : null}
             {acceptedFriends.length ? acceptedFriends.map((friend) => (
               <View key={friend.id} style={styles.friendRow}>
                 <View style={styles.friendDetails}>
                   <Body style={styles.friendName}>{friend.name}</Body>
                   <Body>Friends since {formatShortDate(friend.created_at.slice(0, 10))}</Body>
-                  <Body>{splitSyncStatusText(friend.split_sync_status)}</Body>
+                  <Body>{splitSyncStatusText(friend.split_sync_status, friend.name)}</Body>
                   <View style={styles.actionRow}>
                     {friend.split_sync_status === "none" || !friend.split_sync_status ? (
                       <Pressable
@@ -216,9 +217,10 @@ export function SocialScreen() {
                         onPress={() => void removeSplitSync(friend.id)}
                         style={pressableFeedback(styles.secondaryButton)}
                       >
-                        <Body style={styles.secondaryButtonText}>{friend.split_sync_status === "synced" ? "Stop syncing" : "Cancel request"}</Body>
+                          <Body style={styles.secondaryButtonText}>{friend.split_sync_status === "synced" ? "Stop sync" : "Cancel request"}</Body>
                       </Pressable>
                     ) : null}
+                    {friend.split_sync_status === "synced" ? <Body style={styles.consequenceText}>Stops future updates; {friend.name} keeps the last shared plan.</Body> : null}
                   </View>
                 </View>
                 <Pressable
@@ -318,6 +320,8 @@ export function SocialScreen() {
 }
 
 function LeaderboardRow({ entry, rank, isCurrentUser }: { entry: LeaderboardEntry; rank: number; isCurrentUser: boolean }) {
+  const { palette, styles } = useStyles();
+  const unit = useFitnessStore((state) => state.unitSystem);
   return (
     <View style={[styles.leaderboardRow, isCurrentUser && styles.leaderboardRowActive]}>
       <View style={styles.rankBadge}>
@@ -328,11 +332,11 @@ function LeaderboardRow({ entry, rank, isCurrentUser }: { entry: LeaderboardEntr
         <Body>{formatShortDate(entry.achieved_at)}</Body>
         {entry.best_sets?.length ? (
           <Body style={styles.setSummary}>
-            {entry.best_sets.map((set) => `${formatLeaderboardWeight(set.weight)} lb × ${set.reps}`).join(" · ")}
+            {entry.best_sets.map((set) => `${formatWeight(set.weight, unit)} × ${set.reps}`).join(" · ")}
           </Body>
         ) : null}
       </View>
-      <SectionTitle>{Math.round(entry.best_estimated_1rm)} e1RM</SectionTitle>
+      <SectionTitle>{formatWeight(entry.best_estimated_1rm, unit)} e1RM</SectionTitle>
     </View>
   );
 }
@@ -341,14 +345,14 @@ function formatLeaderboardWeight(weight: number) {
   return Number(weight.toFixed(1)).toString();
 }
 
-function splitSyncStatusText(status: "none" | "sent" | "received" | "synced" | undefined) {
-  if (status === "synced") return "Split schedule synchronized.";
-  if (status === "sent") return "Split synchronization request sent.";
-  if (status === "received") return "Requested to synchronize split schedules.";
-  return "Split schedule not synchronized.";
+function splitSyncStatusText(status: "none" | "sent" | "received" | "synced" | undefined, friendName: string) {
+  if (status === "synced") return `Sharing split with ${friendName}.`;
+  if (status === "sent") return `Waiting for ${friendName} to accept.`;
+  if (status === "received") return `${friendName} asked to share splits.`;
+  return "Split sync off.";
 }
 
-const styles = StyleSheet.create({
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
   segmentRow: {
     flexDirection: "row",
     gap: spacing.sm
@@ -375,6 +379,10 @@ const styles = StyleSheet.create({
   segmentTextActive: {
     color: palette.surface
   },
+  panelHeaderText: {
+    flex: 1,
+    minWidth: 0
+  },
   panelHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -384,6 +392,11 @@ const styles = StyleSheet.create({
   friendDetails: {
     flex: 1,
     gap: spacing.xs
+  },
+  consequenceText: {
+    color: palette.muted,
+    fontSize: 12,
+    lineHeight: 16
   },
   chipRow: {
     flexDirection: "row",
@@ -484,14 +497,15 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     minHeight: 42,
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: palette.border,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: spacing.sm,
-    paddingHorizontal: spacing.md
+    paddingHorizontal: spacing.md,
+    backgroundColor: palette.surfaceAlt
   },
   secondaryButtonText: {
     color: palette.ink,
@@ -537,4 +551,4 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "800"
   }
-});
+}));

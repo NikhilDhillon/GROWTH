@@ -1,7 +1,7 @@
 import { ActiveWorkout, ActiveWorkoutExerciseDraft, CompletedGuidedWorkout, MuscleGroup, SplitMuscle, TrainingSplitDay } from "@/types";
 import { todayIso } from "@/utils/date";
-
-const dayKeys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+import { calendarWeekday } from "@/domain/calendar";
+import { createRequestId } from "@/utils/requestId";
 
 export function emptyActiveExercise(): ActiveWorkoutExerciseDraft {
   return {
@@ -16,17 +16,22 @@ export function emptyActiveExercise(): ActiveWorkoutExerciseDraft {
 }
 
 export function todaySplitDay(days: TrainingSplitDay[]) {
-  const dayKey = dayKeys[new Date().getDay()];
+  const dayKey = calendarWeekday(todayIso());
   return days.find((day) => day.key === dayKey) ?? days[0];
 }
 
-export function createActiveWorkout(day: TrainingSplitDay, workoutLabel?: string): ActiveWorkout {
+export function createActiveWorkout(day: TrainingSplitDay, workoutLabel?: string, templateId?: string): ActiveWorkout {
+  const workoutDate = todayIso();
+  const todayDayKey = calendarWeekday(workoutDate);
   return {
+    workoutId: createRequestId(),
+    revision: 0,
     startedAt: new Date().toISOString(),
-    workoutDate: todayIso(),
-    todayDayKey: day.key,
-    sourceDayKey: day.key,
+    workoutDate,
+    todayDayKey,
+    sourceDayKey: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].includes(day.key) ? day.key : todayDayKey,
     workoutLabel,
+    ...(templateId ? { templateId } : {}),
     plannedMuscles: [...day.muscles],
     completedExercises: [],
     currentExercise: emptyActiveExercise(),
@@ -63,11 +68,15 @@ export function normalizeActiveWorkout(value: unknown): ActiveWorkout | null {
     ? [...plannedMuscles, "Traps" as const]
     : plannedMuscles;
   return {
+    ...input,
+    workoutId: typeof input.workoutId === "string" ? input.workoutId : undefined,
+    revision: Number.isSafeInteger(input.revision) && Number(input.revision) >= 0 ? input.revision : undefined,
     startedAt: input.startedAt,
     workoutDate: input.workoutDate,
     todayDayKey: input.todayDayKey,
     sourceDayKey: input.sourceDayKey,
     workoutLabel: typeof input.workoutLabel === "string" ? input.workoutLabel : undefined,
+    templateId: typeof input.templateId === "string" ? input.templateId : undefined,
     plannedMuscles: normalizedPlannedMuscles,
     completedExercises: Array.isArray(input.completedExercises) ? input.completedExercises : [],
     currentExercise: normalizeActiveExercise(input.currentExercise),
@@ -82,7 +91,11 @@ function normalizeActiveExercise(value: unknown): ActiveWorkoutExerciseDraft {
   if (!value || typeof value !== "object") return defaults;
   const input = value as Partial<ActiveWorkoutExerciseDraft>;
   return {
+    ...input,
+    prescription: input.prescription,
     muscle: input.muscle ?? null,
+    requestId: typeof input.requestId === "string" ? input.requestId : undefined,
+    requestUnit: input.requestUnit === "lb" || input.requestUnit === "kg" ? input.requestUnit : undefined,
     exerciseId: typeof input.exerciseId === "number" ? input.exerciseId : null,
     machineProfileId: typeof input.machineProfileId === "string" ? input.machineProfileId : null,
     sets: Array.isArray(input.sets) ? input.sets : defaults.sets,
@@ -100,5 +113,5 @@ export function normalizeCompletedGuidedWorkouts(value: unknown): CompletedGuide
     const workout = normalizeActiveWorkout(input);
     if (!workout || typeof input.id !== "string" || typeof input.finishedAt !== "string") return [];
     return [{ ...workout, id: input.id, finishedAt: input.finishedAt }];
-  }).slice(0, 50);
+  });
 }

@@ -11,6 +11,17 @@ const dayTemplate: Array<{ key: string; label: string }> = [
 ];
 
 const defaultMuscles: Record<string, SplitMuscle[]> = {
+  sun: ["Chest", "Triceps"],
+  mon: ["Back", "Biceps", "Traps"],
+  tue: ["Legs", "Shoulders"],
+  wed: ["Chest", "Triceps"],
+  thu: ["Back", "Biceps", "Traps"],
+  fri: ["Legs", "Shoulders"],
+  sat: [],
+};
+
+/** The built-in split before the Saturday-rest schedule: Monday start, Thursday rest. */
+const previousDefaultMuscles: Record<string, SplitMuscle[]> = {
   mon: ["Chest", "Triceps"],
   tue: ["Back", "Biceps", "Traps"],
   wed: ["Legs", "Shoulders"],
@@ -55,4 +66,17 @@ export function normalizeTrainingSplit(value: unknown): TrainingSplit {
     updated_at: typeof candidate.updated_at === "string" ? candidate.updated_at : null,
     updated_by: typeof candidate.updated_by === "string" ? candidate.updated_by : null
   };
+}
+
+/**
+ * A saved split identical to the previous built-in default was never customised,
+ * so it follows the current default. Any edited split is returned unchanged.
+ * Applied when loading only; explicit writes keep exactly what was saved.
+ */
+export function upgradeUncustomisedTrainingSplit(split: TrainingSplit): TrainingSplit {
+  const untouched = split.days.length === dayTemplate.length && split.days.every((day) => {
+    const previous = previousDefaultMuscles[day.key];
+    return previous !== undefined && day.muscles.length === previous.length && day.muscles.every((muscle, index) => muscle === previous[index]);
+  });
+  return untouched ? { ...split, days: createDefaultTrainingSplit().days } : split;
 }

@@ -5,10 +5,12 @@ import { Platform, Pressable, StyleSheet, View } from "react-native";
 
 import { Body } from "@/components/Text";
 import { dateToIso, formatShortDate, isoToDate } from "@/utils/date";
-import { palette, spacing } from "@/utils/theme";
+import { createThemedStyles } from "@/utils/themedStyles";
+import { spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 
 export function DatePickerField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const { palette, styles } = useStyles();
   const [showPicker, setShowPicker] = useState(false);
   const date = isoToDate(value);
 
@@ -18,7 +20,7 @@ export function DatePickerField({ value, onChange }: { value: string; onChange: 
         <CalendarDays size={18} color={palette.ink} />
         <input
           aria-label="Workout date"
-          style={webInputStyle}
+          style={{ ...webInputStyle, color: palette.ink }}
           type="date"
           value={value}
           onChange={(event) => onChange(event.currentTarget.value)}
@@ -35,12 +37,12 @@ export function DatePickerField({ value, onChange }: { value: string; onChange: 
       </Pressable>
       {showPicker ? (
         <DateTimePicker
-          value={date}
+          value={Number.isFinite(date.getTime()) ? date : new Date()}
           mode="date"
           display={Platform.OS === "ios" ? "inline" : "default"}
-          onChange={(_, selectedDate) => {
+          onChange={(event, selectedDate) => {
             if (Platform.OS !== "ios") setShowPicker(false);
-            if (selectedDate) onChange(dateToIso(selectedDate));
+            if (event.type === "set" && selectedDate) onChange(dateToIso(selectedDate));
           }}
         />
       ) : null}
@@ -53,13 +55,12 @@ const webInputStyle = {
   minHeight: 44,
   borderWidth: 0,
   backgroundColor: "transparent",
-  color: palette.ink,
   fontWeight: "700",
   fontSize: 16,
   outlineStyle: "none"
 } as const;
 
-const styles = StyleSheet.create({
+const useStyles = createThemedStyles((palette) => StyleSheet.create({
   wrap: {
     gap: spacing.sm
   },
@@ -91,4 +92,4 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     ...fastTouchStyle
   }
-});
+}));
