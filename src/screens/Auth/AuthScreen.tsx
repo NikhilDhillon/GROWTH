@@ -5,6 +5,7 @@ import { KeyRound, LogIn, UserPlus, TrendingUp } from "lucide-react-native";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
+import { demoAccountAvailable, loadDemoAccount } from "@/dev/demoAccount";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { createThemedStyles } from "@/utils/themedStyles";
 import { spacing } from "@/utils/theme";
@@ -72,6 +73,20 @@ export function AuthScreen({ forcePasswordUpdate = false, onPasswordUpdated }: {
       }
     } catch (error) {
       setSubmissionError(error instanceof Error ? error.message : "Could not complete this request. Please retry.");
+    } finally {
+      submitting.current = false;
+      setIsSubmitting(false);
+    }
+  }
+
+  async function openDemo() {
+    if (submitting.current) return;
+    submitting.current = true;
+    setIsSubmitting(true);
+    setSubmissionError(null);
+    try {
+      const failure = await loadDemoAccount();
+      if (failure) setSubmissionError(failure);
     } finally {
       submitting.current = false;
       setIsSubmitting(false);
@@ -153,12 +168,42 @@ export function AuthScreen({ forcePasswordUpdate = false, onPasswordUpdated }: {
             </Pressable>
           ) : null}
         </Panel>
+
+        {!isUpdating && demoAccountAvailable() ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="Load demo account" disabled={isSubmitting} onPress={() => void openDemo()} style={styles.demoButton}>
+            <View style={styles.demoCopy}>
+              <Body style={styles.demoTitle}>{isSubmitting ? "Loading demo…" : "Try the demo account"}</Body>
+              <Body style={styles.demoMeta}>18 weeks of sample training on this device · development only</Body>
+            </View>
+          </Pressable>
+        ) : null}
       </Screen>
     </KeyboardAvoidingView>
   );
 }
 
 const useStyles = createThemedStyles((palette) => StyleSheet.create({
+  demoButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: spacing.lg,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: palette.border
+  },
+  demoCopy: {
+    flex: 1,
+    gap: 2
+  },
+  demoTitle: {
+    color: palette.ink,
+    fontWeight: "800"
+  },
+  demoMeta: {
+    color: palette.muted,
+    fontSize: 13
+  },
   keyboard: {
     flex: 1,
     backgroundColor: palette.background

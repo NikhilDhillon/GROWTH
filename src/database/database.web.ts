@@ -15,6 +15,7 @@ import { createRequestId } from "@/utils/requestId";
 import { assertBodyCheckInWrite, BodyCheckInConflictError, BodyCheckInWriteInput, bodyCheckInObservationUnits, bodyCheckInSnapshot, bodyCheckInWritePayload, sameBodyCheckInSnapshot } from "@/domain/bodyCheckInRecording";
 import { buildCanonicalLeaderboard } from "@/services/strength/leaderboardService";
 import { committedImportResult, emptyImportResult, hasImportedWorkoutReceipt, importedBodyCheckIns, TrainingImportInput } from "./importPersistence";
+import { webLocks } from "./webLocks";
 import { todayIso } from "@/utils/date";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
@@ -121,7 +122,7 @@ function now() {
 
 /** Every local document mutation uses the same origin-wide lock, including unrelated preferences/body saves. */
 async function withLocalDatabaseLock<T>(action: () => T): Promise<T> {
-  const locks = globalThis.navigator?.locks;
+  const locks = webLocks();
   if (!locks) throw new Error("This browser cannot coordinate safe local saves. Open GROWTH in a browser with Web Locks support before changing local records.");
   return locks.request(storageKey, action);
 }
