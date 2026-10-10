@@ -1,6 +1,7 @@
 -- Test-only Supabase auth/role stand-ins. Never apply this to a real database.
 create role anon;
 create role authenticated;
+create role service_role;
 create schema auth;
 create table auth.users (id uuid primary key);
 grant usage on schema auth to anon, authenticated;

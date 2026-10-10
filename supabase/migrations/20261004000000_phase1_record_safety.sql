@@ -70,9 +70,12 @@ $$;
 alter table public.body_measurement_logs enable row level security;
 drop policy if exists "body measurement logs are owned by their user" on public.body_measurement_logs;
 create policy "body measurement logs are owned by their user" on public.body_measurement_logs
-  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
-grant select, insert, update, delete on public.body_measurement_logs to authenticated;
-grant usage, select on sequence public.body_measurement_logs_id_seq to authenticated;
+  for all to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+revoke all on table public.body_measurement_logs from anon;
+grant select, insert, update, delete on table public.body_measurement_logs to authenticated, service_role;
+grant usage, select on sequence public.body_measurement_logs_id_seq to authenticated, service_role;
 
 -- Commit receipts are private metadata, not another copy of observed sets.
 -- Keeping a receipt after deletion prevents a delayed retry resurrecting work.
