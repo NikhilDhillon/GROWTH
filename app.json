@@ -14,13 +14,19 @@
       "bundleIdentifier": "com.nikhildhillon.growth"
     },
     "android": {
-      "package": "com.nikhildhillon.growth"
+      "package": "com.nikhildhillon.growth",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0d0d0d"
+      }
     },
     "web": {
-      "bundler": "metro"
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "@react-native-community/datetimepicker"
-    ]
+    ],
+    "icon": "./assets/icon.png"
   }
 }

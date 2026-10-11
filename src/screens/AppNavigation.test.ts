@@ -21,6 +21,7 @@ vi.mock("expo-status-bar", () => ({ StatusBar: "StatusBar" }));
 vi.mock("react-native", () => ({ useColorScheme: () => "light", ActivityIndicator: "ActivityIndicator", Modal: "Modal", Platform: { OS: "web", select: (values: { web: unknown }) => values.web }, Pressable: "Pressable", ScrollView: "ScrollView", Text: "Text", View: "View", StyleSheet: { create: (value: unknown) => value }, useWindowDimensions: () => ({ width: 390 }) }));
 vi.mock("react-native-safe-area-context", () => ({ SafeAreaProvider: "SafeAreaProvider", SafeAreaView: "SafeAreaView" }));
 vi.mock("lucide-react-native", () => Object.fromEntries(["ArrowLeft", "BarChart3", "Dumbbell", "Home", "LineChart", "ListChecks", "Menu", "Plus", "Scale", "Settings", "Users", "X"].map((key) => [key, key])));
+vi.mock("@/components/LogoMark", () => ({ LogoMark: "LogoMark" }));
 vi.mock("@/store/useFitnessStore", () => ({ useFitnessStore: (select: (state: object) => unknown) => select({ currentUser: shell.user, loading: false, dataError: shell.dataError }) }));
 type Element = { type: any; props: any };
 function elements(node: unknown): Element[] {

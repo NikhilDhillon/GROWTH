@@ -26,7 +26,8 @@ vi.mock("react-native", () => ({ useColorScheme: () => "light",
   KeyboardAvoidingView: "KeyboardAvoidingView", Pressable: "Pressable", TextInput: "TextInput", View: "View",
   Platform: { OS: "web" }, StyleSheet: { create: (styles: unknown) => styles }
 }));
-vi.mock("lucide-react-native", () => ({ KeyRound: "KeyRound", LogIn: "LogIn", TrendingUp: "TrendingUp", UserPlus: "UserPlus" }));
+vi.mock("lucide-react-native", () => ({ KeyRound: "KeyRound", LogIn: "LogIn", UserPlus: "UserPlus" }));
+vi.mock("@/components/LogoMark", () => ({ LogoMark: "LogoMark" }));
 vi.mock("@/components/Panel", () => ({ Panel: "Panel" }));
 vi.mock("@/components/Screen", () => ({ Screen: "Screen" }));
 vi.mock("@/components/Text", () => ({ Body: "Body", Label: "Label", SectionTitle: "SectionTitle", Title: "Title" }));

@@ -11,6 +11,7 @@ import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, 
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 import { Avatar } from "@/components/Avatar";
+import { LogoMark } from "@/components/LogoMark";
 import { BottomSheet } from "@/components/BottomSheet";
 import { createThemedStyles } from "@/utils/themedStyles";
 import { spacing } from "@/utils/theme";
@@ -302,7 +303,7 @@ function AppSidebar({ activeRouteName, onNavigate }: { activeRouteName: CurrentR
   const section = navigationSection(activeRouteName);
   return <SafeAreaView style={styles.sidebarSafe} edges={["top", "left", "bottom"]}>
     <View style={styles.sidebar}>
-      <View style={styles.sidebarHeader}><Text style={styles.sidebarBrand}>GROWTH</Text></View>
+      <View style={styles.sidebarHeader}><LogoMark size={32} /><Text style={styles.sidebarBrand}>GROWTH</Text></View>
       <ScrollView contentContainerStyle={styles.sidebarList} showsVerticalScrollIndicator={false}>
         {primaryRoutes.map((destination) => <DestinationButton key={destination.key} destination={destination} selected={section === destination.name} onNavigate={onNavigate} />)}
         <Text style={styles.sidebarGroup}>More</Text>
@@ -358,7 +359,9 @@ const useStyles = createThemedStyles((palette) => StyleSheet.create({
     gap: spacing.md
   },
   sidebarHeader: {
-    gap: spacing.xs,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.md,
     borderBottomColor: palette.border,
@@ -366,8 +369,9 @@ const useStyles = createThemedStyles((palette) => StyleSheet.create({
   },
   sidebarBrand: {
     color: palette.ink,
-    fontSize: 20,
-    fontWeight: "900"
+    fontSize: 17,
+    fontWeight: "800",
+    letterSpacing: 2
   },
   sidebarList: {
     gap: spacing.xs

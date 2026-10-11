@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
 import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
-import { KeyRound, LogIn, UserPlus, TrendingUp } from "lucide-react-native";
+import { KeyRound, LogIn, UserPlus } from "lucide-react-native";
 
+import { LogoMark } from "@/components/LogoMark";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
@@ -105,7 +106,7 @@ export function AuthScreen({ forcePasswordUpdate = false, onPasswordUpdated }: {
       <Screen scroll>
         <View style={styles.hero}>
           <View style={styles.brandRow}>
-            <View style={styles.brandMark}><TrendingUp size={20} color={palette.surface} /></View>
+            <LogoMark size={40} />
             <Label style={styles.brandName}>GROWTH</Label>
           </View>
           <Title>{title}</Title>
@@ -245,14 +246,6 @@ const useStyles = createThemedStyles((palette) => StyleSheet.create({
     alignItems: "center",
     gap: spacing.sm,
     marginBottom: spacing.sm
-  },
-  brandMark: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: palette.ink
   },
   brandName: {
     color: palette.ink,
