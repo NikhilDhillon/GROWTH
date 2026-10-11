@@ -84,10 +84,15 @@ def main():
     # mark keeps the same proportions as on iOS and stays inside the 66dp safe zone.
     render(1024, tile=False, tile_fraction=72 / 108).save(ASSETS / "adaptive-icon.png")
     render(48, tile=True, corner_ratio=28 / 120).save(ASSETS / "favicon.png")
-    # iOS "Add to Home Screen" looks for /apple-touch-icon.png at the site root.
+    # Home-screen icons for the website, linked from public/index.html and
+    # public/manifest.webmanifest. iOS masks apple-touch-icon itself, so it is full-bleed.
     PUBLIC.mkdir(exist_ok=True)
     render(180, tile=True).convert("RGB").save(PUBLIC / "apple-touch-icon.png")
-    print("Wrote", ", ".join(sorted(path.name for path in ASSETS.iterdir())), "and public/apple-touch-icon.png")
+    for size in (192, 512):
+        render(size, tile=True, corner_ratio=28 / 120).save(PUBLIC / f"icon-{size}.png")
+    # Maskable: Android crops it to its own shape, keeping at least the middle 80% circle.
+    render(512, tile=True, tile_fraction=0.84).convert("RGB").save(PUBLIC / "icon-maskable-512.png")
+    print("Wrote", ", ".join(sorted(path.name for path in ASSETS.iterdir())), "and the public/ home-screen icons")
 
 
 if __name__ == "__main__":
