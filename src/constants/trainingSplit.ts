@@ -31,7 +31,10 @@ const previousDefaultMuscles: Record<string, SplitMuscle[]> = {
   sun: ["Legs", "Shoulders"]
 };
 
-const validMuscles = new Set<SplitMuscle>(["Chest", "Triceps", "Back", "Biceps", "Legs", "Shoulders", "Traps", "Forearms", "Abs"]);
+/** Every muscle a split day can hold, in the order they are listed and joined for display. */
+export const splitMuscles: readonly SplitMuscle[] = ["Chest", "Triceps", "Back", "Biceps", "Legs", "Shoulders", "Traps", "Forearms", "Abs"];
+
+const validMuscles = new Set<SplitMuscle>(splitMuscles);
 
 export function createDefaultTrainingSplit(): TrainingSplit {
   return {
@@ -43,6 +46,25 @@ export function createDefaultTrainingSplit(): TrainingSplit {
 
 export function cloneTrainingSplitDays(days: TrainingSplitDay[]) {
   return days.map((day) => ({ ...day, muscles: [...day.muscles] }));
+}
+
+/** Replaces one day's muscles, de-duplicated and in display order (an empty list is a rest day). */
+export function setSplitDayMuscles(days: TrainingSplitDay[], dayKey: string, muscles: readonly SplitMuscle[]) {
+  const ordered = splitMuscles.filter((muscle) => muscles.includes(muscle));
+  return days.map((day) => day.key === dayKey ? { ...day, muscles: ordered } : { ...day, muscles: [...day.muscles] });
+}
+
+export function toggleSplitDayMuscle(days: TrainingSplitDay[], dayKey: string, muscle: SplitMuscle) {
+  const current = days.find((day) => day.key === dayKey)?.muscles ?? [];
+  return setSplitDayMuscles(days, dayKey, current.includes(muscle) ? current.filter((item) => item !== muscle) : [...current, muscle]);
+}
+
+/** Same schedule, ignoring the order muscles are listed within a day. */
+export function sameTrainingSplitDays(a: TrainingSplitDay[], b: TrainingSplitDay[]) {
+  return a.length === b.length && a.every((day) => {
+    const other = b.find((item) => item.key === day.key);
+    return Boolean(other) && other!.muscles.length === day.muscles.length && day.muscles.every((muscle) => other!.muscles.includes(muscle));
+  });
 }
 
 export function normalizeTrainingSplit(value: unknown): TrainingSplit {

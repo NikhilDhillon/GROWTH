@@ -4,7 +4,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const hooks = vi.hoisted(() => ({ slots: [] as unknown[], cursor: 0 }));
 const session = vi.hoisted(() => ({
   navigate: vi.fn(), start: vi.fn(), reload: vi.fn(), recordBody: vi.fn(), active: null as null | { workoutLabel: string; plannedMuscles: string[]; startedAt?: string }, user: { id: "account-a" }, split: { days: [] as { key: string; label: string; muscles: string[] }[] },
-  exercises: [] as object[], sessions: [] as object[], sets: [] as object[], bodyLogs: [] as object[]
+  exercises: [] as object[], sessions: [] as object[], sets: [] as object[], bodyLogs: [] as object[],
+  saveSplit: vi.fn(), loadSocial: vi.fn(), social: { friends: [] as object[], invites: [], leaderboard: [], notice: null, syncMemberIds: [] as string[] }
 }));
 vi.mock("react", async (original) => ({
   ...await original<typeof import("react")>(),
@@ -22,9 +23,10 @@ vi.mock("react", async (original) => ({
 }));
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ navigate: session.navigate, setParams: () => undefined }), useRoute: () => ({ key: "Record", name: "Record", params: undefined }) }));
 vi.mock("@/store/useFitnessStore", () => ({ useFitnessStore: (select: (value: object) => unknown) => select({ activeWorkout: session.active, currentUser: session.user, startActiveWorkout: session.start, reloadSavedWorkoutDraft: session.reload, trainingSplit: session.split,
-  exercises: session.exercises, sessions: session.sessions, sets: session.sets, bodyMeasurementLogs: session.bodyLogs, bodyUnitPreferences: { weight: "lb", circumference: "in" }, unitSystem: "lb", recordBodyCheckIn: session.recordBody }) }));
+  exercises: session.exercises, sessions: session.sessions, sets: session.sets, bodyMeasurementLogs: session.bodyLogs, bodyUnitPreferences: { weight: "lb", circumference: "in" }, unitSystem: "lb", recordBodyCheckIn: session.recordBody,
+  saveTrainingSplit: session.saveSplit, socialData: session.social, loadSocial: session.loadSocial }) }));
 vi.mock("react-native", () => ({ useColorScheme: () => "light", ActivityIndicator: "ActivityIndicator", Modal: "Modal", ScrollView: "ScrollView", Pressable: "Pressable", TextInput: "TextInput", View: "View", StyleSheet: { create: (value: unknown) => value }, Platform: { OS: "web", select: (value: { web: unknown }) => value.web } }));
-vi.mock("lucide-react-native", () => ({ Check: "Check", ChevronDown: "ChevronDown", ChevronRight: "ChevronRight", Dumbbell: "Dumbbell", Minus: "Minus", Plus: "Plus", Scale: "Scale", Search: "Search", Timer: "Timer", X: "X" }));
+vi.mock("lucide-react-native", () => ({ Check: "Check", ChevronDown: "ChevronDown", ChevronRight: "ChevronRight", Dumbbell: "Dumbbell", Minus: "Minus", Pencil: "Pencil", Plus: "Plus", Scale: "Scale", Search: "Search", Timer: "Timer", X: "X" }));
 vi.mock("@/components/BottomSheet", () => ({ BottomSheet: "BottomSheet" }));
 vi.mock("@/components/Panel", () => ({ Panel: "Panel" }));
 vi.mock("@/components/Screen", () => ({ Screen: "Screen" }));
@@ -50,6 +52,8 @@ const today = todayIso();
 beforeEach(() => {
   hooks.slots = []; hooks.cursor = 0; session.active = null; session.split = { days: [] }; session.user = { id: "account-a" };
   session.exercises = []; session.sessions = []; session.sets = []; session.bodyLogs = [];
+  session.saveSplit.mockReset().mockResolvedValue(undefined); session.loadSocial.mockReset().mockResolvedValue(undefined);
+  session.social = { friends: [], invites: [], leaderboard: [], notice: null, syncMemberIds: [] };
   session.start.mockReset().mockResolvedValue(undefined); session.reload.mockReset().mockResolvedValue(undefined); session.recordBody.mockReset().mockResolvedValue(undefined); session.navigate.mockReset();
   vi.stubGlobal("React", React);
 });
@@ -172,4 +176,30 @@ it("keeps another workout available as a secondary choice when today's plan star
   expect(choose).toBeDefined();
   choose.props.onPress();
   expect(elements(renderHome()).some((item) => item.type === "Modal" && item.props.visible)).toBe(true);
+});
+
+it("edits the weekly split from Home, naming synced friends and closing once saved", async () => {
+  session.split = { days: [{ key: "mon", label: "Mon", muscles: ["Chest", "Triceps"] }] };
+  session.social = {
+    friends: [{ id: "f1", name: "Nikhil", status: "accepted" }, { id: "f2", name: "Sam", status: "accepted" }, { id: "f3", name: "Ava", status: "pending" }],
+    invites: [], leaderboard: [], notice: null, syncMemberIds: ["account-a", "f1", "f3"]
+  };
+  const editor = () => elements(renderHome()).find((item) => item.props.syncedFriendNames)!;
+  expect(elements(renderHome()).some((item) => Array.isArray(item.props.children) && item.props.children.includes(" · Shared with Nikhil"))).toBe(true);
+  homeOption("Edit weekly split").props.onPress();
+  expect(session.loadSocial).toHaveBeenCalledOnce();
+  expect(editor().props.syncedFriendNames).toEqual(["Nikhil"]);
+  const edited = [{ key: "mon", label: "Mon", muscles: ["Back", "Biceps"] }];
+  await editor().props.onSave(edited);
+  expect(session.saveSplit).toHaveBeenCalledWith(edited);
+  expect(elements(renderHome()).some((item) => item.props.syncedFriendNames)).toBe(false);
+});
+
+it("keeps the split editor open when saving fails so the error can be shown", async () => {
+  session.split = { days: [{ key: "mon", label: "Mon", muscles: ["Chest"] }] };
+  session.saveSplit.mockRejectedValueOnce(new Error("offline"));
+  homeOption("Edit weekly split").props.onPress();
+  const editor = () => elements(renderHome()).find((item) => item.props.syncedFriendNames)!;
+  await expect(editor().props.onSave([{ key: "mon", label: "Mon", muscles: [] }])).rejects.toThrow("offline");
+  expect(editor()).toBeDefined();
 });

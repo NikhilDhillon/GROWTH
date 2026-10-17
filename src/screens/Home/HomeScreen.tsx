@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
-import { ChevronRight, Dumbbell, Timer } from "lucide-react-native";
+import { ChevronRight, Dumbbell, Pencil, Timer } from "lucide-react-native";
 
 import { BottomSheet } from "@/components/BottomSheet";
+import { Button } from "@/components/Button";
 import { DetailsDisclosure } from "@/components/DetailsDisclosure";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
@@ -11,10 +12,12 @@ import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { createActiveWorkout } from "@/constants/activeWorkout";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { WorkoutTemplate } from "@/domain/types";
-import type { ActiveWorkout } from "@/types";
+import type { ActiveWorkout, TrainingSplitDay } from "@/types";
 import { projectTrainingPlan } from "@/domain/planning";
 import { todaySplitDay } from "@/constants/activeWorkout";
 import { workoutTemplates } from "@/constants/workoutTemplates";
+import { SplitEditorSheet } from "@/screens/Home/SplitEditorSheet";
+import { dateToVancouverIso, formatShortDate } from "@/utils/date";
 import { dayName, nextTrainingDay, sameMuscles, scheduledDays } from "@/utils/schedule";
 import { createThemedStyles } from "@/utils/themedStyles";
 import { spacing } from "@/utils/theme";
@@ -37,8 +40,15 @@ export function HomeScreen() {
   const startActiveWorkout = useFitnessStore((state) => state.startActiveWorkout);
   const reloadSavedWorkoutDraft = useFitnessStore((state) => state.reloadSavedWorkoutDraft);
   const currentUser = useFitnessStore((state) => state.currentUser);
+  const saveTrainingSplit = useFitnessStore((state) => state.saveTrainingSplit);
+  const socialData = useFitnessStore((state) => state.socialData);
+  const loadSocial = useFitnessStore((state) => state.loadSocial);
+  const syncedFriendNames = socialData.friends
+    .filter((friend) => friend.status === "accepted" && socialData.syncMemberIds?.includes(friend.id))
+    .map((friend) => friend.name);
   const navigation = useNavigation<{ navigate: (route: string, params?: { checkInId?: number }) => void }>();
   const [showWorkoutPicker, setShowWorkoutPicker] = useState(false);
+  const [showSplitEditor, setShowSplitEditor] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const startingRef = useRef(false);
@@ -94,6 +104,17 @@ export function HomeScreen() {
       startingRef.current = false;
       setIsStarting(false);
     }
+  }
+
+  function openSplitEditor() {
+    // Refresh who receives the split so the editor names the right friends.
+    void loadSocial();
+    setShowSplitEditor(true);
+  }
+
+  async function saveSplit(days: TrainingSplitDay[]) {
+    await saveTrainingSplit(days);
+    setShowSplitEditor(false);
   }
 
   async function reviewSavedDraft() {
@@ -152,7 +173,14 @@ export function HomeScreen() {
       </View>
 
       <Panel>
-        <View style={styles.headerRow}><SectionTitle>This week</SectionTitle><Body>{trainingSplit.days.filter((day) => day.muscles.length).length} training days</Body></View>
+        <View style={styles.headerRow}>
+          <View style={styles.headerCopy}>
+            <SectionTitle>This week</SectionTitle>
+            <Body>{trainingSplit.days.filter((day) => day.muscles.length).length} training days{syncedFriendNames.length ? ` · Shared with ${syncedFriendNames.length === 1 ? syncedFriendNames[0] : `${syncedFriendNames.length} friends`}` : ""}</Body>
+            {trainingSplit.updated_at && trainingSplit.updated_by ? <Body style={styles.updatedText}>Updated {formatShortDate(dateToVancouverIso(new Date(trainingSplit.updated_at)))} by {trainingSplit.updated_by}</Body> : null}
+          </View>
+          <Button label="Edit" size="sm" icon={Pencil} accessibilityLabel="Edit weekly split" onPress={openSplitEditor} />
+        </View>
         <View style={styles.week}>
           {trainingSplit.days.map((day) => <View key={day.key} style={[styles.weekDay, day.key === today?.key && styles.today]}>
             <Label style={day.key === today?.key ? styles.todayText : undefined}>{day.label.slice(0, 1)}</Label>
@@ -164,6 +192,18 @@ export function HomeScreen() {
         </DetailsDisclosure>
       </Panel>
       <Pressable accessibilityRole="button" onPress={() => navigation.navigate("Logs")} style={pressableFeedback(styles.historyLink)}><Body style={styles.optionTitle}>Workout history</Body><ChevronRight size={18} color={palette.accent} /></Pressable>
+
+      <Modal visible={showSplitEditor} transparent animationType="none" statusBarTranslucent onRequestClose={() => setShowSplitEditor(false)}>
+        {showSplitEditor ? (
+          <SplitEditorSheet
+            days={trainingSplit.days}
+            todayKey={today?.key}
+            syncedFriendNames={syncedFriendNames}
+            onSave={saveSplit}
+            onClose={() => setShowSplitEditor(false)}
+          />
+        ) : null}
+      </Modal>
 
       <Modal visible={showWorkoutPicker} transparent animationType="none" statusBarTranslucent onRequestClose={() => setShowWorkoutPicker(false)}>
         <BottomSheet eyebrow="Start workout" title="What are you training?" closeLabel="Close workout picker" disabled={isStarting} onClose={() => setShowWorkoutPicker(false)}>
@@ -211,6 +251,7 @@ const useStyles = createThemedStyles((palette) => StyleSheet.create({
   trainingDot: { backgroundColor: palette.accent },
   todayDot: { backgroundColor: palette.surface },
   scheduleMuscles: { flex: 1, textAlign: "right" },
+  updatedText: { fontSize: 12 },
   historyLink: { flexDirection: "row", minHeight: 48, alignItems: "center", justifyContent: "center", gap: spacing.sm },
   bodyButton: { minHeight: 48, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, padding: spacing.md, borderWidth: 1, borderColor: palette.border, borderRadius: 8 },
   headerRow: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.md },

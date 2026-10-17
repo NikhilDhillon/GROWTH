@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createDefaultTrainingSplit, normalizeTrainingSplit, upgradeUncustomisedTrainingSplit } from "@/constants/trainingSplit";
+import { createDefaultTrainingSplit, normalizeTrainingSplit, sameTrainingSplitDays, setSplitDayMuscles, toggleSplitDayMuscle, upgradeUncustomisedTrainingSplit } from "@/constants/trainingSplit";
 
 const previousDefault = [
   { key: "mon", label: "Mon", muscles: ["Chest", "Triceps"] },
@@ -31,5 +31,35 @@ describe("training split defaults", () => {
   it("never rewrites a customised split", () => {
     const custom = normalizeTrainingSplit({ days: previousDefault.map((day) => day.key === "thu" ? { ...day, muscles: ["Forearms"] } : day) });
     expect(upgradeUncustomisedTrainingSplit(custom)).toBe(custom);
+  });
+});
+
+describe("editing a training split", () => {
+  const days = () => createDefaultTrainingSplit().days;
+  const musclesOn = (split: ReturnType<typeof days>, key: string) => split.find((day) => day.key === key)?.muscles;
+
+  it("adds and removes a muscle on one day, keeping display order and the other days", () => {
+    const added = toggleSplitDayMuscle(days(), "mon", "Chest");
+    expect(musclesOn(added, "mon")).toEqual(["Chest", "Back", "Biceps", "Traps"]);
+    expect(musclesOn(toggleSplitDayMuscle(added, "mon", "Traps"), "mon")).toEqual(["Chest", "Back", "Biceps"]);
+    expect(added.filter((day) => day.key !== "mon")).toEqual(days().filter((day) => day.key !== "mon"));
+  });
+
+  it("sets a whole day, dropping duplicates, and an empty list makes it a rest day", () => {
+    expect(musclesOn(setSplitDayMuscles(days(), "sat", ["Shoulders", "Legs", "Legs"]), "sat")).toEqual(["Legs", "Shoulders"]);
+    expect(musclesOn(setSplitDayMuscles(days(), "sun", []), "sun")).toEqual([]);
+  });
+
+  it("never mutates the split it was given", () => {
+    const original = days();
+    toggleSplitDayMuscle(original, "tue", "Abs");
+    setSplitDayMuscles(original, "wed", []);
+    expect(original).toEqual(days());
+  });
+
+  it("treats the same muscles in a different order as unchanged", () => {
+    const reordered = days().map((day) => ({ ...day, muscles: [...day.muscles].reverse() }));
+    expect(sameTrainingSplitDays(days(), reordered)).toBe(true);
+    expect(sameTrainingSplitDays(days(), toggleSplitDayMuscle(days(), "sat", "Abs"))).toBe(false);
   });
 });
