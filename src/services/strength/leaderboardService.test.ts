@@ -16,6 +16,10 @@ describe("friend rankings derive from authorized canonical observations", () => 
     expect(ranking([])).toEqual([]);
   });
   it("excludes machine, bodyweight-dependent, and unknown load semantics from cross-user equivalence", () => { expect(ranking([entry(1, "a", 2), entry(2, "a", 3), entry(3, "a", 4)])).toEqual([]); });
+  it("never ranks a personal exercise, even one carrying a catalog name", () => {
+    exercises.push({ id: 5, name: "Barbell Bench Press", primary_muscle: "Chest", is_strength_exercise: 1, created_at: "2026-01-01", creator_id: "a", load_type: "external" });
+    try { expect(ranking([entry(1, "a", 5)])).toEqual([]); } finally { exercises.pop(); }
+  });
   it("withholds shorter, warmup-only and mixed-exercise entries", () => {
     const short = entry(1, "a"); short.sets.pop(); const warm = entry(2, "a"); warm.sets.forEach((s) => s.is_warmup = 1); const mixed = entry(3, "a"); mixed.sets[1].exercise_id = 2;
     expect(ranking([short, warm, mixed])).toEqual([]);

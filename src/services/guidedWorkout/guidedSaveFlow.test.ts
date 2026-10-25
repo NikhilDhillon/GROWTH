@@ -21,15 +21,18 @@ vi.mock("react", async (importOriginal) => ({
   }
 }));
 vi.mock("react-native", () => ({ useColorScheme: () => "light",
-  Modal: "Modal", Pressable: "Pressable", TextInput: "TextInput", View: "View",
+  Modal: "Modal", Pressable: "Pressable", ScrollView: "ScrollView", TextInput: "TextInput", View: "View",
   Platform: { OS: "web", select: (values: { web: unknown }) => values.web }, StyleSheet: { create: (styles: unknown) => styles }
 }));
-vi.mock("lucide-react-native", () => ({ Check: "Check", ChevronRight: "ChevronRight", Plus: "Plus", Timer: "Timer", X: "X" }));
+vi.mock("lucide-react-native", () => ({ Check: "Check", ChevronDown: "ChevronDown", ChevronRight: "ChevronRight", Plus: "Plus", Search: "Search", Timer: "Timer", X: "X" }));
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ navigate: actions.navigate }) }));
 vi.mock("@/components/MachineProfilePanel", () => ({ MachineProfilePanel: "MachineProfilePanel" }));
 vi.mock("@/components/SearchableExercisePicker", () => ({ SearchableExercisePicker: "SearchableExercisePicker" }));
 vi.mock("@/components/BottomSheet", () => ({ BottomSheet: "BottomSheet" }));
 vi.mock("@/components/VisualSetComposer", () => ({ VisualSetComposer: "VisualSetComposer" }));
+vi.mock("@/components/FlowSetLogger", () => ({ FlowSetLogger: "FlowSetLogger" }));
+vi.mock("@/components/FocusShell", () => ({ FocusShell: "FocusShell" }));
+vi.mock("@/components/NewExerciseForm", () => ({ NewExerciseForm: "NewExerciseForm" }));
 vi.mock("@/components/Panel", () => ({ Panel: "Panel" }));
 vi.mock("@/components/Screen", () => ({ Screen: "Screen" }));
 vi.mock("@/components/Text", () => ({ Body: "Body", Label: "Label", SectionTitle: "SectionTitle", Title: "Title" }));
@@ -65,7 +68,7 @@ function button(tree: unknown, text: string) {
   return elements(tree).find((element) => element.type === "Pressable" && elements(element.props.children).some((child) => child.props.children === text))!;
 }
 function saveNextButton(tree: unknown) {
-  const actionLabels = new Set(["Save & next exercise", "Retry exercise save", "Saving…"]);
+  const actionLabels = new Set(["Save exercise", "Retry exercise save", "Saving…"]);
   return elements(tree).find((element) => element.type === "Pressable"
     && elements(element.props.children).some((child) => typeof child.props.children === "string" && actionLabels.has(child.props.children)))!;
 }
@@ -493,7 +496,8 @@ describe("guided save reliability", () => {
 
     await vi.waitFor(() => expect(hasMessage("earlier attempt")).toBe(true));
 
-    expect(state.current.activeWorkout.currentExercise.sets).toEqual(previous);
+    // The attempted values stay pending; the attempt also records how they were captured.
+    expect(state.current.activeWorkout.currentExercise.sets).toEqual(previous.map((set: LoggedSetDraft) => ({ ...set, evidence: "typed", capturedValues: expect.any(String) })));
     expect(state.current.activeWorkout.currentExercise.requestId).toBeTruthy();
     expect(state.current.activeWorkout.completedExercises).toEqual([]);
     expect(state.current.workoutReferences).toEqual([]);
@@ -539,5 +543,94 @@ describe("guided save reliability", () => {
     expect(state.current.sets.filter((set: { session_id: number }) => set.session_id === 42)).toHaveLength(3);
     expect(state.current.workoutReferences).toEqual([expect.objectContaining({ sessionId: 42, workoutId: summary.workoutId })]);
     expect(actions.updateDraft).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("flow mode", () => {
+  function renderFocus() {
+    hooks.cursor = 0;
+    const wrapper = GuidedWorkoutScreen({ focus: true }) as Element;
+    return typeof wrapper.type === "function" ? wrapper.type(wrapper.props) : wrapper;
+  }
+  const logger = (tree: unknown) => elements(tree).find((element) => element.type === "FlowSetLogger")!;
+  beforeEach(() => {
+    state.current.activeWorkout = { ...state.current.activeWorkout, currentExercise: { ...state.current.activeWorkout.currentExercise,
+      sets: [{ reps: "", weight: "100" }, { reps: "", weight: "100" }, { reps: "", weight: "100" }] } };
+  });
+
+  it("logs the dialed values as a flow set and starts rest", async () => {
+    const first = logger(renderFocus());
+    expect(first.props).toMatchObject({ fill: true, row: 0, weight: 100, rest: null });
+    first.props.onChange({ weight: 105, reps: 9 });
+    expect(logger(renderFocus()).props).toMatchObject({ weight: 105, reps: 9 });
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.currentExercise.sets[0]).toMatchObject({ reps: "9", weight: "105", evidence: "flow" }));
+    expect(state.current.activeWorkout.rest).toMatchObject({ setIndex: 0, seconds: 90 });
+    // The waiting rows take the new load as suggestions; they are not logged.
+    expect(state.current.activeWorkout.currentExercise.sets.slice(1).map((set: LoggedSetDraft) => [set.weight, set.reps])).toEqual([["105", ""], ["105", ""]]);
+    expect(logger(renderFocus()).props).toMatchObject({ row: 1, rest: expect.objectContaining({ canAddSet: false, next: "105 × 8" }) });
+  });
+
+  it("finishing early saves only the confirmed sets", async () => {
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest).toBeTruthy());
+    button(renderFocus(), "Finish workout").props.onPress();
+    await vi.waitFor(() => expect(actions.save).toHaveBeenCalledTimes(1));
+    expect(actions.save.mock.calls[0][0].sets).toEqual([expect.objectContaining({ reps: expect.any(String), weight: "100", evidence: "flow" })]);
+  });
+
+  it("after the last set, rest offers another set and names the next exercise", async () => {
+    state.current.activeWorkout = { ...state.current.activeWorkout, currentExercise: { ...state.current.activeWorkout.currentExercise, sets: [{ reps: "", weight: "100" }] } };
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest).toBeTruthy());
+    expect(logger(renderFocus()).props).toMatchObject({ row: null, rest: expect.objectContaining({ canAddSet: true, next: null }) });
+  });
+
+  it("reopens a finished set from its pill to fix it, or puts it back in the queue", async () => {
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.currentExercise.sets[0].evidence).toBe("flow"));
+    logger(renderFocus()).props.onSkipRest();
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest).toBeNull());
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.currentExercise.sets[1].evidence).toBe("flow"));
+    const performedAt = state.current.activeWorkout.currentExercise.sets[0].performedAt;
+
+    logger(renderFocus()).props.onEditSet(0);
+    const editing = logger(renderFocus()).props;
+    expect(editing).toMatchObject({ editing: true, row: 0, rest: null, weight: 100 });
+    editing.onChange({ weight: 95, reps: 6 });
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.currentExercise.sets[0]).toMatchObject({ weight: "95", reps: "6", evidence: "flow", performedAt }));
+    expect(logger(renderFocus()).props).toMatchObject({ editing: false, row: 2 });
+
+    logger(renderFocus()).props.onEditSet(1);
+    logger(renderFocus()).props.onUnlog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.currentExercise.sets[1].reps).toBe(""));
+    expect(logger(renderFocus()).props).toMatchObject({ editing: false, row: 1 });
+  });
+
+  it("starts every rest at the rest setting; winding the ring changes only that rest, within 1:30 to 5:00", async () => {
+    state.current.guidedWorkoutPreferences = { ...createDefaultGuidedWorkoutPreferences(), flowMode: true, restSeconds: 150 };
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest).toMatchObject({ setIndex: 0, seconds: 150 }));
+    logger(renderFocus()).props.onAdjustRest(240);
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest.seconds).toBeGreaterThanOrEqual(240));
+    logger(renderFocus()).props.onAdjustRest(900);
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest.seconds).toBe(300));
+    logger(renderFocus()).props.onAdjustRest(0);
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest.seconds).toBe(90));
+    logger(renderFocus()).props.onSkipRest();
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest).toBeNull());
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest).toMatchObject({ setIndex: 1, seconds: 150 }));
+    expect(state.current.activeWorkout).not.toHaveProperty("restSeconds");
+  });
+
+  it("keeps the classic page as the plain set list with Save", () => {
+    state.current.guidedWorkoutPreferences = { ...createDefaultGuidedWorkoutPreferences(), flowMode: true };
+    const tree = render();
+    expect(elements(tree).some((element) => element.type === "FlowSetLogger")).toBe(false);
+    expect(composer(tree)).toBeTruthy();
+    expect(saveNextButton(tree)).toBeTruthy();
   });
 });

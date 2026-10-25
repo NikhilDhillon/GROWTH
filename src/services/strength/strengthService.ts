@@ -141,7 +141,7 @@ export function buildExerciseScoreReport(exercises: Exercise[], sessions: Workou
   const baselines = new Map<string, ExerciseScorePoint>();
   for (const entry of entries) {
     const { exercise, session, sets: observedSets } = entry;
-    const loadType = getExerciseLoadType(exercise.name);
+    const loadType = getExerciseLoadType(exercise);
     const bodyWeight = isBodyweightLoadType(loadType) ? getBodyweightEstimateForDate(session.workout_date, bodyWeightLogs) : null;
     const eligibility = getScoringEligibility(observedSets.map((set) => ({ reps: set.reps, weight: set.weight, isWarmup: Boolean(set.is_warmup) })),
       { loadType, bodyWeightLb: bodyWeight?.status === "available" ? bodyWeight.weightLb : undefined });

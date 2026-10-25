@@ -10,7 +10,7 @@ const database = vi.hoisted(() => {
     "updateBodyMeasurementLog", "deleteBodyMeasurementLog", "updateBodyUnitPreferences", "importTrainingData",
     "updateGuidedWorkoutPreferences", "updateTrainingSplit", "updateUnitSystem", "updateConfigWeight",
     "acceptFriendInvite", "createFriendInvite", "removeFriend", "removeSplitSync", "requestSplitSync",
-    "respondSplitSync", "revokeFriendInvite"
+    "respondSplitSync", "revokeFriendInvite", "createCustomExercise"
   ];
   return Object.fromEntries(names.map((name) => [name, vi.fn()])) as Record<string, ReturnType<typeof vi.fn>>;
 });
@@ -112,6 +112,24 @@ beforeEach(() => {
   database.saveActiveWorkout.mockImplementation(async (draft: ActiveWorkout) => ({ ...draft, revision: (draft.revision ?? 0) + 1 }));
   database.finalizeActiveWorkout.mockResolvedValue(undefined);
   database.logoutUser.mockResolvedValue(undefined);
+});
+
+describe("personal exercises", () => {
+  it("lists a new exercise once, in name order, so it can be picked immediately", async () => {
+    const created: Exercise = { id: 900, name: "Ab Pulldown", primary_muscle: "Core", is_strength_exercise: 0, created_at: timestamp, creator_id: user.id, load_type: "machine_stack" };
+    useFitnessStore.setState({ exercises: [exercise] });
+    database.createCustomExercise.mockResolvedValue(created);
+    await expect(useFitnessStore.getState().createCustomExercise({ name: "Ab Pulldown", primaryMuscle: "Core", loadType: "machine_stack" })).resolves.toBe(created);
+    await useFitnessStore.getState().createCustomExercise({ name: "Ab Pulldown", primaryMuscle: "Core", loadType: "machine_stack" });
+    expect(useFitnessStore.getState().exercises.map((item) => item.id)).toEqual([900, 1]);
+  });
+
+  it("leaves the list unchanged when creating fails", async () => {
+    useFitnessStore.setState({ exercises: [exercise] });
+    database.createCustomExercise.mockRejectedValue(new Error("Barbell Bench Press is already in the exercise list."));
+    await expect(useFitnessStore.getState().createCustomExercise({ name: "barbell bench press", primaryMuscle: "Chest", loadType: "external" })).rejects.toThrow("already in the exercise list");
+    expect(useFitnessStore.getState().exercises).toEqual([exercise]);
+  });
 });
 
 describe("whole body recording uses one observation authority", () => {
@@ -420,7 +438,7 @@ describe("completion and deletion preserve valid prior state", () => {
     useFitnessStore.setState({ unitSystem: "kg" });
     await useFitnessStore.getState().updateWorkoutLog({ sessionId: session.id, exerciseId: exercise.id, workoutDate: date,
       notes: "Edited", unitSystem: "lb", sets: [{ reps: "8", weight: "100" }] });
-    expect(database.updateWorkoutSession).toHaveBeenCalledWith(expect.objectContaining({ inputUnit: "lb", sets: [{ reps: 8, weight: 100, isWarmup: false }] }));
+    expect(database.updateWorkoutSession).toHaveBeenCalledWith(expect.objectContaining({ inputUnit: "lb", sets: [{ reps: 8, weight: 100, isWarmup: false, evidence: "typed" }] }));
   });
   it("uses the raw saved legacy snapshot for finishing instead of adding UI defaults to CAS", async () => {
     const data = applicationData();
@@ -713,7 +731,7 @@ describe("guided facts and draft advancement commit together", () => {
 
     expect(database.recordWorkoutEntry).toHaveBeenCalledWith(expect.objectContaining({
       requestId: input.requestId, workoutId: "workout-a", expectedActive,
-      sets: [{ reps: 8, weight: 100, isWarmup: false }, { reps: 8, weight: 100, isWarmup: false }], inputUnit: "lb", recordingOrigin: "guided"
+      sets: [{ reps: 8, weight: 100, isWarmup: false, evidence: "typed" }, { reps: 8, weight: 100, isWarmup: false, evidence: "typed" }], inputUnit: "lb", recordingOrigin: "guided"
     }));
     expect(useFitnessStore.getState().activeWorkout).toEqual(authoritative.activeWorkout);
     expect(useFitnessStore.getState().savedActiveWorkout).toEqual(authoritative.activeWorkout);
@@ -768,7 +786,7 @@ describe("logging validity is independent of scoring", () => {
     const input = { ...workoutInput("manual"), sets: [{ reps: "5", weight: "100" }] };
     expect(await useFitnessStore.getState().saveWorkout(input)).toBe(42);
     expect(database.recordWorkoutEntry).toHaveBeenCalledWith(expect.objectContaining({
-      inputUnit: "lb", recordingOrigin: "manual", sets: [{ reps: 5, weight: 100, isWarmup: false }]
+      inputUnit: "lb", recordingOrigin: "manual", sets: [{ reps: 5, weight: 100, isWarmup: false, evidence: "typed" }]
     }));
   });
 
@@ -777,7 +795,7 @@ describe("logging validity is independent of scoring", () => {
     const input: SaveWorkoutInput = { ...workoutInput(), sets: [{ reps: "8", weight: "60", isWarmup: true }] };
     input.sets = input.sets.map((set) => confirmGuidedObservation(set, { ...input, unitSystem: "lb" }));
     expect(await useFitnessStore.getState().saveWorkout(bindGuidedDraft(input))).toBe(42);
-    expect(database.recordWorkoutEntry).toHaveBeenCalledWith(expect.objectContaining({ sets: [{ reps: 8, weight: 60, isWarmup: true }] }));
+    expect(database.recordWorkoutEntry).toHaveBeenCalledWith(expect.objectContaining({ sets: [{ reps: 8, weight: 60, isWarmup: true, evidence: "typed" }] }));
   });
 
   it.each(["2026-02-30", "2026-13-01", "", "not-a-date"])("rejects %s instead of silently recording today", async (workoutDate) => {

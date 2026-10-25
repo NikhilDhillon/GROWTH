@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CommonActions, StackRouter } from "@react-navigation/routers";
-import { navigationSection, normalizeNavigationPath, parseNavigationPath, serializeNavigationState } from "./appNavigation";
+import { navigationSection, normalizeNavigationPath, parseNavigationPath, serializeNavigationState, workoutRoute } from "./appNavigation";
 
 const focused = (path: string) => parseNavigationPath(path)?.routes.at(-1);
 
@@ -77,5 +77,14 @@ describe("shareable navigation", () => {
     expect(navigationSection("WorkoutSummary")).toBe("Logs");
     expect(navigationSection("Bodyweight")).toBe("Progress");
     expect(navigationSection("Exercises")).toBe("More");
+  });
+});
+
+describe("flow mode route", () => {
+  it("opens the active workout full screen in flow mode, and the guided page otherwise", () => {
+    expect(workoutRoute(true)).toBe("FlowWorkout");
+    expect(workoutRoute(false)).toBe("ActiveWorkout");
+    expect(focused("/record/flow")?.name).toBe("FlowWorkout");
+    expect(navigationSection("FlowWorkout")).toBe("Record");
   });
 });

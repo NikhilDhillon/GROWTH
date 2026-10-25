@@ -37,9 +37,12 @@ select phase1_test.assert_true(
   (select jsonb_agg(to_jsonb(original) order by id) from original_sessions original)
     = (select jsonb_agg(to_jsonb(current) order by id) from public.workout_sessions current),
   'catalog reruns preserve existing sessions and equipment context');
+-- The current schema may add capture columns to an older table; existing rows
+-- keep every original value and gain only unknown (null) capture metadata.
 select phase1_test.assert_true(
-  (select jsonb_agg(to_jsonb(original) order by id) from original_sets original)
-    = (select jsonb_agg(to_jsonb(current) order by id) from public.workout_sets current),
+  (select jsonb_agg(to_jsonb(original) - array['performed_at', 'evidence'] order by id) from original_sets original)
+    = (select jsonb_agg(to_jsonb(current) - array['performed_at', 'evidence'] order by id) from public.workout_sets current)
+    and not exists (select 1 from public.workout_sets current where current.performed_at is not null or current.evidence is not null),
   'catalog reruns preserve existing set observations');
 select phase1_test.assert_true(
   (select jsonb_agg(to_jsonb(original) order by user_id, exercise_id) from original_preferences original)

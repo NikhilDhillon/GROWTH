@@ -48,7 +48,7 @@ export function SocialScreen() {
 
   const availableExerciseIds = useMemo(() => {
     const idsFromScores = new Set(socialData.leaderboard.map((entry) => entry.exercise_id));
-    const strengthIds = exercises.filter((exercise) => catalogExercises.some((e) => e.name === exercise.name) && getExerciseLoadType(exercise.name) === "external").map((exercise) => exercise.id);
+    const strengthIds = exercises.filter((exercise) => exercise.creator_id == null && catalogExercises.some((e) => e.name === exercise.name) && getExerciseLoadType(exercise.name) === "external").map((exercise) => exercise.id);
     return [...new Set([...strengthIds, ...idsFromScores])];
   }, [exercises, socialData.leaderboard]);
 

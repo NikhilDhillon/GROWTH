@@ -4,11 +4,13 @@ import { emptyActiveExercise, normalizeActiveWorkout, normalizeCompletedGuidedWo
 import { catalogExercises, getExerciseLoadType, catalogExerciseRows } from "@/constants/exercises";
 import { createDefaultGuidedWorkoutPreferences, normalizeGuidedWorkoutPreferences } from "@/constants/guidedWorkout";
 import { normalizeMachineProfiles } from "@/constants/machineProfiles";
+import { normalizeTemplateExercises } from "@/services/workouts/templateExercises";
+import { assertCustomExercise, customExerciseLimit, existingExerciseNamed, isCustomExercise } from "@/services/workouts/customExercises";
 import { createDefaultTrainingSplit, normalizeTrainingSplit, upgradeUncustomisedTrainingSplit } from "@/constants/trainingSplit";
 import { buildWorkoutFingerprint, ImportBodyMeasurementLog, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
-import { ActiveWorkout, BodyMeasurementLog, BodyMeasurementValues, BodyUnitPreferences, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, Friend, FriendInvite, GuidedWorkoutPreferences, LeaderboardEntry, MachineProfile, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyMeasurementLog, CustomExerciseInput, BodyMeasurementValues, BodyUnitPreferences, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, Friend, FriendInvite, GuidedWorkoutPreferences, LeaderboardEntry, MachineProfile, MuscleStrengthConfig, SocialData, TemplateExercises, TrainingSplit, TrainingSplitDay, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
 import { bodyMeasurementsFromLegacyWeights, defaultBodyUnitPreferences, normalizeBodyMeasurementLog, normalizeBodyUnitPreferences, parseStoredMeasurements } from "@/utils/bodyMeasurements";
-import { assertWorkoutWrite, matchesWorkoutWritePayload, sameStoredJson, WorkoutWriteInput, workoutWritePayload } from "@/database/workoutWrite";
+import { assertWorkoutWrite, editedSetCaptureColumns, matchesWorkoutWritePayload, sameStoredJson, setCaptureColumns, WorkoutWriteInput, workoutWritePayload } from "@/database/workoutWrite";
 import { assertCalendarDate } from "@/domain/calendar";
 import { advanceWorkoutDraft, assertGuidedRecordingInput, committedWorkoutDraft, DraftConflictError, planWorkoutReferenceMigration, RecoveredWorkoutDraft, standaloneWorkoutRecord, WorkoutEntryReference, WorkoutRecord, WorkoutRecordingInput, WorkoutRecordingResult, workoutRecordFromDraft } from "@/domain/workoutLifecycle";
 import { createRequestId } from "@/utils/requestId";
@@ -61,6 +63,7 @@ type WebDatabase = {
   workoutArchiveEvidence?: unknown;
   retiredActiveWorkouts: string[];
   machineProfiles: MachineProfile[];
+  templateExercises: TemplateExercises;
 };
 
 type ProfileRow = {
@@ -141,7 +144,7 @@ function initializeLocalWorkoutRecords(data: WebDatabase, persist = true) {
 }
 
 function seedDatabase(): WebDatabase {
-  return { workoutRecords: [], workoutReferences: [], recoveredWorkoutDrafts: [], exercises: catalogExerciseRows(now()), sessions: [], sets: [], bodyMeasurementLogs: [], bodyWeightLogs: [], bodyMeasurementMigration: "modern_authority", workoutWriteRequests: {}, configs: [], exercisePreferences: [], users: [], currentUserId: null, unitSystem: "lb", bodyUnitPreferences: defaultBodyUnitPreferences, importFingerprints: [], trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(), completedGuidedWorkouts: [], retiredActiveWorkouts: [], machineProfiles: [] };
+  return { workoutRecords: [], workoutReferences: [], recoveredWorkoutDrafts: [], exercises: catalogExerciseRows(now()), sessions: [], sets: [], bodyMeasurementLogs: [], bodyWeightLogs: [], bodyMeasurementMigration: "modern_authority", workoutWriteRequests: {}, configs: [], exercisePreferences: [], users: [], currentUserId: null, unitSystem: "lb", bodyUnitPreferences: defaultBodyUnitPreferences, importFingerprints: [], trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(), completedGuidedWorkouts: [], retiredActiveWorkouts: [], machineProfiles: [], templateExercises: {} };
 }
 
 function readDatabase(): WebDatabase {
@@ -212,7 +215,8 @@ function readDatabase(): WebDatabase {
       guidedWorkoutPreferences: normalizeGuidedWorkoutPreferences(parsed.guidedWorkoutPreferences),
       completedGuidedWorkouts: normalizeCompletedGuidedWorkouts(parsed.completedGuidedWorkouts),
       workoutArchiveEvidence: parsed.completedGuidedWorkouts,
-      machineProfiles: normalizeMachineProfiles(parsed.machineProfiles)
+      machineProfiles: normalizeMachineProfiles(parsed.machineProfiles),
+      templateExercises: normalizeTemplateExercises(parsed.templateExercises)
     };
   }
   const seeded = seedDatabase();
@@ -274,7 +278,8 @@ function writeWorkoutSession(data: WebDatabase, input: WorkoutWriteInput) {
   data.sessions.push({ id: sessionId, workout_date: input.workoutDate, notes: input.notes, machine_profile_id: input.machineProfileId ?? null,
     input_unit: input.inputUnit ?? null, recording_origin: input.recordingOrigin ?? null, created_at: timestamp });
   for (const [index, set] of input.sets.entries()) data.sets.push({ id: allocateObservationId(data, "set"), session_id: sessionId,
-    exercise_id: input.exerciseId, set_number: index + 1, reps: set.reps, weight: set.weight, rir: null, is_warmup: Boolean(set.isWarmup), created_at: timestamp });
+    exercise_id: input.exerciseId, set_number: index + 1, reps: set.reps, weight: set.weight, rir: null, is_warmup: Boolean(set.isWarmup),
+    ...setCaptureColumns(set), created_at: timestamp });
   if (input.requestId) data.workoutWriteRequests[input.requestId] = { sessionId, payload: workoutWritePayload(input) };
   return sessionId;
 }
@@ -367,6 +372,7 @@ export async function loadAllData() {
     completedGuidedWorkouts: data.completedGuidedWorkouts,
     workoutArchiveEvidence: data.workoutArchiveEvidence,
     machineProfiles: data.machineProfiles,
+    templateExercises: data.templateExercises,
     workoutRecords: data.workoutRecords, workoutReferences: data.workoutReferences, recoveredWorkoutDrafts: data.recoveredWorkoutDrafts
   };
 }
@@ -374,10 +380,10 @@ export async function loadAllData() {
 async function loadCloudData(client: SupabaseClient) {
   const user = await requireCloudUser(client, false);
   if (!user) {
-    return { exercises: [], sessions: [], sets: [], bodyMeasurementLogs: [], configs: [], currentUser: null, unitSystem: "lb" as UnitSystem, bodyUnitPreferences: defaultBodyUnitPreferences, trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, activeWorkoutSnapshot: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(), completedGuidedWorkouts: [], machineProfiles: [], workoutRecords: [], workoutReferences: [], recoveredWorkoutDrafts: [] };
+    return { exercises: [], sessions: [], sets: [], bodyMeasurementLogs: [], configs: [], currentUser: null, unitSystem: "lb" as UnitSystem, bodyUnitPreferences: defaultBodyUnitPreferences, trainingSplit: createDefaultTrainingSplit(), activeWorkout: null, activeWorkoutSnapshot: null, guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(), completedGuidedWorkouts: [], machineProfiles: [], templateExercises: {}, workoutRecords: [], workoutReferences: [], recoveredWorkoutDrafts: [] };
   }
 
-  const [profileResult, exercisesResult, preferencesResult, sessionsResult, setsResult, bodyMeasurementResult, bodyWeightResult, configsResult, settingResult, bodyUnitResult, activeWorkoutResult, guidedWorkoutResult, completedWorkoutsResult, machineProfilesResult, bodyMigrationResult] = await Promise.all([
+  const [profileResult, exercisesResult, preferencesResult, sessionsResult, setsResult, bodyMeasurementResult, bodyWeightResult, configsResult, settingResult, bodyUnitResult, activeWorkoutResult, guidedWorkoutResult, completedWorkoutsResult, machineProfilesResult, bodyMigrationResult, templateExercisesResult] = await Promise.all([
     client.from("profiles").select("*").eq("id", user.id).maybeSingle<ProfileRow>(),
     client.from("exercises").select("*").order("name"),
     client.from("user_exercise_preferences").select("*").eq("user_id", user.id),
@@ -392,7 +398,8 @@ async function loadCloudData(client: SupabaseClient) {
     client.from("app_settings").select("value").eq("key", "guided_workout_preferences").maybeSingle<{ value: string }>(),
     client.from("app_settings").select("value").eq("key", "completed_guided_workouts").maybeSingle<{ value: string }>(),
     client.from("app_settings").select("value").eq("key", "machine_profiles").maybeSingle<{ value: string }>(),
-    client.from("app_settings").select("value").eq("user_id", user.id).eq("key", "body_measurements_legacy_migrated").maybeSingle<{ value: string }>()
+    client.from("app_settings").select("value").eq("user_id", user.id).eq("key", "body_measurements_legacy_migrated").maybeSingle<{ value: string }>(),
+    client.from("app_settings").select("value").eq("user_id", user.id).eq("key", "workout_template_exercises").maybeSingle<{ value: string }>()
   ]);
 
   throwIfSupabaseError(profileResult.error);
@@ -414,6 +421,7 @@ async function loadCloudData(client: SupabaseClient) {
   throwIfSupabaseError(completedWorkoutsResult.error);
   throwIfSupabaseError(machineProfilesResult.error);
   throwIfSupabaseError(bodyMigrationResult.error);
+  throwIfSupabaseError(templateExercisesResult.error);
   if (bodyMeasurementResult.error && bodyMigrationResult.data) throw new Error("Migrated body measurements are unavailable. Retry loading after their data store is restored; legacy copies have not replaced deleted observations.");
 
   const preferences = (preferencesResult.data ?? []) as UserExercisePreference[];
@@ -439,7 +447,7 @@ async function loadCloudData(client: SupabaseClient) {
     const references: WorkoutEntryReference[] = (existingReferences.data ?? []).map((row: { workout_id: string; session_id: number; prescription: WorkoutEntryReference["prescription"]; completed_at: string | null }) => ({
       workoutId: row.workout_id, sessionId: row.session_id, prescription: row.prescription, completedAt: row.completed_at
     }));
-    const plan = planWorkoutReferenceMigration({ sessions: sessionsResult.data ?? [], sets: setsResult.data ?? [], exercises: exercisesResult.data ?? [],
+    const plan = planWorkoutReferenceMigration({ sessions: sessionsResult.data ?? [], sets: setsResult.data ?? [], exercises: cloudExercises(exercisesResult.data),
       activeWorkout: normalizeActiveWorkout(rawActive), workoutArchiveEvidence: rawArchive, workoutRecords: records, workoutReferences: references });
     const result = await client.rpc("initialize_workout_records", {
       p_records: plan.records.filter((record) => !records.some((existing) => existing.id === record.id)),
@@ -462,7 +470,7 @@ async function loadCloudData(client: SupabaseClient) {
       workoutId: row.workout_id, sessionId: row.session_id, prescription: row.prescription, completedAt: row.completed_at
     })),
     recoveredWorkoutDrafts: recoveryResult.data?.value ? JSON.parse(recoveryResult.data.value) as RecoveredWorkoutDraft[] : [],
-    exercises: withPreferenceFlags((exercisesResult.data ?? []) as Exercise[], preferences, user.id),
+    exercises: withPreferenceFlags(cloudExercises(exercisesResult.data), preferences, user.id),
     sessions: (sessionsResult.data ?? []) as WorkoutSession[],
     sets: (setsResult.data ?? []) as WorkoutSet[],
     bodyMeasurementLogs,
@@ -476,7 +484,8 @@ async function loadCloudData(client: SupabaseClient) {
     guidedWorkoutPreferences: normalizeGuidedWorkoutPreferences(guidedWorkoutResult.data?.value ? JSON.parse(guidedWorkoutResult.data.value) : null),
     completedGuidedWorkouts: normalizeCompletedGuidedWorkouts(rawArchive),
     workoutArchiveEvidence: rawArchive,
-    machineProfiles: normalizeMachineProfiles(machineProfilesResult.data?.value ? JSON.parse(machineProfilesResult.data.value) : null)
+    machineProfiles: normalizeMachineProfiles(machineProfilesResult.data?.value ? JSON.parse(machineProfilesResult.data.value) : null),
+    templateExercises: normalizeTemplateExercises(templateExercisesResult.data?.value ? JSON.parse(templateExercisesResult.data.value) : null)
   };
 }
 
@@ -614,6 +623,39 @@ export async function setExerciseEnabled(exerciseId: number, enabled: boolean) {
       });
     }
     writeDatabase(data);
+  });
+}
+
+export async function createCustomExercise(input: CustomExerciseInput): Promise<Exercise> {
+  const exercise = assertCustomExercise(input);
+  if (supabase) {
+    const user = await requireCloudUser(supabase);
+    if (!user) throw new Error("Please log in again.");
+    const result = await supabase.rpc("create_custom_exercise", { p_name: exercise.name, p_primary_muscle: exercise.primaryMuscle, p_load_type: exercise.loadType });
+    throwIfSupabaseError(result.error);
+    const [created] = cloudExercises(result.data ? [result.data] : []);
+    if (!created || !Number.isSafeInteger(created.id) || created.id <= 0) throw new Error("The server did not confirm the new exercise. Try again.");
+    return { ...created, is_strength_exercise: 0 };
+  }
+
+  return withLocalDatabaseLock(() => {
+    const data = readDatabase();
+    if (!data.currentUserId) throw new Error("Please log in again.");
+    // On-device data is shared by every local account, so names are unique on the device.
+    const existing = existingExerciseNamed(data.exercises, exercise.name);
+    if (existing && !isCustomExercise(existing)) throw new Error(`${existing.name} is already in the exercise list.`);
+    if (existing) {
+      if (existing.primary_muscle === exercise.primaryMuscle && existing.load_type === exercise.loadType) return { ...existing };
+      throw new Error(`You already have an exercise named ${existing.name}.`);
+    }
+    if (data.exercises.filter(isCustomExercise).length >= customExerciseLimit) throw new Error(`You can keep up to ${customExerciseLimit} personal exercises.`);
+    const created: Exercise = {
+      id: Math.max(0, ...data.exercises.map((item) => item.id)) + 1, name: exercise.name, primary_muscle: exercise.primaryMuscle, secondary_muscle: null,
+      is_strength_exercise: 0, created_at: now(), creator_id: data.currentUserId, load_type: exercise.loadType
+    };
+    data.exercises.push(created);
+    writeDatabase(data);
+    return { ...created };
   });
 }
 
@@ -1077,6 +1119,7 @@ export async function updateWorkoutSession(input: WorkoutWriteInput & { sessionI
           }
         : session
     );
+    const previous = data.sets.filter((set) => set.session_id === input.sessionId).sort((a, b) => a.set_number - b.set_number);
     data.sets = data.sets.filter((set) => set.session_id !== input.sessionId);
     for (const [index, set] of input.sets.entries()) {
       data.sets.push({
@@ -1088,6 +1131,7 @@ export async function updateWorkoutSession(input: WorkoutWriteInput & { sessionI
         weight: set.weight,
         rir: null,
         is_warmup: Boolean(set.isWarmup),
+        ...editedSetCaptureColumns(previous[index], set),
         created_at: timestamp
       });
     }
@@ -1305,6 +1349,26 @@ export async function saveMachineProfiles(profiles: MachineProfile[]) {
   });
 }
 
+export async function saveTemplateExercises(templateExercises: TemplateExercises) {
+  const normalized = normalizeTemplateExercises(templateExercises);
+  if (supabase) {
+    const user = await requireCloudUser(supabase);
+    if (!user) throw new Error("Please log in again.");
+    const result = await supabase
+      .from("app_settings")
+      .upsert({ user_id: user.id, key: "workout_template_exercises", value: JSON.stringify(normalized) }, { onConflict: "user_id,key" });
+    throwIfSupabaseError(result.error);
+    return normalized;
+  }
+
+  return withLocalDatabaseLock(() => {
+    const data = readDatabase();
+    data.templateExercises = normalized;
+    writeDatabase(data);
+    return normalized;
+  });
+}
+
 export async function loadSocialData(): Promise<SocialData> {
   if (!supabase) return localSocialNotice();
 
@@ -1379,7 +1443,7 @@ export async function loadSocialData(): Promise<SocialData> {
   const socialSessions = (performanceResult.data?.sessions ?? []) as SocialWorkoutSessionRow[];
   const socialSets = (performanceResult.data?.sets ?? []) as SocialWorkoutSetRow[];
   const allowedUserIds = new Set([user.id, ...friendships.filter((friendship) => friendship.status === "accepted").map((friendship) => otherFriendId(friendship, user.id))]);
-  const leaderboard = buildCanonicalLeaderboard({ exercises: (socialExercisesResult.data ?? []) as Exercise[], sessions: socialSessions, sets: socialSets,
+  const leaderboard = buildCanonicalLeaderboard({ exercises: cloudExercises(socialExercisesResult.data), sessions: socialSessions, sets: socialSets,
     allowedUserIds, asOfDate: todayIso(), names: new Map([...profiles].map(([id, profile]) => [id, id === user.id ? profileDisplayName(currentProfile, "You") : profileDisplayName(profile, "Friend")])) });
 
   const syncMemberIds = (membersResult.data ?? []).map((member: { user_id: string }) => member.user_id);
@@ -1680,7 +1744,7 @@ async function getCloudExistingWorkoutFingerprints(client: SupabaseClient) {
   throwIfSupabaseError(sessionsResult.error);
   throwIfSupabaseError(setsResult.error);
   return getExistingWorkoutFingerprints(
-    (exercisesResult.data ?? []) as Exercise[],
+    cloudExercises(exercisesResult.data),
     (sessionsResult.data ?? []) as WorkoutSession[],
     (setsResult.data ?? []) as WorkoutSet[]
   );
@@ -1722,11 +1786,17 @@ function parseFingerprintSetting(value: string | undefined | null) {
   }
 }
 
+/** Personal exercises keep a hidden unique key in name and show display_name. */
+function cloudExercises(rows: unknown[] | null): Exercise[] {
+  return ((rows ?? []) as Array<Exercise & { display_name?: string | null }>)
+    .map(({ display_name, ...exercise }) => display_name ? { ...exercise, name: display_name } : exercise);
+}
+
 function normalizeCatalog(existing: Exercise[]) {
   // Keep every historical ID and movement. Catalog updates may only add entries.
   const retained = existing.map((exercise) => ({ ...exercise }));
   let nextId = Math.max(0, ...retained.map((exercise) => exercise.id));
-  const names = new Set(retained.map((exercise) => exercise.name));
+  const names = new Set(retained.filter((exercise) => !isCustomExercise(exercise)).map((exercise) => exercise.name));
   for (const exercise of catalogExerciseRows(now())) {
     if (names.has(exercise.name)) continue;
     retained.push({ ...exercise, id: ++nextId });

@@ -5,25 +5,17 @@ import { Copy, Minus, Plus, RotateCcw, Trash2 } from "lucide-react-native";
 import { Body, Label } from "@/components/Text";
 import { ExerciseLoadType } from "@/constants/exercises";
 import type { GuidedObservationContext } from "@/services/guidedWorkout/guidedObservationService";
+import { isPlannedSuggestion } from "@/services/workouts/setCapture";
 import { LoggedSetDraft, UnitSystem } from "@/types";
 import { createThemedStyles } from "@/utils/themedStyles";
 import { spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { formatWeightInput, weightToStorageUnit } from "@/utils/units";
 import { createEmptyPlateCounts } from "@/utils/workout";
+import { calculatePlateCounts, LoadedBar, parseLoad, PlateCounts, plateVisuals, PlateWeight, plateWeights } from "@/components/LoadedBar";
 
-const plateWeights = [45, 35, 25, 10, 5] as const;
-type PlateWeight = typeof plateWeights[number];
-type PlateCounts = Record<PlateWeight, number>;
 type ApplyMode = "one" | "working" | "down";
 
-const plateVisuals: Record<PlateWeight, { backgroundColor: string; height: number; width: number }> = {
-  45: { backgroundColor: "#2563eb", height: 34, width: 8 },
-  35: { backgroundColor: "#eab308", height: 30, width: 8 },
-  25: { backgroundColor: "#16a34a", height: 26, width: 7 },
-  10: { backgroundColor: "#64748b", height: 21, width: 6 },
-  5: { backgroundColor: "#dc2626", height: 17, width: 5 }
-};
 
 export type SetComposerTarget = {
   draftIndex: number;
@@ -247,7 +239,7 @@ export function VisualSetComposer({
               </View>
               {set.weight.trim() || targetDisplay || target?.targetReps || target?.increaseWeight ? (
                 <View style={styles.setHints}>
-                  {set.weight.trim() ? <Label style={styles.loadState}>Entered</Label> : targetDisplay ? <Label style={styles.loadState}>Suggested {targetDisplay}</Label> : null}
+                  {isPlannedSuggestion(set) ? <Label style={styles.loadState}>Planned</Label> : set.weight.trim() ? <Label style={styles.loadState}>Entered</Label> : targetDisplay ? <Label style={styles.loadState}>Suggested {targetDisplay}</Label> : null}
                   {target?.targetReps ? <Label style={styles.targetLabel}>Target {target.targetReps} reps</Label> : target?.increaseWeight ? <Label style={styles.targetLabel}>Heavier attempt</Label> : null}
                 </View>
               ) : null}
@@ -407,47 +399,6 @@ function BarbellEditor({
   );
 }
 
-function LoadedBar({
-  counts,
-  large = false,
-  onPlatePress
-}: {
-  counts: PlateCounts;
-  large?: boolean;
-  onPlatePress?: (plate: PlateWeight) => void;
-}) {
-  const { palette, styles } = useStyles();
-  function renderPlate(side: "left" | "right", plate: PlateWeight, index: number) {
-    const plateView = <View style={[styles.plate, plateVisuals[plate], large && styles.plateLarge]} />;
-    if (!onPlatePress) return <View key={`${side}-${plate}-${index}`}>{plateView}</View>;
-    return (
-      <Pressable
-        key={`${side}-${plate}-${index}`}
-        accessibilityLabel={`Remove ${plate} lb plate from bar`}
-        hitSlop={touchHitSlop}
-        onPress={() => onPlatePress(plate)}
-        style={pressableFeedback(styles.loadedPlateHandle)}
-      >
-        {plateView}
-      </Pressable>
-    );
-  }
-
-  return (
-    <View style={[styles.loadedBar, large && styles.loadedBarLarge]}>
-      <View style={[styles.plateStack, styles.plateStackLeft]}>
-        {[...plateWeights].reverse().flatMap((plate) => plateCopies(counts[plate]).map((_, index) => renderPlate("left", plate, index)))}
-      </View>
-      <View style={styles.sleeve} />
-      <View style={[styles.shaft, large && styles.shaftLarge]} />
-      <View style={styles.sleeve} />
-      <View style={[styles.plateStack, styles.plateStackRight]}>
-        {plateWeights.flatMap((plate) => plateCopies(counts[plate]).map((_, index) => renderPlate("right", plate, index)))}
-      </View>
-    </View>
-  );
-}
-
 function normalizePlateCounts(counts: Record<string, number>): PlateCounts {
   return plateWeights.reduce<PlateCounts>((output, plate) => {
     output[plate] = Math.max(0, Number(counts[plate] ?? 0));
@@ -460,28 +411,12 @@ function calculateLoadedBarWeight(currentBarWeight: string, counts: PlateCounts)
   return bar + plateWeights.reduce((total, plate) => total + plate * counts[plate] * 2, 0);
 }
 
-function calculatePlateCounts(totalLoad: string, currentBarWeight: string) {
-  let remainingPerSide = Math.max(0, (parseLoad(totalLoad) - parseLoad(currentBarWeight)) / 2);
-  return plateWeights.reduce<PlateCounts>((counts, plate) => {
-    const count = Math.floor((remainingPerSide + Number.EPSILON) / plate);
-    counts[plate] = count;
-    remainingPerSide -= count * plate;
-    return counts;
-  }, createEmptyPlateCounts());
-}
 
-function parseLoad(value: string) {
-  const parsed = Number(String(value).trim().replace(",", "."));
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
-}
 
 function formatLoadedBarWeight(weight: number) {
   return weight.toFixed(1).replace(".0", "");
 }
 
-function plateCopies(count: number) {
-  return Array.from({ length: Math.min(5, Math.max(0, Number(count) || 0)) });
-}
 
 function isPositiveInteger(value: unknown) {
   return Number.isInteger(value) && Number(value) > 0;
@@ -846,15 +781,6 @@ const useStyles = createThemedStyles((palette) => StyleSheet.create({
     justifyContent: "center",
     ...fastTouchStyle
   },
-  loadedBar: {
-    minHeight: 42,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center"
-  },
-  loadedBarLarge: {
-    minHeight: 62
-  },
   barDropZone: {
     minHeight: 68,
     borderRadius: 8,
@@ -863,41 +789,6 @@ const useStyles = createThemedStyles((palette) => StyleSheet.create({
     backgroundColor: palette.surface,
     alignItems: "center",
     justifyContent: "center"
-  },
-  plateStack: {
-    minWidth: 28,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 1
-  },
-  plateStackLeft: {
-    justifyContent: "flex-end"
-  },
-  plateStackRight: {
-    justifyContent: "flex-start"
-  },
-  plate: {
-    borderRadius: 2
-  },
-  plateLarge: {
-    transform: [{ scaleY: 1.18 }]
-  },
-  loadedPlateHandle: {
-    borderRadius: 4,
-    ...fastTouchStyle
-  },
-  sleeve: {
-    width: 10,
-    height: 8,
-    backgroundColor: palette.ink
-  },
-  shaft: {
-    width: 44,
-    height: 5,
-    backgroundColor: palette.muted
-  },
-  shaftLarge: {
-    width: 94
   },
   plateControls: {
     borderRadius: 12,

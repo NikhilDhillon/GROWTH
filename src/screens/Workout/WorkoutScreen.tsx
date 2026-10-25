@@ -47,6 +47,7 @@ export function WorkoutScreen() {
   const bodyWeightUnit = useFitnessStore((state) => state.bodyUnitPreferences.weight);
   const machineProfiles = useFitnessStore((state) => state.machineProfiles);
   const saveWorkout = useFitnessStore((state) => state.saveWorkout);
+  const createCustomExercise = useFitnessStore((state) => state.createCustomExercise);
   const saveMachineProfile = useFitnessStore((state) => state.saveMachineProfile);
   const deleteMachineProfile = useFitnessStore((state) => state.deleteMachineProfile);
   const preferredUnitSystem = useFitnessStore((state) => state.unitSystem);
@@ -142,7 +143,7 @@ export function WorkoutScreen() {
   }, [exerciseId, exercises, ready]);
 
   const selectedExercise = allExercises.find((exercise) => exercise.id === exerciseId) ?? null;
-  const selectedLoadType = getExerciseLoadType(selectedExercise?.name ?? "");
+  const selectedLoadType = getExerciseLoadType(selectedExercise ?? "");
   const showBarbellCalculator = supportsBarbellCalculator(selectedExercise?.name ?? "");
   const selectedBodyWeight = isBodyweightLoadType(selectedLoadType) ? getClosestBodyweightForDate(workoutDate, bodyWeightLogs) : null;
   const selectedMachineProfile = machineProfiles.find((profile) => profile.id === selectedMachineProfileId) ?? null;
@@ -305,8 +306,9 @@ export function WorkoutScreen() {
       {recovery.recoveryError ? <Panel><Body accessibilityRole="alert">{recovery.recoveryError}</Body><Pressable accessibilityRole="button" onPress={() => void recovery.reloadDraft().catch((error) => setWorkoutError(error.message))} style={pressableFeedback(styles.primaryButton)}><Body style={styles.primaryButtonText}>Reload saved draft</Body></Pressable></Panel> : null}
       {ready && exerciseId !== null && !selectedExercise ? <Panel><Body accessibilityRole="alert">This draft refers to an unavailable exercise. Its entered values are preserved; choose a valid exercise to continue.</Body></Panel> : null}
       <Panel>
-        <SearchableExercisePicker exercises={exercises} selectedId={exerciseId} disabled={locked} onSelect={(id) => {
-          const exercise = exercises.find((item) => item.id === id);
+        <SearchableExercisePicker exercises={exercises} selectedId={exerciseId} disabled={locked} onCreate={createCustomExercise} onSelect={(id) => {
+          // The store already lists an exercise created a moment ago; this render may not.
+          const exercise = useFitnessStore.getState().exercises.find((item) => item.id === id);
           if (exercise) return selectExercise(id, exercise.primary_muscle);
         }} />
 

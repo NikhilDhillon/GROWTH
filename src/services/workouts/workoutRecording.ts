@@ -3,6 +3,7 @@ import { parseObservedSets } from "@/domain/observations";
 import { WorkoutValidationError, WorkoutWriteInput } from "@/database/workoutWrite";
 import { getExerciseLoadType } from "@/constants/exercises";
 import { assertGuidedObservationsConfirmed } from "@/services/guidedWorkout/guidedObservationService";
+import { finalizeSetCapture } from "@/services/workouts/setCapture";
 import type { Exercise, LoggedSetDraft, UnitSystem } from "@/types";
 
 export type ObservationCapture = {
@@ -19,7 +20,7 @@ export function prepareWorkoutObservations(input: ObservationCapture, exercise: 
       exerciseId: input.exerciseId, workoutDate, machineProfileId: input.machineProfileId, unitSystem: unit
     });
     return { exerciseId: input.exerciseId, workoutDate, notes: input.notes, machineProfileId: input.machineProfileId ?? null,
-      inputUnit: unit, recordingOrigin: input.origin, sets: parseObservedSets(input.sets, unit, getExerciseLoadType(exercise.name)) };
+      inputUnit: unit, recordingOrigin: input.origin, sets: parseObservedSets(input.sets.map(finalizeSetCapture), unit, getExerciseLoadType(exercise)) };
   } catch (error) {
     throw new WorkoutValidationError(error instanceof Error ? error.message : "Check the entered observations.");
   }

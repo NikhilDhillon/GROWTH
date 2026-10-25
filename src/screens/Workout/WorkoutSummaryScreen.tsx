@@ -15,7 +15,7 @@ import { growthMetricVersion } from "@/services/strength/strengthService";
 import { savedWorkoutSummary, SavedWorkoutSummaryParams } from "@/services/workouts/savedWorkoutSummary";
 import { ExerciseEntry } from "@/domain/types";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { ExerciseScorePoint, UnitSystem } from "@/types";
+import { Exercise, ExerciseScorePoint, UnitSystem } from "@/types";
 import { groupSetsForDisplay } from "@/utils/sessionDisplay";
 import { createThemedStyles } from "@/utils/themedStyles";
 import { spacing } from "@/utils/theme";
@@ -131,7 +131,7 @@ export function WorkoutSummaryScreen() {
             </View>
             {guidance ? <Label>{guidedCategoryLabels[guidance.category]}</Label> : null}
           </View>
-          <Body style={styles.setsText}>{formatSets(entry, unitSystem, catalogExercise?.name)}</Body>
+          <Body style={styles.setsText}>{formatSets(entry, unitSystem, catalogExercise)}</Body>
           {entry.machineProfileId ? <Label>{machineProfiles.find((profile) => profile.id === entry.machineProfileId)?.label ?? "Recorded machine"}</Label> : null}
           {guidance?.messages.length ? <View><Label>{workoutReferences?.some((reference) => reference.sessionId === entry.id && reference.prescription) ? "Recorded target comparison" : "Guidance at completion"}</Label>{guidance.messages.map((message) => <Body key={message}>{message}</Body>)}</View> : null}
           {scored ? <PerformanceLine result={scored} unitSystem={unitSystem} /> : null}
@@ -222,8 +222,8 @@ function performanceForEntry(entry: ExerciseEntry, points: ExerciseScorePoint[])
   };
 }
 
-function formatSets(entry: ExerciseEntry, unitSystem: UnitSystem, exerciseName?: string) {
-  const loadType = exerciseName ? getExerciseLoadType(exerciseName) : null;
+function formatSets(entry: ExerciseEntry, unitSystem: UnitSystem, exercise?: Exercise) {
+  const loadType = exercise ? getExerciseLoadType(exercise) : null;
   const loadLabel = loadType === "bodyweight_plus_load" ? "added " : loadType === "bodyweight_minus_assistance" ? "assistance " : "";
   return groupSetsForDisplay(entry.sets.map((set) => ({ reps: set.reps, weight: set.loadLb, isWarmup: set.isWarmup })), (load) => `${loadLabel}${formatWeight(load, unitSystem)}`)
     .map((group) => `${group.warmup ? "Warm-up " : ""}${group.load} × ${group.reps.join(" · ")}`).join(", ");

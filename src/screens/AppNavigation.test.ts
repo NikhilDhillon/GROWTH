@@ -41,7 +41,7 @@ async function loadApp() {
     ["BodyCheckIn", "BodyCheckInScreen"], ["Progress", "ProgressScreen"], ["Settings", "SettingsScreen"],
     ["Settings", "GuidedWorkoutSettingsScreen"], ["Auth", "AuthScreen"], ["Logs", "LogsScreen"], ["Social", "SocialScreen"],
     ["Workout", "GuidedWorkoutScreen"], ["Workout", "WorkoutSummaryScreen"]
-  ]) vi.doMock(`@/screens/${folder}/${name}`, () => ({ [name]: name }));
+  ]) vi.doMock(`@/screens/${folder}/${name}`, () => ({ [name]: name, ...(name === "GuidedWorkoutScreen" ? { FlowWorkoutScreen: "FlowWorkoutScreen" } : {}) }));
   return (await import("../../App")).default;
 }
 

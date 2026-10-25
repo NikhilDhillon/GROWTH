@@ -200,7 +200,7 @@ export function LogsScreen() {
 
   function renderEditForm(log: PreviousLog) {
     if (!editingWorkout) return null;
-    const loadType = getExerciseLoadType(log.exerciseName);
+    const loadType = log.loadType;
     return (
       <View style={styles.editForm}>
         <View style={styles.summaryRow}>

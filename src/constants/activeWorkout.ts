@@ -1,7 +1,8 @@
-import { ActiveWorkout, ActiveWorkoutExerciseDraft, CompletedGuidedWorkout, MuscleGroup, SplitMuscle, TrainingSplitDay } from "@/types";
+import { ActiveWorkout, ActiveWorkoutExerciseDraft, CompletedGuidedWorkout, MuscleGroup, SplitMuscle, TrainingSplitDay, WorkoutRest, WorkoutSlot } from "@/types";
 import { todayIso } from "@/utils/date";
 import { calendarWeekday } from "@/domain/calendar";
 import { createRequestId } from "@/utils/requestId";
+import { normalizeWorkoutSlots } from "@/services/workouts/workoutSlots";
 
 export function emptyActiveExercise(): ActiveWorkoutExerciseDraft {
   return {
@@ -20,7 +21,7 @@ export function todaySplitDay(days: TrainingSplitDay[]) {
   return days.find((day) => day.key === dayKey) ?? days[0];
 }
 
-export function createActiveWorkout(day: TrainingSplitDay, workoutLabel?: string, templateId?: string): ActiveWorkout {
+export function createActiveWorkout(day: TrainingSplitDay, workoutLabel?: string, templateId?: string, slots: WorkoutSlot[] = []): ActiveWorkout {
   const workoutDate = todayIso();
   const todayDayKey = calendarWeekday(workoutDate);
   return {
@@ -34,6 +35,8 @@ export function createActiveWorkout(day: TrainingSplitDay, workoutLabel?: string
     ...(templateId ? { templateId } : {}),
     plannedMuscles: [...day.muscles],
     completedExercises: [],
+    slots,
+    rest: null,
     currentExercise: emptyActiveExercise(),
     pendingMuscle: null,
     schedulePrompt: null,
@@ -79,6 +82,8 @@ export function normalizeActiveWorkout(value: unknown): ActiveWorkout | null {
     templateId: typeof input.templateId === "string" ? input.templateId : undefined,
     plannedMuscles: normalizedPlannedMuscles,
     completedExercises: Array.isArray(input.completedExercises) ? input.completedExercises : [],
+    ...(input.slots !== undefined ? { slots: normalizeWorkoutSlots(input.slots) ?? [] } : {}),
+    ...(input.rest !== undefined ? { rest: normalizeWorkoutRest(input.rest) } : {}),
     currentExercise: normalizeActiveExercise(input.currentExercise),
     pendingMuscle: input.pendingMuscle ?? null,
     schedulePrompt: input.schedulePrompt === "off_plan" || input.schedulePrompt === "replace" ? input.schedulePrompt : null,
@@ -94,6 +99,7 @@ function normalizeActiveExercise(value: unknown): ActiveWorkoutExerciseDraft {
     ...input,
     prescription: input.prescription,
     muscle: input.muscle ?? null,
+    slotId: typeof input.slotId === "string" ? input.slotId : undefined,
     requestId: typeof input.requestId === "string" ? input.requestId : undefined,
     requestUnit: input.requestUnit === "lb" || input.requestUnit === "kg" ? input.requestUnit : undefined,
     exerciseId: typeof input.exerciseId === "number" ? input.exerciseId : null,
@@ -102,6 +108,17 @@ function normalizeActiveExercise(value: unknown): ActiveWorkoutExerciseDraft {
     notes: typeof input.notes === "string" ? input.notes : "",
     barWeight: typeof input.barWeight === "string" ? input.barWeight : defaults.barWeight,
     plateCounts: input.plateCounts && typeof input.plateCounts === "object" ? input.plateCounts : defaults.plateCounts
+  };
+}
+
+function normalizeWorkoutRest(value: unknown): WorkoutRest | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Partial<WorkoutRest>;
+  if (typeof input.startedAt !== "string" || !Number.isFinite(Date.parse(input.startedAt)) || !Number.isSafeInteger(input.seconds) || Number(input.seconds) <= 0) return null;
+  return {
+    startedAt: input.startedAt, seconds: Number(input.seconds),
+    exerciseId: Number.isSafeInteger(input.exerciseId) ? input.exerciseId : null,
+    setIndex: Number.isSafeInteger(input.setIndex) && Number(input.setIndex) >= 0 ? input.setIndex : null
   };
 }
 

@@ -4,12 +4,14 @@ import { emptyActiveExercise, normalizeActiveWorkout, normalizeCompletedGuidedWo
 import { catalogExercises } from "@/constants/exercises";
 import { normalizeGuidedWorkoutPreferences } from "@/constants/guidedWorkout";
 import { normalizeMachineProfiles } from "@/constants/machineProfiles";
+import { normalizeTemplateExercises } from "@/services/workouts/templateExercises";
+import { assertCustomExercise, customExerciseLimit, existingExerciseNamed, isCustomExercise } from "@/services/workouts/customExercises";
 import { createDefaultTrainingSplit, normalizeTrainingSplit, upgradeUncustomisedTrainingSplit } from "@/constants/trainingSplit";
 import { migrateLegacyBodyMeasurements } from "@/database/bodyMigration";
-import { assertWorkoutWrite, matchesWorkoutWritePayload, sameStoredJson, WorkoutWriteInput, workoutWritePayload } from "@/database/workoutWrite";
+import { assertWorkoutWrite, editedSetCaptureColumns, matchesWorkoutWritePayload, sameStoredJson, setCaptureColumns, WorkoutWriteInput, workoutWritePayload } from "@/database/workoutWrite";
 import { baseSchema } from "@/database/schema";
 import { buildWorkoutFingerprint, ImportBodyMeasurementLog, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
-import { ActiveWorkout, BodyMeasurementLog, BodyMeasurementValues, BodyUnitPreferences, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, MachineProfile, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyMeasurementLog, BodyMeasurementValues, BodyUnitPreferences, BodyWeightLog, CompletedGuidedWorkout, CustomExerciseInput, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, MachineProfile, MuscleStrengthConfig, SocialData, TemplateExercises, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { defaultBodyUnitPreferences, normalizeBodyMeasurementLog, normalizeBodyUnitPreferences, parseStoredMeasurements } from "@/utils/bodyMeasurements";
 import { assertCalendarDate } from "@/domain/calendar";
 import { assertBodyCheckInWrite, BodyCheckInConflictError, BodyCheckInWriteInput, bodyCheckInObservationUnits, bodyCheckInWritePayload, sameBodyCheckInSnapshot } from "@/domain/bodyCheckInRecording";
@@ -42,6 +44,7 @@ async function getDatabase(): Promise<Database> {
       await ensureBodyMeasurementSchema(db);
       await ensureWorkoutSessionSchema(db);
       await ensureWorkoutSetSchema(db);
+      await ensureExerciseSchema(db);
       await preserveLegacyCatalog(db);
       await ensureExerciseCatalog(db);
       await ensureCatalogAdditions(db);
@@ -105,6 +108,20 @@ async function ensureWorkoutSetSchema(db: Database) {
   if (!columns.some((column) => column.name === "is_warmup")) {
     await db.runAsync("ALTER TABLE workout_sets ADD COLUMN is_warmup INTEGER NOT NULL DEFAULT 0");
   }
+  if (!columns.some((column) => column.name === "performed_at")) {
+    await db.runAsync("ALTER TABLE workout_sets ADD COLUMN performed_at TEXT");
+  }
+  if (!columns.some((column) => column.name === "evidence")) {
+    await db.runAsync("ALTER TABLE workout_sets ADD COLUMN evidence TEXT CHECK (evidence IN ('typed', 'flow', 'planned', 'recalled'))");
+  }
+}
+
+async function ensureExerciseSchema(db: Database) {
+  const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(exercises)");
+  if (!columns.some((column) => column.name === "creator_id")) await db.runAsync("ALTER TABLE exercises ADD COLUMN creator_id INTEGER");
+  if (!columns.some((column) => column.name === "load_type")) {
+    await db.runAsync("ALTER TABLE exercises ADD COLUMN load_type TEXT CHECK (load_type IN ('external', 'machine_stack', 'bodyweight_plus_load', 'bodyweight_minus_assistance'))");
+  }
 }
 
 async function ensureBodyMeasurementSchema(db: Database) {
@@ -158,7 +175,7 @@ async function ensureExerciseCatalog(db: Database) {
   if ((version?.user_version ?? 0) >= 2) return;
   await db.withTransactionAsync(async () => {
     for (const exercise of catalogExercises) {
-      const existing = await db.getFirstAsync<{ id: number }>("SELECT id FROM exercises WHERE name = ?", [exercise.name]);
+      const existing = await db.getFirstAsync<{ id: number }>("SELECT id FROM exercises WHERE name = ? AND creator_id IS NULL", [exercise.name]);
       if (!existing) await db.runAsync("INSERT INTO exercises (name, primary_muscle, secondary_muscle, is_strength_exercise, created_at) VALUES (?, ?, ?, 0, ?)",
         [exercise.name, exercise.primary_muscle, exercise.secondary_muscle ?? null, new Date().toISOString()]);
     }
@@ -172,7 +189,7 @@ async function ensureCatalogAdditions(db: Database) {
 
   const timestamp = new Date().toISOString();
   for (const exercise of catalogExercises) {
-    const existing = await db.getFirstAsync<{ id: number }>("SELECT id FROM exercises WHERE name = ?", [exercise.name]);
+    const existing = await db.getFirstAsync<{ id: number }>("SELECT id FROM exercises WHERE name = ? AND creator_id IS NULL", [exercise.name]);
     if (!existing) {
       await db.runAsync(
         "INSERT INTO exercises (name, primary_muscle, secondary_muscle, is_strength_exercise, created_at) VALUES (?, ?, ?, 0, ?)",
@@ -193,7 +210,7 @@ export async function loadCurrentUser(): Promise<User | null> {
 
 export async function loadAllData() {
   const db = await getDatabase();
-  const [currentUser, unitSetting, bodyUnitSetting, trainingSplitSetting, activeWorkoutSetting, guidedWorkoutSetting, completedWorkoutsSetting, machineProfilesSetting] = await Promise.all([
+  const [currentUser, unitSetting, bodyUnitSetting, trainingSplitSetting, activeWorkoutSetting, guidedWorkoutSetting, completedWorkoutsSetting, machineProfilesSetting, templateExercisesSetting] = await Promise.all([
     db.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1"),
     db.getFirstAsync<{ value: UnitSystem }>("SELECT value FROM app_settings WHERE key = ?", ["unit_system"]),
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["body_unit_preferences"]),
@@ -201,7 +218,8 @@ export async function loadAllData() {
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["active_workout"]),
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["guided_workout_preferences"]),
     db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["completed_guided_workouts"]),
-    db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["machine_profiles"])
+    db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["machine_profiles"]),
+    db.getFirstAsync<{ value: string }>("SELECT value FROM app_settings WHERE key = ?", ["workout_template_exercises"])
   ]);
   const [exercises, sessions, sets, bodyMeasurementRows, configs, recordRows, referenceRows, recoveredSetting] = await Promise.all([
     db.getAllAsync<Exercise>(
@@ -212,7 +230,9 @@ export async function loadAllData() {
         exercises.primary_muscle,
         exercises.secondary_muscle,
         COALESCE(user_exercise_preferences.enabled, 0) as is_strength_exercise,
-        exercises.created_at
+        exercises.created_at,
+        exercises.creator_id,
+        exercises.load_type
       FROM exercises
       LEFT JOIN user_exercise_preferences
         ON user_exercise_preferences.exercise_id = exercises.id
@@ -240,13 +260,14 @@ export async function loadAllData() {
   const completedGuidedWorkouts = normalizeCompletedGuidedWorkouts(completedWorkoutsSetting?.value ? JSON.parse(completedWorkoutsSetting.value) : null);
   const workoutArchiveEvidence: unknown = completedWorkoutsSetting?.value ? JSON.parse(completedWorkoutsSetting.value) : [];
   const machineProfiles = normalizeMachineProfiles(machineProfilesSetting?.value ? JSON.parse(machineProfilesSetting.value) : null);
+  const templateExercises = normalizeTemplateExercises(templateExercisesSetting?.value ? JSON.parse(templateExercisesSetting.value) : null);
   const workoutRecords = recordRows.map((row) => JSON.parse(row.value) as WorkoutRecord);
   const workoutReferences: WorkoutEntryReference[] = referenceRows.map((row) => ({
     workoutId: row.workout_id, sessionId: row.session_id,
     prescription: row.prescription ? JSON.parse(row.prescription) : null, completedAt: row.completed_at
   }));
   const recoveredWorkoutDrafts: RecoveredWorkoutDraft[] = recoveredSetting ? JSON.parse(recoveredSetting.value) : [];
-  return { exercises, sessions, sets, bodyMeasurementLogs, configs, currentUser: currentUser ?? null, unitSystem, bodyUnitPreferences, trainingSplit, activeWorkout, activeWorkoutSnapshot, guidedWorkoutPreferences, completedGuidedWorkouts, workoutArchiveEvidence, machineProfiles, workoutRecords, workoutReferences, recoveredWorkoutDrafts };
+  return { exercises, sessions, sets, bodyMeasurementLogs, configs, currentUser: currentUser ?? null, unitSystem, bodyUnitPreferences, trainingSplit, activeWorkout, activeWorkoutSnapshot, guidedWorkoutPreferences, completedGuidedWorkouts, workoutArchiveEvidence, machineProfiles, templateExercises, workoutRecords, workoutReferences, recoveredWorkoutDrafts };
 }
 
 export async function registerUser(input: { name: string; email: string; password: string }) {
@@ -309,6 +330,32 @@ export async function setExerciseEnabled(exerciseId: number, enabled: boolean) {
   );
 }
 
+export async function createCustomExercise(input: CustomExerciseInput): Promise<Exercise> {
+  const exercise = assertCustomExercise(input);
+  const db = await getDatabase();
+  let created: Exercise | null = null;
+  await db.withExclusiveTransactionAsync(async (tx) => {
+    const currentUser = await tx.getFirstAsync<User>("SELECT users.* FROM users INNER JOIN auth_session ON auth_session.user_id = users.id WHERE auth_session.id = 1");
+    if (!currentUser) throw new Error("Please log in again.");
+    // On-device data is shared by every local account, so names are unique on the device.
+    const existing = existingExerciseNamed(await tx.getAllAsync<Exercise>("SELECT * FROM exercises"), exercise.name);
+    if (existing && !isCustomExercise(existing)) throw new Error(`${existing.name} is already in the exercise list.`);
+    if (existing) {
+      if (existing.primary_muscle !== exercise.primaryMuscle || existing.load_type !== exercise.loadType) throw new Error(`You already have an exercise named ${existing.name}.`);
+      created = { ...existing, is_strength_exercise: 0 };
+      return;
+    }
+    const count = await tx.getFirstAsync<{ count: number }>("SELECT COUNT(*) AS count FROM exercises WHERE creator_id IS NOT NULL");
+    if ((count?.count ?? 0) >= customExerciseLimit) throw new Error(`You can keep up to ${customExerciseLimit} personal exercises.`);
+    const timestamp = new Date().toISOString();
+    const result = await tx.runAsync("INSERT INTO exercises (name, primary_muscle, secondary_muscle, is_strength_exercise, created_at, creator_id, load_type) VALUES (?, ?, NULL, 0, ?, ?, ?)",
+      [exercise.name, exercise.primaryMuscle, timestamp, currentUser.id, exercise.loadType]);
+    created = { id: result.lastInsertRowId, name: exercise.name, primary_muscle: exercise.primaryMuscle, secondary_muscle: null, is_strength_exercise: 0,
+      created_at: timestamp, creator_id: currentUser.id, load_type: exercise.loadType };
+  });
+  return created!;
+}
+
 type Transaction = Pick<Database, "getFirstAsync" | "getAllAsync" | "runAsync">;
 async function workoutReceipt(tx: Transaction, input: WorkoutWriteInput): Promise<number | null> {
   const receipt = input.requestId ? await tx.getFirstAsync<{ session_id: number | null; payload: string }>("SELECT session_id, payload FROM workout_write_requests WHERE request_id = ?", [input.requestId]) : null;
@@ -322,9 +369,12 @@ async function insertWorkoutEntry(tx: Transaction, input: WorkoutWriteInput): Pr
   const timestamp = `${input.workoutDate}T12:00:00.000Z`;
   const session = await tx.runAsync("INSERT INTO workout_sessions (workout_date, notes, machine_profile_id, input_unit, recording_origin, created_at) VALUES (?, ?, ?, ?, ?, ?)", [input.workoutDate, input.notes, input.machineProfileId ?? null, input.inputUnit ?? null, input.recordingOrigin ?? null, timestamp]);
   const sessionId = session.lastInsertRowId;
-  for (const [index, set] of input.sets.entries()) await tx.runAsync(
-    "INSERT INTO workout_sets (session_id, exercise_id, set_number, reps, weight, rir, is_warmup, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    [sessionId, input.exerciseId, index + 1, set.reps, set.weight, null, set.isWarmup ? 1 : 0, timestamp]);
+  for (const [index, set] of input.sets.entries()) {
+    const capture = setCaptureColumns(set);
+    await tx.runAsync(
+      "INSERT INTO workout_sets (session_id, exercise_id, set_number, reps, weight, rir, is_warmup, performed_at, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [sessionId, input.exerciseId, index + 1, set.reps, set.weight, null, set.isWarmup ? 1 : 0, capture.performed_at, capture.evidence, timestamp]);
+  }
   if (input.requestId) await tx.runAsync("INSERT INTO workout_write_requests (request_id, session_id, payload) VALUES (?, ?, ?)", [input.requestId, sessionId, workoutWritePayload(input)]);
   return sessionId;
 }
@@ -480,12 +530,14 @@ export async function updateWorkoutSession(input: WorkoutWriteInput & { sessionI
     const existing = await tx.getFirstAsync<{ id: number }>("SELECT id FROM workout_sessions WHERE id = ?", [input.sessionId]);
     if (!existing) throw new Error("This workout no longer exists. Reload before editing it.");
     await tx.runAsync("UPDATE workout_sessions SET workout_date = ?, notes = ?, machine_profile_id = ?, input_unit = ? WHERE id = ?", [input.workoutDate, input.notes, input.machineProfileId ?? null, input.inputUnit ?? null, input.sessionId]);
+    const previous = await tx.getAllAsync<WorkoutSet>("SELECT * FROM workout_sets WHERE session_id = ? ORDER BY set_number", [input.sessionId]);
     await tx.runAsync("DELETE FROM workout_sets WHERE session_id = ?", [input.sessionId]);
 
     for (const [index, set] of input.sets.entries()) {
+      const capture = editedSetCaptureColumns(previous[index], set);
       await tx.runAsync(
-        "INSERT INTO workout_sets (session_id, exercise_id, set_number, reps, weight, rir, is_warmup, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [input.sessionId, input.exerciseId, index + 1, set.reps, set.weight, null, set.isWarmup ? 1 : 0, timestamp]
+        "INSERT INTO workout_sets (session_id, exercise_id, set_number, reps, weight, rir, is_warmup, performed_at, evidence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [input.sessionId, input.exerciseId, index + 1, set.reps, set.weight, null, set.isWarmup ? 1 : 0, capture.performed_at, capture.evidence, timestamp]
       );
     }
   });
@@ -807,6 +859,13 @@ export async function saveMachineProfiles(profiles: MachineProfile[]) {
   const db = await getDatabase();
   const normalized = normalizeMachineProfiles(profiles);
   await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["machine_profiles", JSON.stringify(normalized)]);
+  return normalized;
+}
+
+export async function saveTemplateExercises(templateExercises: TemplateExercises) {
+  const db = await getDatabase();
+  const normalized = normalizeTemplateExercises(templateExercises);
+  await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["workout_template_exercises", JSON.stringify(normalized)]);
   return normalized;
 }
 

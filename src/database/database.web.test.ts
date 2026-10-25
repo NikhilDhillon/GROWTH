@@ -311,6 +311,70 @@ describe("single browser storage commits", () => {
     expect((await web.loadAllData()).sessions).toEqual(localData().sessions);
   });
 
+  it("stores set capture metadata and keeps it for sets a history edit leaves unchanged", async () => {
+    const web = await adapter();
+    const performedAt = "2026-07-01T18:02:00.000Z";
+    const id = await web.logWorkout({ ...input(), sets: [{ reps: 8, weight: 100, performedAt, evidence: "flow" }, { reps: 7, weight: 100, evidence: "typed" }] });
+    const captured = (await web.loadAllData()).sets.filter((set) => set.session_id === id);
+    expect(captured.map((set) => [set.performed_at, set.evidence])).toEqual([[performedAt, "flow"], [null, "typed"]]);
+    // A retry payload is the observation only, so the same attempt still resolves to the same entry.
+    expect(await web.logWorkout({ ...input(), sets: [{ reps: 8, weight: 100 }, { reps: 7, weight: 100 }] })).toBe(id);
+
+    await web.updateWorkoutSession({ ...input(), sessionId: id, sets: [{ reps: 8, weight: 100, evidence: "typed" }, { reps: 6, weight: 100, evidence: "typed" }, { reps: 5, weight: 100 }] });
+    const edited = (await web.loadAllData()).sets.filter((set) => set.session_id === id).sort((a, b) => a.set_number - b.set_number);
+    expect(edited.map((set) => [set.reps, set.performed_at, set.evidence])).toEqual([[8, performedAt, "flow"], [6, null, "typed"], [5, null, "typed"]]);
+  });
+
+  it("remembers template exercises across reloads, locally and in the cloud", async () => {
+    const remembered = { "Chest+Triceps": [{ exerciseId: 1, machineProfileId: null }, { exerciseId: 2, machineProfileId: "cable-left" }] };
+    await (await adapter()).saveTemplateExercises(remembered);
+    expect((await (await adapter()).loadAllData()).templateExercises).toEqual(remembered);
+
+    const upsert = vi.fn().mockResolvedValue({ error: null });
+    client.auth.getUser.mockResolvedValue({ data: { user: cloudUser }, error: null });
+    client.from.mockReturnValue({ upsert });
+    await (await adapter(true)).saveTemplateExercises(remembered);
+    expect(upsert).toHaveBeenCalledWith({ user_id: cloudUser.id, key: "workout_template_exercises", value: JSON.stringify(remembered) }, { onConflict: "user_id,key" });
+  });
+
+  it("adds a personal exercise once, with its own load type, and never repeats a catalog name", async () => {
+    const web = await adapter();
+    const created = await web.createCustomExercise({ name: "  Landmine   Press ", primaryMuscle: "Chest", loadType: "bodyweight_plus_load" });
+    expect(created).toMatchObject({ name: "Landmine Press", primary_muscle: "Chest", creator_id: 1, load_type: "bodyweight_plus_load" });
+    expect(created.id).toBeGreaterThan(Math.max(...localData().exercises.map((exercise) => exercise.id)));
+    expect(await (await adapter()).createCustomExercise({ name: "landmine press", primaryMuscle: "Chest", loadType: "bodyweight_plus_load" })).toMatchObject({ id: created.id });
+    await expect(web.createCustomExercise({ name: "Landmine Press", primaryMuscle: "Back", loadType: "external" })).rejects.toThrow("You already have an exercise named Landmine Press.");
+    await expect(web.createCustomExercise({ name: "barbell bench press", primaryMuscle: "Chest", loadType: "external" })).rejects.toThrow("Barbell Bench Press is already in the exercise list.");
+    const reloaded = await (await adapter()).loadAllData();
+    expect(reloaded.exercises.filter((exercise) => exercise.creator_id != null)).toEqual([expect.objectContaining({ id: created.id, name: "Landmine Press", load_type: "bodyweight_plus_load" })]);
+  });
+
+  it("still adds a new catalog movement that shares a personal exercise's name", async () => {
+    const catalog = localData().exercises;
+    const missing = catalog.at(-1)!;
+    storage.set(key, JSON.stringify({ ...localData(), exercises: [...catalog.slice(0, -1), { ...missing, id: 900, creator_id: 1, load_type: "external" }] }));
+    const named = (await (await adapter()).loadAllData()).exercises.filter((exercise) => exercise.name === missing.name);
+    expect(named).toHaveLength(2);
+    expect(named.filter((exercise) => exercise.creator_id == null)).toHaveLength(1);
+  });
+
+  it("creates cloud personal exercises on the server and shows their display name", async () => {
+    client.rpc.mockResolvedValue({ data: { id: 501, name: "personal:501", display_name: "Landmine Press", primary_muscle: "Chest", secondary_muscle: null,
+      is_strength_exercise: 0, created_at: timestamp, creator_id: cloudUser.id, load_type: "external" }, error: null });
+    const created = await (await adapter(true)).createCustomExercise({ name: "Landmine Press", primaryMuscle: "Chest", loadType: "external" });
+    expect(client.rpc).toHaveBeenCalledWith("create_custom_exercise", { p_name: "Landmine Press", p_primary_muscle: "Chest", p_load_type: "external" });
+    expect(created).toMatchObject({ id: 501, name: "Landmine Press", creator_id: cloudUser.id, load_type: "external" });
+    expect(created).not.toHaveProperty("display_name");
+    client.rpc.mockResolvedValue({ data: null, error: null });
+    await expect((await adapter(true)).createCustomExercise({ name: "Landmine Press", primaryMuscle: "Chest", loadType: "external" })).rejects.toThrow("did not confirm");
+  });
+
+  it("leaves capture metadata unknown on observations recorded without it", async () => {
+    const web = await adapter();
+    const id = await web.logWorkout(input());
+    expect((await web.loadAllData()).sets.filter((set) => set.session_id === id).map((set) => [set.performed_at, set.evidence])).toEqual([[null, null], [null, null]]);
+  });
+
   it.each(["finish", "discard"])("does not resurrect a %s draft through a delayed browser write", async (action) => {
     const web = await adapter();
     await web.finalizeActiveWorkout(workout().startedAt, action === "finish" ? [completed()] : null, workout());

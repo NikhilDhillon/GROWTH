@@ -11,7 +11,7 @@ import { Body, Label, SectionTitle } from "@/components/Text";
 import { categoryForExercise, guidedCategoryLabels } from "@/constants/guidedWorkout";
 import { ImportPreview, parseImportData } from "@/services/import/importService";
 import { useFitnessStore } from "@/store/useFitnessStore";
-import { GuidedExerciseCategory } from "@/types";
+import { GuidedExerciseCategory, GuidedWorkoutPreferences } from "@/types";
 import { createThemedStyles } from "@/utils/themedStyles";
 import { spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback } from "@/utils/touch";
@@ -54,6 +54,13 @@ const sampleImportJson = `{
   ]
 }`;
 
+/** Flow mode's rest lengths to choose from, 1:30 to 5:00. */
+const restChoices = [90, 120, 150, 180, 240, 300];
+
+function formatRestChoice(seconds: number) {
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 export function SettingsScreen() {
   const { palette, styles } = useStyles();
   const navigation = useNavigation<{ navigate: (route: string) => void }>();
@@ -66,6 +73,11 @@ export function SettingsScreen() {
   const setBodyUnitPreferences = useFitnessStore((state) => state.setBodyUnitPreferences);
   const importTrainingData = useFitnessStore((state) => state.importTrainingData);
   const guidedWorkoutPreferences = useFitnessStore((state) => state.guidedWorkoutPreferences);
+  const saveGuidedWorkoutPreferences = useFitnessStore((state) => state.saveGuidedWorkoutPreferences);
+  const [loggingError, setLoggingError] = useState<string | null>(null);
+  // Shows a logging choice as soon as it is tapped, while it saves.
+  const [pendingLogging, setPendingLogging] = useState<Partial<GuidedWorkoutPreferences> | null>(null);
+  const logging = { ...guidedWorkoutPreferences, ...pendingLogging };
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
@@ -76,6 +88,15 @@ export function SettingsScreen() {
     category,
     count: exercises.filter((exercise) => categoryForExercise(exercise.name, guidedWorkoutPreferences) === category).length
   }));
+
+  function saveLogging(patch: Partial<GuidedWorkoutPreferences>, failure: string) {
+    const next = { ...pendingLogging, ...patch };
+    setLoggingError(null);
+    setPendingLogging(next);
+    void saveGuidedWorkoutPreferences({ ...guidedWorkoutPreferences, ...next })
+      .catch((error) => setLoggingError(error instanceof Error ? error.message : failure))
+      .finally(() => setPendingLogging((current) => current === next ? null : current));
+  }
 
   function validateImport(text: string) {
     setImportError(null);
@@ -192,6 +213,47 @@ export function SettingsScreen() {
           <Body>{guidedCounts.map(({ category, count }) => `${guidedCategoryLabels[category]}: ${count}`).join(" | ")}</Body>
           <Body>Warm-up sets never count toward progression or best sessions.</Body>
         </DetailsDisclosure>
+      </Panel>
+
+      <Panel>
+        <SectionTitle>Workout logging</SectionTitle>
+        <Body style={styles.importNotice}>
+          {logging.flowMode
+            ? "Flow mode: each set starts from your last session. Turn the dial to change weight or reps, then tap Done; rest starts on its own."
+            : "Classic: edit every set in a list, then save the exercise."}
+        </Body>
+        <View accessibilityRole="radiogroup" style={styles.unitRow}>
+          {([[true, "Flow mode"], [false, "Classic list"]] as const).map(([flowMode, label]) => (
+            <Pressable key={label} accessibilityRole="radio" accessibilityState={{ checked: logging.flowMode === flowMode }}
+              onPress={() => {
+                if (logging.flowMode === flowMode) return;
+                saveLogging({ flowMode }, "Your logging choice could not be saved. Try again.");
+              }}
+              style={[styles.unitButton, logging.flowMode === flowMode && styles.unitButtonActive]}>
+              <Body style={[styles.unitText, logging.flowMode === flowMode && styles.unitTextActive]}>{label}</Body>
+            </Pressable>
+          ))}
+        </View>
+        {logging.flowMode ? <>
+          <Label>Rest between sets</Label>
+          <View accessibilityRole="radiogroup" accessibilityLabel="Rest between sets" style={styles.unitRow}>
+            {restChoices.map((seconds) => {
+              const selected = logging.restSeconds === seconds;
+              return (
+                <Pressable key={seconds} accessibilityRole="radio" accessibilityState={{ checked: selected }}
+                  onPress={() => {
+                    if (selected) return;
+                    saveLogging({ restSeconds: seconds }, "Your rest time could not be saved. Try again.");
+                  }}
+                  style={[styles.unitButton, selected && styles.unitButtonActive]}>
+                  <Body style={[styles.unitText, selected && styles.unitTextActive]}>{formatRestChoice(seconds)}</Body>
+                </Pressable>
+              );
+            })}
+          </View>
+          <Body style={styles.importNotice}>Every rest starts here. Turning the ring during a rest changes only that rest.</Body>
+        </> : null}
+        {loggingError ? <Body accessibilityRole="alert">{loggingError}</Body> : null}
       </Panel>
 
       <Panel>

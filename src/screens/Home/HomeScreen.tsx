@@ -10,13 +10,16 @@ import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { createActiveWorkout } from "@/constants/activeWorkout";
+import { workoutRoute } from "@/navigation/appNavigation";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { WorkoutTemplate } from "@/domain/types";
-import type { ActiveWorkout, TrainingSplitDay } from "@/types";
+import type { ActiveWorkout, SplitMuscle, TrainingSplitDay } from "@/types";
 import { projectTrainingPlan } from "@/domain/planning";
 import { todaySplitDay } from "@/constants/activeWorkout";
 import { workoutTemplates } from "@/constants/workoutTemplates";
 import { SplitEditorSheet } from "@/screens/Home/SplitEditorSheet";
+import { templateExerciseKey } from "@/services/workouts/templateExercises";
+import { slotsFromTemplate } from "@/services/workouts/workoutSlots";
 import { dateToVancouverIso, formatShortDate } from "@/utils/date";
 import { dayName, nextTrainingDay, sameMuscles, scheduledDays } from "@/utils/schedule";
 import { createThemedStyles } from "@/utils/themedStyles";
@@ -38,6 +41,12 @@ export function HomeScreen() {
   const suggestedTemplate = workoutTemplates.find((template) => sameMuscles(template.muscles, suggestedMuscles)) ?? null;
   const workoutOptions = suggestedTemplate ? [suggestedTemplate, ...workoutTemplates.filter((template) => template !== suggestedTemplate)] : workoutTemplates;
   const startActiveWorkout = useFitnessStore((state) => state.startActiveWorkout);
+  const templateExercises = useFitnessStore((state) => state.templateExercises) ?? {};
+  const exercises = useFitnessStore((state) => state.exercises);
+  // A friend's exercise that is no longer shared drops out of the plan rather than showing unnamed.
+  const plannedExercises = (muscles: readonly SplitMuscle[]) => (templateExercises[templateExerciseKey(muscles)] ?? [])
+    .filter((item) => exercises.some((exercise) => exercise.id === item.exerciseId));
+  const todayPlanCount = today?.muscles.length ? plannedExercises(today.muscles).length : 0;
   const reloadSavedWorkoutDraft = useFitnessStore((state) => state.reloadSavedWorkoutDraft);
   const currentUser = useFitnessStore((state) => state.currentUser);
   const saveTrainingSplit = useFitnessStore((state) => state.saveTrainingSplit);
@@ -47,6 +56,7 @@ export function HomeScreen() {
     .filter((friend) => friend.status === "accepted" && socialData.syncMemberIds?.includes(friend.id))
     .map((friend) => friend.name);
   const navigation = useNavigation<{ navigate: (route: string, params?: { checkInId?: number }) => void }>();
+  const flowMode = useFitnessStore((state) => state.guidedWorkoutPreferences?.flowMode ?? false);
   const [showWorkoutPicker, setShowWorkoutPicker] = useState(false);
   const [showSplitEditor, setShowSplitEditor] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -66,7 +76,7 @@ export function HomeScreen() {
 
   function openWorkout() {
     if (activeWorkout) {
-      navigation.navigate("ActiveWorkout");
+      navigation.navigate(workoutRoute(flowMode));
       return;
     }
     if (todayTemplate) {
@@ -85,7 +95,8 @@ export function HomeScreen() {
       setStartError("Retry the original start or review the saved draft before choosing a different template.");
       return;
     }
-    const next = pending ?? { accountId, optionId: option.id, workout: createActiveWorkout({ key: option.id, label: option.label, muscles: option.muscles }, option.label, option.id) };
+    const next = pending ?? { accountId, optionId: option.id, workout: createActiveWorkout({ key: option.id, label: option.label, muscles: option.muscles }, option.label, option.id,
+      slotsFromTemplate(plannedExercises(option.muscles))) };
     attemptRef.current = next;
     setStartAttempt(next);
     startingRef.current = true;
@@ -97,7 +108,7 @@ export function HomeScreen() {
       attemptRef.current = null;
       setStartAttempt(null);
       setShowWorkoutPicker(false);
-      navigation.navigate("ActiveWorkout");
+      navigation.navigate(workoutRoute(flowMode));
     } catch (failure) {
       if (accountRef.current === accountId) setStartError(failure instanceof Error ? failure.message : "Could not start workout. Try again.");
     } finally {
@@ -146,7 +157,7 @@ export function HomeScreen() {
           <View style={styles.headerCopy}>
             <Label>{activeWorkout ? "In progress" : isRestDay ? "Today" : "Your next session"}</Label>
             <Title style={styles.heroTitle}>{activeWorkout ? activeWorkout.workoutLabel ?? activeWorkout.plannedMuscles.join(" / ") : today?.muscles.length ? today.muscles.join(" / ") : isRestDay ? "Rest day" : "Ready when you are"}</Title>
-            <Body>{activeWorkout ? `${formatElapsedWorkoutTime(activeWorkout.startedAt, clock)} elapsed` : today?.muscles.length ? `${today.label} · Saved schedule` : isRestDay && nextDay ? `Recover today. Next up: ${dayName(nextDay.key)} · ${nextDay.muscles.join(" / ")}` : "Choose a workout to get started"}</Body>
+            <Body>{activeWorkout ? `${formatElapsedWorkoutTime(activeWorkout.startedAt, clock)} elapsed` : today?.muscles.length ? `${today.label} · ${todayPlanCount ? `${todayPlanCount} ${todayPlanCount === 1 ? "exercise" : "exercises"} planned` : "Saved schedule"}` : isRestDay && nextDay ? `Recover today. Next up: ${dayName(nextDay.key)} · ${nextDay.muscles.join(" / ")}` : "Choose a workout to get started"}</Body>
           </View>
           <View style={styles.heroIcon}>{activeWorkout ? <Timer size={26} color={palette.accent} /> : <Dumbbell size={26} color={palette.accent} />}</View>
         </View>

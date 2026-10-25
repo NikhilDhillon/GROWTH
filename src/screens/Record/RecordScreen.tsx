@@ -9,6 +9,7 @@ import { Body, SectionTitle } from "@/components/Text";
 import { getExerciseLoadType } from "@/constants/exercises";
 import { isCalendarDate } from "@/domain/calendar";
 import { createBodyCheckInDraft, createBodyCheckInRequest, editedBodyCheckInDraft, type BodyCheckInRecordingInput } from "@/screens/BodyCheckIn/bodyCheckInForm";
+import { workoutRoute } from "@/navigation/appNavigation";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import type { BodyMeasurementLog, Exercise, UnitSystem, WorkoutSession, WorkoutSet } from "@/types";
 import { formatCompactDate, todayIso } from "@/utils/date";
@@ -27,6 +28,7 @@ const recentLimit = 6;
 export function RecordScreen() {
   const { palette, styles } = useStyles();
   const navigation = useNavigation<{ navigate: (name: string, params?: { checkInId?: number; exerciseId?: number }) => void; setParams: (params: { logged?: string }) => void }>();
+  const flowMode = useFitnessStore((state) => state.guidedWorkoutPreferences?.flowMode ?? false);
   const route = useRoute<{ key: string; name: string; params?: { logged?: string } }>();
   const logged = route.params?.logged;
   const activeWorkout = useFitnessStore((state) => state.activeWorkout);
@@ -112,7 +114,7 @@ export function RecordScreen() {
   return (
     <Screen>
       {activeWorkout ? (
-        <Pressable accessibilityRole="button" onPress={() => navigation.navigate("ActiveWorkout")} style={pressableFeedback(styles.resume)}>
+        <Pressable accessibilityRole="button" onPress={() => navigation.navigate(workoutRoute(flowMode))} style={pressableFeedback(styles.resume)}>
           <Timer size={20} color={palette.surface} />
           <View style={styles.flex}>
             <Body style={styles.resumeTitle}>Resume guided workout</Body>
@@ -206,7 +208,7 @@ export function recentExercises(sessions: WorkoutSession[], sets: WorkoutSet[], 
     const exercise = exercises.find((item) => item.id === exerciseId);
     if (!exercise) continue;
     seen.add(exerciseId);
-    const loadType = getExerciseLoadType(exercise.name);
+    const loadType = getExerciseLoadType(exercise);
     const working = sessionSets.filter((set) => !set.is_warmup).map((set) => ({ reps: set.reps, weight: set.weight, isWarmup: false }));
     const summary = groupSetsForDisplay(working, (value) => formatLoggedLoad(value, loadType, unitSystem))
       .map((group) => `${group.load} × ${group.reps.join(" · ")}`).join(", ");

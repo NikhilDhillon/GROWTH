@@ -29,7 +29,7 @@ import { GuidedWorkoutSettingsScreen } from "@/screens/Settings/GuidedWorkoutSet
 import { AuthScreen } from "@/screens/Auth/AuthScreen";
 import { LogsScreen } from "@/screens/Logs/LogsScreen";
 import { SocialScreen } from "@/screens/Social/SocialScreen";
-import { GuidedWorkoutScreen } from "@/screens/Workout/GuidedWorkoutScreen";
+import { FlowWorkoutScreen, GuidedWorkoutScreen } from "@/screens/Workout/GuidedWorkoutScreen";
 import { WorkoutSummaryScreen } from "@/screens/Workout/WorkoutSummaryScreen";
 import { appLinking, navigationSection, routeTitles } from "@/navigation/appNavigation";
 import type { AppRouteName, PrimaryRouteName, RootStackParamList } from "@/navigation/appNavigation";
@@ -79,10 +79,12 @@ export default function App() {
   const [activeRouteName, setActiveRouteName] = useState<CurrentRouteName>("Home");
   const [moreOpen, setMoreOpen] = useState(false);
   const isLaptopWeb = Platform.OS === "web" && width >= 768;
+  // Flow mode is a focus mode: no header, sidebar or tab bar while it is open.
+  const focused = activeRouteName === "FlowWorkout";
 
   function updateActiveRoute() {
     const routeName = navigationRef.getCurrentRoute()?.name;
-    if (isAppRouteName(routeName) || routeName === "ActiveWorkout" || routeName === "GuidedWorkoutSettings" || routeName === "WorkoutSummary" || routeName === "BodyCheckIn") {
+    if (isAppRouteName(routeName) || routeName === "ActiveWorkout" || routeName === "FlowWorkout" || routeName === "GuidedWorkoutSettings" || routeName === "WorkoutSummary" || routeName === "BodyCheckIn") {
       setActiveRouteName(routeName);
     }
   }
@@ -199,8 +201,8 @@ export default function App() {
             }}
           />
         ) : currentUser ? (
-          <View style={[styles.appShell, isLaptopWeb && styles.appShellWithSidebar]}>
-            {isLaptopWeb ? <AppSidebar activeRouteName={activeRouteName} onNavigate={navigateApp} /> : null}
+          <View style={[styles.appShell, isLaptopWeb && !focused && styles.appShellWithSidebar]}>
+            {isLaptopWeb && !focused ? <AppSidebar activeRouteName={activeRouteName} onNavigate={navigateApp} /> : null}
             <Stack.Navigator
               screenOptions={({ route }) => ({
                 header: () =>
@@ -218,9 +220,10 @@ export default function App() {
               <Stack.Screen name="GuidedWorkoutSettings" component={GuidedWorkoutSettingsScreen} getId={() => "GuidedWorkoutSettings"} />
               <Stack.Screen name="BodyCheckIn" component={BodyCheckInScreen} getId={() => "BodyCheckIn"} />
               <Stack.Screen name="ActiveWorkout" component={GuidedWorkoutScreen} getId={() => "ActiveWorkout"} />
+              <Stack.Screen name="FlowWorkout" component={FlowWorkoutScreen} getId={() => "FlowWorkout"} options={{ headerShown: false, animation: "fade" }} />
               <Stack.Screen name="WorkoutSummary" component={WorkoutSummaryScreen} getId={({ params }) => params?.workoutId} />
             </Stack.Navigator>
-            {!isLaptopWeb ? <MobileNavigation activeRouteName={activeRouteName} onNavigate={navigateApp} onMore={() => setMoreOpen(true)} /> : null}
+            {!isLaptopWeb && !focused ? <MobileNavigation activeRouteName={activeRouteName} onNavigate={navigateApp} onMore={() => setMoreOpen(true)} /> : null}
             <MoreMenu visible={moreOpen} onClose={() => setMoreOpen(false)} onNavigate={navigateApp} />
           </View>
         ) : (

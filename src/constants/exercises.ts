@@ -76,8 +76,13 @@ export const catalogExercises: CatalogExercise[] = [
   { name: "Reverse Wrist Curl", primary_muscle: "Forearms" }
 ];
 
-export function getExerciseLoadType(exerciseName: string): ExerciseLoadType {
-  return catalogExercises.find((exercise) => exercise.name === exerciseName)?.loadType ?? "external";
+export const exerciseLoadTypes: readonly ExerciseLoadType[] = ["external", "machine_stack", "bodyweight_plus_load", "bodyweight_minus_assistance"];
+
+/** A personal exercise's own load type wins; catalog movements are typed by name. */
+export function getExerciseLoadType(exercise: string | { name: string; load_type?: ExerciseLoadType | null }): ExerciseLoadType {
+  if (typeof exercise !== "string" && exercise.load_type) return exercise.load_type;
+  const name = typeof exercise === "string" ? exercise : exercise.name;
+  return catalogExercises.find((entry) => entry.name === name)?.loadType ?? "external";
 }
 
 export function isBodyweightLoadType(loadType: ExerciseLoadType) {

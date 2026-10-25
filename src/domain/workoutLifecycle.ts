@@ -5,7 +5,7 @@ import type { Prescription, Workout } from "./types";
 import type { ActiveWorkout } from "@/types";
 import { createRequestId } from "@/utils/requestId";
 import { assertGuidedObservationsConfirmed } from "@/services/guidedWorkout/guidedObservationService";
-import { parseObservedSets } from "./observations";
+import { observationValues, parseObservedSets } from "./observations";
 import { getExerciseLoadType } from "@/constants/exercises";
 import type { Exercise } from "@/types";
 
@@ -84,8 +84,9 @@ export function assertGuidedRecordingInput(input: WorkoutRecordingInput, exercis
   if (!draft || !input.inputUnit || draft.currentExercise.requestUnit !== input.inputUnit) throw new Error("A guided recording requires its saved draft and explicit recording unit.");
   const context = { exerciseId: input.exerciseId, workoutDate: input.workoutDate, machineProfileId: input.machineProfileId, unitSystem: input.inputUnit };
   assertGuidedObservationsConfirmed(draft.currentExercise.sets, context);
-  const observations = parseObservedSets(draft.currentExercise.sets, input.inputUnit, getExerciseLoadType(exercise.name));
-  if (!sameStoredJson(observations, input.sets.map((set) => ({ ...set, isWarmup: Boolean(set.isWarmup) })))) throw new Error("The recorded observations differ from the confirmed draft.");
+  const observations = parseObservedSets(draft.currentExercise.sets, input.inputUnit, getExerciseLoadType(exercise));
+  // Capture metadata describes how values were entered; only the values must match.
+  if (!sameStoredJson(observationValues(observations), observationValues(input.sets))) throw new Error("The recorded observations differ from the confirmed draft.");
 }
 
 /** One explicit migration. Unknown/conflicting evidence is retained, never re-linked on later starts. */

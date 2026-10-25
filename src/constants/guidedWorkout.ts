@@ -26,6 +26,13 @@ export const guidedCategoryLabels: Record<GuidedExerciseCategory, string> = {
   unguided: "Pull-ups / dips"
 };
 
+/** Flow mode's rest between sets: 1:30 to 5:00, in five-second steps. */
+export const restLimits = { min: 90, max: 300, default: 90 } as const;
+
+export function clampRestSeconds(seconds: number) {
+  return Math.min(restLimits.max, Math.max(restLimits.min, Math.round(seconds / 5) * 5));
+}
+
 export function createDefaultGuidedWorkoutPreferences(): GuidedWorkoutPreferences {
   return {
     hypertrophyTargetReps: 12,
@@ -34,7 +41,9 @@ export function createDefaultGuidedWorkoutPreferences(): GuidedWorkoutPreference
     topSetTargetReps: 8,
     backoffPercentage: 80,
     inactivityDays: 14,
-    exerciseCategories: {}
+    exerciseCategories: {},
+    flowMode: false,
+    restSeconds: restLimits.default
   };
 }
 
@@ -64,7 +73,9 @@ export function normalizeGuidedWorkoutPreferences(value: unknown): GuidedWorkout
     topSetTargetReps: positiveInteger(input.topSetTargetReps, defaults.topSetTargetReps),
     backoffPercentage: percentage(input.backoffPercentage, defaults.backoffPercentage),
     inactivityDays: positiveInteger(input.inactivityDays, defaults.inactivityDays),
-    exerciseCategories: categories
+    exerciseCategories: categories,
+    flowMode: input.flowMode === true,
+    restSeconds: Number.isFinite(input.restSeconds) ? clampRestSeconds(Number(input.restSeconds)) : defaults.restSeconds
   };
 }
 
