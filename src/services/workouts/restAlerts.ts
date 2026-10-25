@@ -8,7 +8,9 @@ export type RestAlert = {
   doneDetail: string;
 };
 
-// The website has no rest notification yet; the Android app's lives in restAlerts.android.ts.
+// Rest alerts live in restAlerts.web.ts and restAlerts.android.ts; other platforms and tests have none.
+export function primeRestAlerts() {}
+
 export function showRestAlert(_alert: RestAlert) {}
 
 export function clearRestAlert() {}

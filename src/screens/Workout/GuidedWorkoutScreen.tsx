@@ -31,7 +31,7 @@ import { existingExerciseNamed } from "@/services/workouts/customExercises";
 import { finalizeSetCapture, flowCapturedSet, isLoggedSet, plannedSuggestion, stampSetCapture } from "@/services/workouts/setCapture";
 import { expectedReps, flowHistoryForRow, nextFlowRow, plannedFlowLoad } from "@/services/workouts/setPrediction";
 import { flowLoadGhost } from "@/services/workouts/loadGhost";
-import { clearRestAlert, showRestAlert } from "@/services/workouts/restAlerts";
+import { clearRestAlert, primeRestAlerts, showRestAlert } from "@/services/workouts/restAlerts";
 import { learnedTemplateExercises, sameTemplateExercises, templateExerciseKey } from "@/services/workouts/templateExercises";
 import { appendWorkoutSlot, removeWorkoutSlot, slotForChosenExercise, workoutSlotProgress } from "@/services/workouts/workoutSlots";
 import { useFitnessStore } from "@/store/useFitnessStore";
@@ -508,6 +508,7 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
 
   function logFlowSet() {
     if (flowRow === null || !dialValues) return;
+    primeRestAlerts();
     const at = new Date().toISOString();
     const row = flowRow;
     const load = formatFlowLoad(dialValues.weight);

@@ -7,6 +7,9 @@ export type { RestAlert } from "./restAlerts";
 
 let askedForNotifications = false;
 
+/** Android asks for notifications when the first rest starts, so a tap has nothing to prepare. */
+export function primeRestAlerts() {}
+
 /** Shows the rest countdown in the notification shade, or updates it after the ring is wound. */
 export function showRestAlert(alert: RestAlert) {
   if (!RestTimer) return;

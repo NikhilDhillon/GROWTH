@@ -117,8 +117,8 @@ class RestTimerService : Service() {
 
   private fun resting(current: Rest): Notification {
     val totalSeconds = (current.totalMs / 1000).toInt().coerceAtLeast(1)
+    // The bar shows the time left, so it drains from full to empty like the rest ring.
     val leftSeconds = ((current.endsAt - System.currentTimeMillis() + 999) / 1000).toInt().coerceIn(0, totalSeconds)
-    val elapsed = totalSeconds - leftSeconds
     val builder = builder(RESTING_CHANNEL)
       .setSmallIcon(R.drawable.rest_timer_icon)
       .setContentTitle(current.title)
@@ -135,10 +135,10 @@ class RestTimerService : Service() {
       builder.setCategory(Notification.CATEGORY_WORKOUT)
         .setStyle(Notification.ProgressStyle()
           .setProgressSegments(listOf(Notification.ProgressStyle.Segment(totalSeconds)))
-          .setProgress(elapsed))
+          .setProgress(leftSeconds))
         .addExtras(android.os.Bundle().apply { putBoolean(EXTRA_REQUEST_PROMOTED_ONGOING, true) })
     } else {
-      builder.setCategory(Notification.CATEGORY_STOPWATCH).setProgress(totalSeconds, elapsed, false)
+      builder.setCategory(Notification.CATEGORY_STOPWATCH).setProgress(totalSeconds, leftSeconds, false)
     }
     return builder.build()
   }
