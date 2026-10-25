@@ -1,3 +1,5 @@
+import { nativeApp } from "@/constants/site";
+
 declare const __DEV__: boolean | undefined;
 
 export type LockRequester = { request<T>(name: string, callback: () => T | Promise<T>): Promise<T> };
@@ -25,6 +27,8 @@ let warned = false;
 export function webLocks(): LockRequester | null {
   const locks = globalThis.navigator?.locks;
   if (typeof locks?.request === "function") return locks as unknown as LockRequester;
+  // The phone app has a single page, so queuing within it is all the locking it needs.
+  if (nativeApp) return inPageLocks;
   const development = typeof __DEV__ !== "undefined" && Boolean(__DEV__);
   const insecurePage = typeof window !== "undefined" && window.isSecureContext === false;
   if (!development || !insecurePage) return null;

@@ -31,6 +31,7 @@ import { existingExerciseNamed } from "@/services/workouts/customExercises";
 import { finalizeSetCapture, flowCapturedSet, isLoggedSet, plannedSuggestion, stampSetCapture } from "@/services/workouts/setCapture";
 import { expectedReps, flowHistoryForRow, nextFlowRow, plannedFlowLoad } from "@/services/workouts/setPrediction";
 import { flowLoadGhost } from "@/services/workouts/loadGhost";
+import { clearRestAlert, showRestAlert } from "@/services/workouts/restAlerts";
 import { learnedTemplateExercises, sameTemplateExercises, templateExerciseKey } from "@/services/workouts/templateExercises";
 import { appendWorkoutSlot, removeWorkoutSlot, slotForChosenExercise, workoutSlotProgress } from "@/services/workouts/workoutSlots";
 import { useFitnessStore } from "@/store/useFitnessStore";
@@ -286,6 +287,23 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
     autoSaved.current = autoSaveKey;
     void completeCurrent(false);
   }, [exerciseLogged, restActive, recordingLocked, editing, autoSaveKey]);
+
+  // In the Android app the rest also counts down in the notification shade, so the phone can be locked or put away.
+  const restEndsAt = focus && rest && editing === null ? Date.parse(rest.startedAt) + rest.seconds * 1000 : null;
+  const restSeconds = rest?.seconds ?? 0;
+  const nextSet = flowRow !== null && dialValues && selectedExercise
+    ? `${selectedExercise.name} set ${flowRow + 1} · ${isBodyweightLoadType(loadType) && dialValues.weight === 0 ? `${dialValues.reps} reps` : `${formatFlowLoad(dialValues.weight)} ${flowWeightCaption()} × ${dialValues.reps}`}`
+    : null;
+  const restDetail = nextSet ? `Next: ${nextSet}` : nextSlotName ? `Next: ${nextSlotName}` : "That was the last set";
+  const restDoneDetail = nextSet ?? (nextSlotName ? `Up next: ${nextSlotName}` : "Finish the workout or add a set");
+  useEffect(() => {
+    if (!focus) return;
+    if (restEndsAt === null || restEndsAt <= Date.now()) clearRestAlert();
+    else showRestAlert({ endsAt: restEndsAt, seconds: restSeconds, detail: restDetail, doneDetail: restDoneDetail });
+  }, [focus, restEndsAt, restSeconds, restDetail, restDoneDetail]);
+  useEffect(() => () => {
+    if (focus) clearRestAlert();
+  }, [focus]);
 
   function persist(updater: (workout: ActiveWorkout) => ActiveWorkout) {
     if (savingRef.current || useFitnessStore.getState().activeWorkoutFinalizing || useFitnessStore.getState().activeDraftConflict) return;

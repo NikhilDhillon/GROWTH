@@ -18,13 +18,25 @@ import { assertBodyCheckInWrite, BodyCheckInConflictError, BodyCheckInWriteInput
 import { buildCanonicalLeaderboard } from "@/services/strength/leaderboardService";
 import { committedImportResult, emptyImportResult, hasImportedWorkoutReceipt, importedBodyCheckIns, TrainingImportInput } from "./importPersistence";
 import { webLocks } from "./webLocks";
+import { nativeApp, siteUrl } from "@/constants/site";
 import { todayIso } from "@/utils/date";
 import { hashPassword, normalizeEmail } from "@/utils/password";
 
 const storageKey = "growth.preview.database.v2";
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
-const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
+// The phone app keeps its session in device storage and has no URL to read a sign-in from.
+const supabase = supabaseUrl && supabaseAnonKey
+  ? createClient(supabaseUrl, supabaseAnonKey, nativeApp ? { auth: { storage: localStorage, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } } : undefined)
+  : null;
+if (supabase && nativeApp) {
+  // Refresh the session only while the app is on screen; it catches up when it comes back.
+  const { AppState } = require("react-native") as typeof import("react-native");
+  AppState.addEventListener("change", (state) => {
+    if (state === "active") void supabase.auth.startAutoRefresh();
+    else void supabase.auth.stopAutoRefresh();
+  });
+}
 
 type WebDatabase = {
   workoutRecords: WorkoutRecord[];
@@ -563,7 +575,8 @@ export async function requestPasswordReset(input: { email: string }) {
   throwIfSupabaseError(profileResult.error);
   if (!profileResult.data) throw new Error("Email does not exist. Register instead.");
 
-  const redirectTo = typeof window !== "undefined" ? window.location.origin : undefined;
+  // The app has no page to return to, so the email opens the website to choose a new password.
+  const redirectTo = nativeApp ? siteUrl : typeof window !== "undefined" ? window.location.origin : undefined;
   const result = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
   throwIfSupabaseError(result.error);
 }
@@ -1664,8 +1677,8 @@ function profileDisplayName(profile: ProfileRow | undefined, fallback: string) {
 }
 
 function inviteUrl(token: string) {
-  if (typeof window === "undefined") return token;
-  const url = new URL(window.location.origin);
+  if (!nativeApp && typeof window === "undefined") return token;
+  const url = new URL(nativeApp ? siteUrl : window.location.origin);
   url.searchParams.set("invite", token);
   return url.toString();
 }

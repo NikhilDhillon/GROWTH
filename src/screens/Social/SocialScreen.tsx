@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, Share, StyleSheet, TextInput, View } from "react-native";
+import * as Clipboard from "expo-clipboard";
 import { Check, Copy, Link, RefreshCw, Share2, Trash2, Trophy, UserPlus, Users, X } from "lucide-react-native";
 
 import { Panel } from "@/components/Panel";
@@ -73,7 +74,10 @@ export function SocialScreen() {
 
   async function copyInvite(value: string) {
     if (!value) return;
-    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    if (Platform.OS !== "web") {
+      await Clipboard.setStringAsync(value);
+      setCopyNotice("Invite copied.");
+    } else if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(value);
       setCopyNotice("Invite copied.");
     } else {
@@ -83,7 +87,9 @@ export function SocialScreen() {
 
   async function shareInvite(value: string) {
     if (!value) return;
-    if (typeof navigator !== "undefined" && navigator.share) {
+    if (Platform.OS !== "web") {
+      await Share.share({ message: `Join my GROWTH leaderboard: ${value}` });
+    } else if (typeof navigator !== "undefined" && navigator.share) {
       await navigator.share({ title: "Join my GROWTH leaderboard", url: value });
     } else {
       await copyInvite(value);

@@ -2,10 +2,12 @@ node_modules/
 .expo/
 dist/
 web-build/
-ios/
-android/
+/ios/
+/android/
+modules/*/android/build/
 *.log
 .DS_Store
 .env
 .env.local
 .env.example
+.env*.local
