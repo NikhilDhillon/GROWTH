@@ -14,9 +14,9 @@ import { recordWorkoutEntry } from "@/database/database";
 import { createRequestId } from "@/utils/requestId";
 import { recordBodyCheckIn as recordStoredBodyCheckIn, deleteBodyCheckIn as deleteStoredBodyCheckIn } from "@/database/database";
 import { BodyCheckInCaptureInput, prepareBodyCheckInWrite } from "@/services/body/bodyCheckInRecording";
-import { acceptFriendInvite as acceptStoredFriendInvite, createFriendInvite as createStoredFriendInvite, deleteBodyMeasurementLog as deleteStoredBodyMeasurementLog, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, removeSplitSync as removeStoredSplitSync, requestPasswordReset, requestSplitSync as requestStoredSplitSync, respondSplitSync as respondStoredSplitSync, revokeFriendInvite as revokeStoredFriendInvite, saveActiveWorkout as saveStoredActiveWorkout, saveBodyMeasurementLog as saveStoredBodyMeasurementLog, saveBodyWeightLog as saveStoredBodyWeightLog, saveCompletedGuidedWorkouts as saveStoredCompletedGuidedWorkouts, saveMachineProfiles as saveStoredMachineProfiles, setExerciseEnabled as setStoredExerciseEnabled, updateBodyMeasurementLog as updateStoredBodyMeasurementLog, updateBodyUnitPreferences as updateStoredBodyUnitPreferences, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateGuidedWorkoutPreferences as updateStoredGuidedWorkoutPreferences, updateTrainingSplit as updateStoredTrainingSplit, updateUnitSystem, updateWorkoutSession, updateWorkoutSessionMachineProfile } from "@/database/database";
+import { acceptFriendInvite as acceptStoredFriendInvite, createCustomExercise as createStoredCustomExercise, createFriendInvite as createStoredFriendInvite, deleteBodyMeasurementLog as deleteStoredBodyMeasurementLog, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, removeSplitSync as removeStoredSplitSync, requestPasswordReset, requestSplitSync as requestStoredSplitSync, respondSplitSync as respondStoredSplitSync, revokeFriendInvite as revokeStoredFriendInvite, saveActiveWorkout as saveStoredActiveWorkout, saveBodyMeasurementLog as saveStoredBodyMeasurementLog, saveBodyWeightLog as saveStoredBodyWeightLog, saveCompletedGuidedWorkouts as saveStoredCompletedGuidedWorkouts, saveMachineProfiles as saveStoredMachineProfiles, saveTemplateExercises as saveStoredTemplateExercises, setExerciseEnabled as setStoredExerciseEnabled, updateBodyMeasurementLog as updateStoredBodyMeasurementLog, updateBodyUnitPreferences as updateStoredBodyUnitPreferences, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateGuidedWorkoutPreferences as updateStoredGuidedWorkoutPreferences, updateTrainingSplit as updateStoredTrainingSplit, updateUnitSystem, updateWorkoutSession, updateWorkoutSessionMachineProfile } from "@/database/database";
 import { ImportResult, ParsedImportData } from "@/services/import/importService";
-import { ActiveWorkout, BodyMeasurementLog, BodyMeasurementValues, BodyUnitPreferences, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, LoggedSetDraft, MachineProfile, MuscleScorePoint, MuscleStrengthConfig, SocialData, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyMeasurementLog, BodyMeasurementValues, BodyUnitPreferences, BodyWeightLog, CompletedGuidedWorkout, CustomExerciseInput, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, LoggedSetDraft, MachineProfile, MuscleScorePoint, MuscleStrengthConfig, SocialData, TemplateExercise, TemplateExercises, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { assertCalendarDate } from "@/domain/calendar";
 import { parseObservedSets } from "@/domain/observations";
 import { bodyMeasurementValuesToStorage, bodyWeightLogsFromMeasurements, bodyWeightToStorage, defaultBodyUnitPreferences, hasBodyMeasurementData, normalizeBodyMeasurementValues } from "@/utils/bodyMeasurements";
@@ -51,6 +51,8 @@ type FitnessState = {
   /** Preserved migration evidence; recorded facts still come exclusively from sessions and sets. */
   workoutArchiveEvidence: unknown;
   machineProfiles: MachineProfile[];
+  /** Exercises each template remembers, keyed by its muscles. */
+  templateExercises: TemplateExercises;
   guidedWorkoutPreferences: GuidedWorkoutPreferences;
   exercisePoints: ExerciseScorePoint[];
   musclePoints: MuscleScorePoint[];
@@ -74,6 +76,8 @@ type FitnessState = {
   logout: () => Promise<void>;
   clearAuthError: () => void;
   setExerciseEnabled: (exerciseId: number, enabled: boolean) => Promise<void>;
+  /** Adds a personal exercise (or returns the one a retry already made) and lists it. */
+  createCustomExercise: (input: CustomExerciseInput) => Promise<Exercise>;
   saveWorkout: (input: { origin: "manual" | "guided"; requestId: string; expectedActive?: ActiveWorkout; unitSystem?: UnitSystem; exerciseId: number; workoutDate: string; notes: string; machineProfileId?: string | null; sets: LoggedSetDraft[] }) => Promise<number>;
   updateWorkoutLog: (input: { sessionId: number; exerciseId: number; workoutDate: string; notes: string; unitSystem?: UnitSystem; machineProfileId?: string | null; sets: LoggedSetDraft[] }) => Promise<void>;
   updateWorkoutMachineProfile: (input: { sessionId: number; exerciseId: number; machineProfileId?: string | null }) => Promise<void>;
@@ -94,6 +98,7 @@ type FitnessState = {
   updateActiveWorkout: (activeWorkout: ActiveWorkout) => Promise<void>;
   finishActiveWorkout: (summary?: CompletedGuidedWorkout) => Promise<void>;
   saveGuidedWorkoutPreferences: (preferences: GuidedWorkoutPreferences) => Promise<void>;
+  saveTemplateExercises: (key: string, exercises: TemplateExercise[]) => Promise<void>;
   saveMachineProfile: (profile: MachineProfileDraft) => Promise<MachineProfile>;
   deleteMachineProfile: (profileId: string) => Promise<void>;
   setConfigWeight: (id: number, weightFactor: number) => Promise<void>;
@@ -119,7 +124,7 @@ function emptyApplicationData() {
   return {
     exercises: [], sessions: [], sets: [], bodyMeasurementLogs: [], bodyWeightLogs: [], configs: [],
     bodyUnitPreferences: defaultBodyUnitPreferences, trainingSplit: createDefaultTrainingSplit(),
-    activeWorkout: null, activeWorkoutFinalizing: false, activeWorkoutDirty: false, activeDraftConflict: false, savedActiveWorkout: null, workoutRecords: [], workoutReferences: [], recoveredWorkoutDrafts: [], completedGuidedWorkouts: [], workoutArchiveEvidence: undefined, machineProfiles: [],
+    activeWorkout: null, activeWorkoutFinalizing: false, activeWorkoutDirty: false, activeDraftConflict: false, savedActiveWorkout: null, workoutRecords: [], workoutReferences: [], recoveredWorkoutDrafts: [], completedGuidedWorkouts: [], workoutArchiveEvidence: undefined, machineProfiles: [], templateExercises: {},
     guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(), exercisePoints: [], musclePoints: [],
     socialData: { friends: [], invites: [], leaderboard: [], notice: null }, socialError: null, socialLoading: false
   };
@@ -148,6 +153,7 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   completedGuidedWorkouts: [],
   workoutArchiveEvidence: undefined,
   machineProfiles: [],
+  templateExercises: {},
   guidedWorkoutPreferences: createDefaultGuidedWorkoutPreferences(),
   exercisePoints: [],
   musclePoints: [],
@@ -172,7 +178,8 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
       const derived = derive(data.exercises, data.sessions, data.sets, bodyWeightLogs, data.configs);
       const preserveDraft = get().activeWorkoutDirty || get().activeWorkoutFinalizing;
       const { activeWorkoutSnapshot, ...applicationData } = data;
-      set({ ...applicationData, savedActiveWorkout: preserveDraft ? get().savedActiveWorkout : activeWorkoutSnapshot ?? data.activeWorkout,
+      set({ ...applicationData, templateExercises: applicationData.templateExercises ?? {},
+        savedActiveWorkout: preserveDraft ? get().savedActiveWorkout : activeWorkoutSnapshot ?? data.activeWorkout,
         ...(preserveDraft ? { activeWorkout: get().activeWorkout } : {}),
         bodyWeightLogs, ...derived, loading: false, dataLoading: false, dataError: null, authError: null });
       // Friend rankings derive from authorized canonical observations. Hydration
@@ -313,6 +320,14 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
     set({ ...emptyApplicationData(), currentUser: null, authError: null, authNotice: null, dataError: null, dataLoading: false, operationNotice: null, lastInviteUrl: null });
   },
   clearAuthError: () => set({ authError: null, authNotice: null }),
+  createCustomExercise: async (input) => {
+    const created = await createStoredCustomExercise(input);
+    const current = get();
+    if (current.exercises.some((exercise) => exercise.id === created.id)) return created;
+    const exercises = [...current.exercises, created].sort((a, b) => a.name.localeCompare(b.name));
+    set({ exercises, ...derive(exercises, current.sessions, current.sets, current.bodyWeightLogs, current.configs) });
+    return created;
+  },
   setExerciseEnabled: async (exerciseId, enabled) => {
     const previous = get();
     const exercises = previous.exercises.map((exercise) => (exercise.id === exerciseId ? { ...exercise, is_strength_exercise: enabled ? 1 : 0 } : exercise));
@@ -617,6 +632,19 @@ export const useFitnessStore = create<FitnessState>((set, get) => ({
   saveGuidedWorkoutPreferences: async (preferences) => {
     const guidedWorkoutPreferences = await updateStoredGuidedWorkoutPreferences(preferences);
     set({ guidedWorkoutPreferences });
+  },
+  saveTemplateExercises: async (key, exercises) => {
+    const previous = get().templateExercises;
+    const next = { ...previous };
+    if (exercises.length) next[key] = exercises;
+    else delete next[key];
+    set({ templateExercises: next });
+    try {
+      set({ templateExercises: await saveStoredTemplateExercises(next) });
+    } catch (error) {
+      if (get().templateExercises === next) set({ templateExercises: previous });
+      throw error;
+    }
   },
   saveMachineProfile: async (input) => {
     const previous = get().machineProfiles;

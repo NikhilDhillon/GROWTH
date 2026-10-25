@@ -3,6 +3,7 @@ import type {
   BodyMeasurementValues,
   CircumferenceUnit,
   GuidedExerciseCategory,
+  SetEvidence,
   SplitMuscle,
   UnitSystem
 } from "@/types";
@@ -74,6 +75,9 @@ export type ParsedObservedSet = {
   /** Canonical pounds, irrespective of the current display preference. */
   weight: number;
   isWarmup: boolean;
+  /** Capture metadata, not an observation: absent when unknown. */
+  performedAt?: string;
+  evidence?: SetEvidence;
 };
 
 export type PrescribedSet = {

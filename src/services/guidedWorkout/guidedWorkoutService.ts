@@ -128,7 +128,7 @@ export function buildGuidedSessionOutcome(input: {
   if (!prescription || prescription.exerciseId !== input.exercise.id || !input.unitSystem) {
     return { category, celebrated: false, messages: ["Session logged. Target achievement could not be evaluated without the original prescription and recording unit."] };
   }
-  const loadType = getExerciseLoadType(input.exercise.name);
+  const loadType = getExerciseLoadType(input.exercise);
   const observations = input.sets.map((set) => ({
     reps: set.reps.trim() ? Number(set.reps) : Number.NaN,
     loadLb: set.weight.trim() ? weightToStorageUnit(Number(set.weight), input.unitSystem!) : Number.NaN,
@@ -194,7 +194,7 @@ export function buildGuidedRecommendation(input: {
   machineProfileId?: string | null;
   machineScoped?: boolean;
 }): GuidedRecommendation {
-  const assistance = getExerciseLoadType(input.exercise.name) === "bodyweight_minus_assistance";
+  const assistance = getExerciseLoadType(input.exercise) === "bodyweight_minus_assistance";
   const category = categoryForExercise(input.exercise.name, input.preferences);
   const draftWorkingIndexes = prescribedWorkingIndexes(input.draftWarmups);
   const requiredSetCount = prescribedWorkingSetCount;

@@ -7,7 +7,7 @@ import { buildGuidedSessionOutcome } from "@/services/guidedWorkout/guidedWorkou
 export function guidanceForRecordedEntry(entry: ExerciseEntry, prescription: Prescription | null | undefined,
   exercise: Exercise | undefined, preferences: GuidedWorkoutPreferences) {
   if (!prescription || !exercise) return undefined;
-  const type = getExerciseLoadType(exercise.name);
+  const type = getExerciseLoadType(exercise);
   const equipment = prescription.equipment;
   // An untagged machine prescription matches an untagged entry: both belong to the shared untagged history.
   const prescribedMachine = equipment?.kind === "machine_profile" ? equipment.machineProfileId : null;

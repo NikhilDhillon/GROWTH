@@ -29,7 +29,7 @@ export function buildCanonicalLeaderboard(input: {
     if (sets.some((set) => !set.is_warmup && (!Number.isSafeInteger(set.id) || set.id <= 0 || identities.get(set.id) !== 1))) continue;
     // The catalog must positively establish external load semantics. Unknown
     // names, private stacks and bodyweight-dependent effective loads cannot be ranked here.
-    if (!catalogExercises.some((e) => e.name === exercise.name) || getExerciseLoadType(exercise.name) !== "external") continue;
+    if (exercise.creator_id != null || !catalogExercises.some((e) => e.name === exercise.name) || getExerciseLoadType(exercise.name) !== "external") continue;
     const metrics = calculateSessionPerformance(sets, undefined, { loadType: "external" });
     if (!metrics) continue;
     const entry: LeaderboardEntry = { user_id: session.user_id, name: input.names.get(session.user_id) ?? "Friend", exercise_id: exercise.id,

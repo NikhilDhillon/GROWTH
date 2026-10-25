@@ -66,6 +66,8 @@ export function SettingsScreen() {
   const setBodyUnitPreferences = useFitnessStore((state) => state.setBodyUnitPreferences);
   const importTrainingData = useFitnessStore((state) => state.importTrainingData);
   const guidedWorkoutPreferences = useFitnessStore((state) => state.guidedWorkoutPreferences);
+  const saveGuidedWorkoutPreferences = useFitnessStore((state) => state.saveGuidedWorkoutPreferences);
+  const [loggingError, setLoggingError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
@@ -192,6 +194,29 @@ export function SettingsScreen() {
           <Body>{guidedCounts.map(({ category, count }) => `${guidedCategoryLabels[category]}: ${count}`).join(" | ")}</Body>
           <Body>Warm-up sets never count toward progression or best sessions.</Body>
         </DetailsDisclosure>
+      </Panel>
+
+      <Panel>
+        <SectionTitle>Workout logging</SectionTitle>
+        <Body style={styles.importNotice}>
+          {guidedWorkoutPreferences.flowMode
+            ? "Flow mode: each set starts from your last session. Turn the dial to change weight or reps, then tap Done; rest starts on its own."
+            : "Classic: edit every set in a list, then save the exercise."}
+        </Body>
+        <View accessibilityRole="radiogroup" style={styles.unitRow}>
+          {([[true, "Flow mode"], [false, "Classic list"]] as const).map(([flowMode, label]) => (
+            <Pressable key={label} accessibilityRole="radio" accessibilityState={{ checked: guidedWorkoutPreferences.flowMode === flowMode }}
+              onPress={() => {
+                if (guidedWorkoutPreferences.flowMode === flowMode) return;
+                setLoggingError(null);
+                void saveGuidedWorkoutPreferences({ ...guidedWorkoutPreferences, flowMode }).catch((error) => setLoggingError(error instanceof Error ? error.message : "Your logging choice could not be saved. Try again."));
+              }}
+              style={[styles.unitButton, guidedWorkoutPreferences.flowMode === flowMode && styles.unitButtonActive]}>
+              <Body style={[styles.unitText, guidedWorkoutPreferences.flowMode === flowMode && styles.unitTextActive]}>{label}</Body>
+            </Pressable>
+          ))}
+        </View>
+        {loggingError ? <Body accessibilityRole="alert">{loggingError}</Body> : null}
       </Panel>
 
       <Panel>

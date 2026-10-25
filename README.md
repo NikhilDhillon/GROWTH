@@ -7,6 +7,8 @@ A strength and body-progress tracker built with Expo, React Native, TypeScript, 
 - Home, Record, Progress, and History, with supporting tools under More.
 - Neutral ChatGPT-style light/dark colors that follow the system appearance automatically, including live changes.
 - Guided and Quick workout recording with recoverable input drafts.
+- Day templates remember their exercises and order. Flow mode (Settings → Workout logging) turns a started workout into a full-screen focus flow: each set starts from your last session and is set on a rolling thumb dial (momentum, settle, haptic ticks), Done logs it and starts rest, and each finished exercise saves itself and opens the next. A top-bar note button adds a note to the current exercise. Classic keeps the editable set list. Each set records when it was captured and how (`typed`, `flow`, `planned`).
+- Personal exercises for movements the catalog lacks, added from any exercise search with their own load type. Split-sync friends can use them; leaderboards stay catalog-only.
 - Daily bodyweight and optional sparse tape measurements in one check-in.
 - Versioned Performance Points: first eligible session per exercise/equipment context = 100; 45% strength, 35% working volume, 20% fatigue resistance. Absolute observations remain visible.
 - Fixed aggregate cohorts with coverage and freshness; bodyweight estimates use prior observations up to 14 calendar days old.
@@ -31,6 +33,8 @@ The web export is written to `dist/`. `vercel.json` supplies filesystem-first SP
 - [Phases 4–5 status](PHASE45_PROGRESS.md)
 - [Import behavior](PHASE6_IMPORT.md), [sharing contracts](supabase/PHASE6_SOCIAL.md)
 - [Phase 6 deployment order](supabase/PHASE6_DEPLOYMENT.md)
+- [Set capture evidence deployment](supabase/SET_CAPTURE_DEPLOYMENT.md)
+- [Personal exercises deployment](supabase/PERSONAL_EXERCISES_DEPLOYMENT.md)
 - [Phases 6–7 verification](PHASE67_COMPLETION.md), [cleanup audit](PHASE7_CLEANUP.md)
 
 Apply migrations in documented order before releasing the matching cloud client. Local SQL harnesses under `supabase/tests/` create disposable databases and never verify deployed production state.

@@ -213,7 +213,7 @@ export function parseImportData(text: string, exercises: Exercise[]): ImportPrev
             const reps = readPositiveInteger(setEntry.reps, `${setPrefix}.reps`, errors);
             const weight = readNonNegativeNumber(setEntry.weight, `${setPrefix}.weight`, errors);
             if (reps === null || weight === null) return [];
-            if (weight === 0 && exercise && !isBodyweightLoadType(getExerciseLoadType(exercise.name))) {
+            if (weight === 0 && exercise && !isBodyweightLoadType(getExerciseLoadType(exercise))) {
               errors.push(`${setPrefix}.weight must include external load for this exercise.`);
               return [];
             }

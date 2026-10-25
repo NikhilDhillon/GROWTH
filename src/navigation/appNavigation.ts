@@ -17,6 +17,8 @@ export type RootStackParamList = {
   Settings: undefined;
   GuidedWorkoutSettings: undefined;
   ActiveWorkout: undefined;
+  /** Flow mode: the active workout as a full-screen flow without app navigation. */
+  FlowWorkout: undefined;
   // Old in-memory callers may resolve a saved identity, never render this copy.
   WorkoutSummary: { workoutId?: string; workout?: ActiveWorkout; finishedAt?: string } | undefined;
 };
@@ -28,12 +30,17 @@ export type NavigationSection = PrimaryRouteName | "More";
 export const routeTitles: Record<AppRouteName, string> = {
   Home: "Home", Record: "Record", Log: "Quick workout", Exercises: "Exercises", Bodyweight: "Bodyweight",
   BodyCheckIn: "Body check-in", Progress: "Progress", Social: "Social", Logs: "History", Settings: "Settings",
-  GuidedWorkoutSettings: "Guided preferences", ActiveWorkout: "Guided workout", WorkoutSummary: "Workout details"
+  GuidedWorkoutSettings: "Guided preferences", ActiveWorkout: "Guided workout", FlowWorkout: "Flow", WorkoutSummary: "Workout details"
 };
+
+/** Where the active workout opens: the full-screen flow in flow mode, otherwise the guided page. */
+export function workoutRoute(flowMode: boolean): "FlowWorkout" | "ActiveWorkout" {
+  return flowMode ? "FlowWorkout" : "ActiveWorkout";
+}
 
 export function navigationSection(route: AppRouteName): NavigationSection {
   if (route === "Home") return "Home";
-  if (["Record", "Log", "ActiveWorkout", "BodyCheckIn"].includes(route)) return "Record";
+  if (["Record", "Log", "ActiveWorkout", "FlowWorkout", "BodyCheckIn"].includes(route)) return "Record";
   if (["Progress", "Bodyweight"].includes(route)) return "Progress";
   if (["Logs", "WorkoutSummary"].includes(route)) return "Logs";
   return "More";
@@ -48,6 +55,7 @@ export const navigationConfig: NonNullable<LinkingOptions<RootStackParamList>["c
     Record: "record",
     Log: { path: "record/quick", parse: { exerciseId: positiveId } },
     ActiveWorkout: "record/guided",
+    FlowWorkout: "record/flow",
     BodyCheckIn: { path: "record/body", parse: { checkInId: positiveId } },
     Progress: { path: "progress", parse: { exerciseId: positiveId } },
     Logs: "history",
@@ -112,7 +120,7 @@ export function normalizeNavigationPath(path: string): string | undefined {
   }
   if (canonical === undefined) {
     // Recognize canonical nested paths without requiring aliases for each.
-    if (["record/quick", "record/guided", "record/body", "settings/guided"].includes(key)) canonical = key;
+    if (["record/quick", "record/guided", "record/flow", "record/body", "settings/guided"].includes(key)) canonical = key;
     else return undefined;
   }
   name ??= canonical === "progress" ? "Progress" : canonical === "record/body" ? "BodyCheckIn" : undefined;

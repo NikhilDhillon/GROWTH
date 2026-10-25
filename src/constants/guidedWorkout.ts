@@ -34,7 +34,8 @@ export function createDefaultGuidedWorkoutPreferences(): GuidedWorkoutPreference
     topSetTargetReps: 8,
     backoffPercentage: 80,
     inactivityDays: 14,
-    exerciseCategories: {}
+    exerciseCategories: {},
+    flowMode: false
   };
 }
 
@@ -64,7 +65,8 @@ export function normalizeGuidedWorkoutPreferences(value: unknown): GuidedWorkout
     topSetTargetReps: positiveInteger(input.topSetTargetReps, defaults.topSetTargetReps),
     backoffPercentage: percentage(input.backoffPercentage, defaults.backoffPercentage),
     inactivityDays: positiveInteger(input.inactivityDays, defaults.inactivityDays),
-    exerciseCategories: categories
+    exerciseCategories: categories,
+    flowMode: input.flowMode === true
   };
 }
 

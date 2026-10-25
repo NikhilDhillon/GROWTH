@@ -18,8 +18,15 @@ export function parseObservedSets(drafts: readonly LoggedSetDraft[], unit: UnitS
     }
     const weight = weightToStorageUnit(load, unit);
     if (!Number.isFinite(weight)) throw new Error("The entered load is too large to record.");
-    return { reps, weight, isWarmup: Boolean(set.isWarmup) };
+    return { reps, weight, isWarmup: Boolean(set.isWarmup),
+      ...(set.performedAt ? { performedAt: set.performedAt } : {}),
+      ...(set.evidence ? { evidence: set.evidence } : {}) };
   });
+}
+
+/** The performed values alone, without capture metadata. */
+export function observationValues(sets: readonly { reps: number; weight: number; isWarmup?: boolean }[]) {
+  return sets.map((set) => ({ reps: set.reps, weight: set.weight, isWarmup: Boolean(set.isWarmup) }));
 }
 
 /** Existing score requirements remain separate from the permission to record observations. */

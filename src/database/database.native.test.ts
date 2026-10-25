@@ -414,6 +414,49 @@ describe("native observed workout transactions", () => {
     expect(rows("workout_sets")).toEqual([]);
   });
 
+  it("stores set capture metadata and keeps it for sets a history edit leaves unchanged", async () => {
+    await initialize();
+    const performedAt = "2026-07-01T18:02:00.000Z";
+    const id = await native.logWorkout({ ...input(), sets: [{ reps: 8, weight: 100, performedAt, evidence: "flow" }, { reps: 7, weight: 100, evidence: "typed" }] });
+    expect(rows("workout_sets")).toEqual([
+      expect.objectContaining({ performed_at: performedAt, evidence: "flow" }), expect.objectContaining({ performed_at: null, evidence: "typed" })
+    ]);
+    await native.updateWorkoutSession({ ...input(), sessionId: id, sets: [{ reps: 8, weight: 100, evidence: "typed" }, { reps: 6, weight: 100, evidence: "typed" }] });
+    expect(rows("workout_sets")).toEqual([
+      expect.objectContaining({ reps: 8, performed_at: performedAt, evidence: "flow" }), expect.objectContaining({ reps: 6, performed_at: null, evidence: "typed" })
+    ]);
+  });
+
+  it("adds capture columns to an existing set table without inventing metadata for its rows", async () => {
+    sqlite.exec(`CREATE TABLE workout_sets (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id INTEGER NOT NULL, exercise_id INTEGER NOT NULL,
+      set_number INTEGER, reps INTEGER, weight REAL, rir REAL, is_warmup INTEGER NOT NULL DEFAULT 0, created_at TEXT);
+      INSERT INTO workout_sets (session_id, exercise_id, set_number, reps, weight, created_at) VALUES (1, 1, 1, 8, 100, '${timestamp}');`);
+    await initialize();
+    expect(rows("workout_sets")).toEqual([expect.objectContaining({ reps: 8, performed_at: null, evidence: null })]);
+    expect(() => sqlite.prepare("UPDATE workout_sets SET evidence = 'guessed'").run()).toThrow();
+  });
+
+  it("adds a personal exercise once, with its own load type, and never repeats a catalog name", async () => {
+    await initialize();
+    await native.registerUser({ name: "Lifter", email: "lifter@example.test", password: "password123" });
+    const created = await native.createCustomExercise({ name: "Landmine Press", primaryMuscle: "Chest", loadType: "bodyweight_plus_load" });
+    expect(await native.createCustomExercise({ name: "landmine  press", primaryMuscle: "Chest", loadType: "bodyweight_plus_load" })).toMatchObject({ id: created.id });
+    await expect(native.createCustomExercise({ name: "Landmine Press", primaryMuscle: "Back", loadType: "external" })).rejects.toThrow("You already have an exercise named Landmine Press.");
+    await expect(native.createCustomExercise({ name: "Barbell Bench Press", primaryMuscle: "Chest", loadType: "external" })).rejects.toThrow("already in the exercise list");
+    expect((await native.loadAllData()).exercises.find((exercise) => exercise.id === created.id))
+      .toMatchObject({ name: "Landmine Press", creator_id: expect.any(Number), load_type: "bodyweight_plus_load" });
+    expect(() => sqlite.prepare("UPDATE exercises SET load_type = 'kettlebell'").run()).toThrow();
+  });
+
+  it("adds personal exercise columns to an existing exercise table without changing its rows", async () => {
+    sqlite.exec(`CREATE TABLE exercises (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, primary_muscle TEXT NOT NULL, secondary_muscle TEXT,
+      is_strength_exercise INTEGER DEFAULT 1, created_at TEXT);
+      INSERT INTO exercises (name, primary_muscle, created_at) VALUES ('Barbell Bench Press', 'Chest', '${timestamp}');`);
+    await initialize();
+    expect(rows("exercises")[0]).toMatchObject({ id: 1, name: "Barbell Bench Press", creator_id: null, load_type: null });
+    expect(rows("exercises").filter((row) => (row as { name: string }).name === "Barbell Bench Press")).toHaveLength(1);
+  });
+
   it("does not overwrite edited observations when the original create attempt is retried", async () => {
     await initialize();
     const original = input();

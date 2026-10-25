@@ -38,6 +38,8 @@ export type GuidedWorkoutPreferences = {
   backoffPercentage: number;
   inactivityDays: number;
   exerciseCategories: Record<string, GuidedExerciseCategory>;
+  /** Log each set by turning a dial (flow mode) instead of editing the set list (classic). */
+  flowMode: boolean;
 };
 
 export type Exercise = {
@@ -47,6 +49,16 @@ export type Exercise = {
   secondary_muscle?: MuscleGroup | null;
   is_strength_exercise: number;
   created_at: string;
+  /** Null for the shared catalog; the creator of a personal exercise otherwise. */
+  creator_id?: string | number | null;
+  /** Personal exercises carry their own load type; catalog movements are typed by name. */
+  load_type?: import("@/constants/exercises").ExerciseLoadType | null;
+};
+
+export type CustomExerciseInput = {
+  name: string;
+  primaryMuscle: MuscleGroup;
+  loadType: import("@/constants/exercises").ExerciseLoadType;
 };
 
 export type UserExercisePreference = {
@@ -78,8 +90,18 @@ export type WorkoutSet = {
   weight: number;
   rir?: number | null;
   is_warmup?: number | boolean | null;
+  /** When the set was captured during the workout. Null for history recorded before capture timing existed. */
+  performed_at?: string | null;
+  /** How the values were captured. Null means unknown, never "typed". */
+  evidence?: SetEvidence | null;
   created_at: string;
 };
+
+/**
+ * Capture method for a set's values. `typed` and `pad` are direct observations;
+ * `planned` (confirmed as written) and `recalled` (filled in after the fact) are weaker.
+ */
+export type SetEvidence = "typed" | "flow" | "planned" | "recalled";
 
 export type BodyWeightLog = {
   id: number;
@@ -198,9 +220,27 @@ export type LoggedSetDraft = {
   isWarmup?: boolean;
   /** Explicit guided confirmation, valid only for the entered values and recording context. */
   observationConfirmation?: string;
+  /** When this row first held complete values during the workout. */
+  performedAt?: string;
+  /** How the values were captured; valid only while `capturedValues` still matches the row. */
+  evidence?: SetEvidence;
+  capturedValues?: string;
 };
 
+/** An exercise a template remembers, with the machine last used for it. */
+export type TemplateExercise = { exerciseId: number; machineProfileId: string | null };
+/** Remembered exercise lists, keyed by the template's muscles (see templateExerciseKey). */
+export type TemplateExercises = Record<string, TemplateExercise[]>;
+
+/** One planned exercise in an active workout. Whether it is done is derived from completed entries. */
+export type WorkoutSlot = { id: string; exerciseId: number; machineProfileId?: string | null };
+
+/** A running rest period, and which set started it so that set can be undone. */
+export type WorkoutRest = { startedAt: string; seconds: number; exerciseId?: number | null; setIndex?: number | null };
+
 export type ActiveWorkoutExerciseDraft = {
+  /** The planned slot this draft records; absent for workouts started before slots existed. */
+  slotId?: string;
   /** The prescription shown for this draft; it never supplies performed observations. */
   prescription?: import("@/domain/types").Prescription;
   /** Persisted operation identity, never a second copy of completed observations. */
@@ -248,6 +288,11 @@ export type ActiveWorkout = {
   templateId?: string;
   plannedMuscles: SplitMuscle[];
   completedExercises: CompletedWorkoutExercise[];
+  /** Today's exercises in order. The current one's draft lives in `currentExercise`. */
+  slots?: WorkoutSlot[];
+  rest?: WorkoutRest | null;
+  /** Rest length chosen by winding the rest ring; later rests in this workout start at it. */
+  restSeconds?: number;
   currentExercise: ActiveWorkoutExerciseDraft;
   pendingMuscle: MuscleGroup | null;
   schedulePrompt: "off_plan" | "replace" | null;

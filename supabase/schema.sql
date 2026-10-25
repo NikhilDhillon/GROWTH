@@ -46,6 +46,12 @@ create table if not exists public.exercises (
   created_at timestamptz not null default now()
 );
 
+-- Personal exercises: a null creator is the shared catalog. A personal row keeps a hidden
+-- unique key in name, so catalog names stay globally unique, and shows display_name.
+alter table public.exercises add column if not exists creator_id uuid references auth.users(id) on delete cascade;
+alter table public.exercises add column if not exists load_type text;
+alter table public.exercises add column if not exists display_name text;
+
 create table if not exists public.user_exercise_preferences (
   user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
   exercise_id bigint not null references public.exercises(id) on delete cascade,
@@ -268,8 +274,56 @@ create policy "profiles can be inserted by their owner" on public.profiles
 create policy "profiles can be updated by their owner" on public.profiles
   for update using (auth.uid() = id) with check (auth.uid() = id);
 
+-- Personal exercises are readable by their owner and by mutually accepted split-sync
+-- friends. Logging a friend's exercise records access, so history keeps its name
+-- after sharing ends. Clients never read or write the access table directly.
+create table if not exists public.custom_exercise_access (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  exercise_id bigint not null references public.exercises(id) on delete cascade,
+  granted_at timestamptz not null default now(),
+  primary key (user_id, exercise_id)
+);
+create index if not exists custom_exercise_access_exercise_id_idx on public.custom_exercise_access(exercise_id);
+alter table public.custom_exercise_access enable row level security;
+revoke all on public.custom_exercise_access from public, anon, authenticated;
+
+create or replace function public.shares_workouts(first_user uuid, second_user uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from public.split_sync_requests request
+    join public.friendships friendship on friendship.user_low = request.user_low and friendship.user_high = request.user_high
+      and friendship.status = 'accepted'
+    where request.status = 'accepted'
+      and request.user_low = least(first_user, second_user) and request.user_high = greatest(first_user, second_user)
+  );
+$$;
+revoke all on function public.shares_workouts(uuid, uuid) from public, anon, authenticated;
+
+-- Answers only for the caller, so it reveals nothing the read policy does not.
+create or replace function public.can_read_custom_exercise(p_owner uuid, p_exercise bigint)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select auth.uid() is not null and (
+    p_owner = auth.uid()
+    or exists (select 1 from public.custom_exercise_access access where access.user_id = auth.uid() and access.exercise_id = p_exercise)
+    or public.shares_workouts(auth.uid(), p_owner)
+  );
+$$;
+revoke all on function public.can_read_custom_exercise(uuid, bigint) from public, anon;
+grant execute on function public.can_read_custom_exercise(uuid, bigint) to authenticated;
+
+-- The historical policy name is kept; it now also admits own and shared personal exercises.
 create policy "standard exercises are readable by authenticated users" on public.exercises
-  for select using (auth.role() = 'authenticated');
+  for select using (auth.role() = 'authenticated' and (creator_id is null or public.can_read_custom_exercise(creator_id, id)));
 
 create policy "exercise preferences are owned by their user" on public.user_exercise_preferences
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -348,6 +402,8 @@ create policy "split sync requests are visible to participants" on public.split_
 
 drop index if exists exercises_user_id_idx;
 create unique index if not exists exercises_name_idx on public.exercises(name);
+-- Personal display names are unique per owner and may repeat across accounts.
+create unique index if not exists exercises_owner_display_name_idx on public.exercises(creator_id, lower(display_name)) where creator_id is not null;
 create index if not exists user_exercise_preferences_user_id_idx on public.user_exercise_preferences(user_id);
 create index if not exists user_exercise_preferences_exercise_id_idx on public.user_exercise_preferences(exercise_id);
 create index if not exists workout_sessions_user_id_date_idx on public.workout_sessions(user_id, workout_date desc);
@@ -2253,7 +2309,7 @@ begin
       select 1 from public.workout_sets candidate
       join public.exercises exercise on exercise.id = candidate.exercise_id
       where candidate.session_id = session.id and candidate.user_id = session.user_id
-        and public.is_portable_performance_exercise(exercise.name)
+        and exercise.creator_id is null and public.is_portable_performance_exercise(exercise.name)
     )
       and (select count(distinct candidate.exercise_id) from public.workout_sets candidate where candidate.session_id = session.id) = 1
       and not exists (
@@ -2263,7 +2319,7 @@ begin
       and not exists (
         select 1 from public.workout_sets candidate
         join public.exercises exercise on exercise.id = candidate.exercise_id
-        where candidate.session_id = session.id and not public.is_portable_performance_exercise(exercise.name)
+        where candidate.session_id = session.id and (exercise.creator_id is not null or not public.is_portable_performance_exercise(exercise.name))
       )
   )
   select jsonb_build_object(
@@ -2436,5 +2492,243 @@ grant execute on function public.request_split_sync(uuid, jsonb) to authenticate
 grant execute on function public.respond_split_sync(uuid, boolean) to authenticated;
 grant execute on function public.remove_split_sync(uuid) to authenticated;
 grant execute on function public.save_shared_training_split(jsonb) to authenticated;
+
+
+-- Set capture evidence (fresh-install copy of migration).
+-- Set capture metadata: when a set was captured during the workout and how its
+-- values were entered. It is not part of the observation, so it never enters a
+-- retry payload hash and existing receipts keep matching. Rows recorded before
+-- this migration keep unknown (null) metadata; nothing is backfilled or guessed.
+alter table public.workout_sets add column if not exists performed_at timestamptz;
+alter table public.workout_sets add column if not exists evidence text;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'workout_sets_evidence_check' and conrelid = 'public.workout_sets'::regclass) then
+    alter table public.workout_sets add constraint workout_sets_evidence_check check (evidence in ('typed', 'flow', 'planned', 'recalled'));
+  end if;
+end; $$;
+
+-- Same contract as Phase 2, plus optional per-set performedAt/evidence. A history
+-- edit keeps the original evidence of a set whose values are unchanged, marks a
+-- changed set as typed, and keeps capture timing with the set's position.
+create or replace function public.phase2_save_workout_session(
+  p_exercise_id bigint, p_workout_date date, p_notes text, p_machine_profile_id text,
+  p_sets jsonb, p_session_id bigint default null, p_request_id uuid default null,
+  p_input_unit text default null, p_recording_origin text default null
+)
+returns bigint
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  recording_user uuid := auth.uid();
+  saved_session public.workout_sessions%rowtype;
+  receipt public.workout_write_requests%rowtype;
+  normalized_sets jsonb;
+  input_hash text;
+  legacy_hash text;
+  input_payload jsonb;
+  row_value jsonb;
+  set_index integer := 0;
+  timestamp_value timestamptz;
+  previous_sets jsonb := '[]'::jsonb;
+  previous_set jsonb;
+  capture_time timestamptz;
+  capture_evidence text;
+begin
+  if recording_user is null then raise exception 'Please log in again.'; end if;
+  if p_exercise_id is null or p_workout_date is null then raise exception 'An exercise and workout date are required.'; end if;
+  if extract(year from p_workout_date) not between 1 and 9999 then raise exception 'A supported calendar date is required.'; end if;
+  if p_input_unit is not null and p_input_unit not in ('lb', 'kg') then raise exception 'Input units must be lb or kg.'; end if;
+  if p_recording_origin is not null and p_recording_origin not in ('manual', 'guided', 'import') then raise exception 'Invalid recording origin.'; end if;
+  if p_session_id is not null and p_recording_origin is not null then raise exception 'Recording origin cannot be changed when editing.'; end if;
+  if p_sets is null or jsonb_typeof(p_sets) <> 'array' or jsonb_array_length(p_sets) = 0 then
+    raise exception 'At least one observed set is required.';
+  end if;
+  if p_session_id is not null and p_request_id is not null then raise exception 'Create request IDs cannot be used for editing.'; end if;
+  for row_value in select value from jsonb_array_elements(p_sets) loop
+    if jsonb_typeof(row_value) <> 'object' or jsonb_typeof(row_value->'reps') is distinct from 'number'
+      or jsonb_typeof(row_value->'weight') is distinct from 'number'
+      or (row_value->>'reps')::numeric <= 0 or (row_value->>'reps')::numeric <> trunc((row_value->>'reps')::numeric)
+      or (row_value->>'weight')::numeric < 0
+      or (row_value ? 'isWarmup' and jsonb_typeof(row_value->'isWarmup') <> 'boolean') then
+      raise exception 'Observed sets require positive whole reps, non-negative weight and a valid warm-up flag.';
+    end if;
+    if jsonb_typeof(row_value->'evidence') = 'string' and row_value->>'evidence' not in ('typed', 'flow', 'planned', 'recalled')
+      or (row_value ? 'evidence' and jsonb_typeof(row_value->'evidence') not in ('string', 'null')) then
+      raise exception 'A set''s capture method is invalid.';
+    end if;
+    if row_value ? 'performedAt' and jsonb_typeof(row_value->'performedAt') not in ('string', 'null') then
+      raise exception 'A set''s capture time is invalid.';
+    end if;
+    if jsonb_typeof(row_value->'performedAt') = 'string' then
+      begin
+        capture_time := (row_value->>'performedAt')::timestamptz;
+      exception when others then
+        raise exception 'A set''s capture time is invalid.';
+      end;
+    end if;
+  end loop;
+  select jsonb_agg(jsonb_build_object('reps', (value->>'reps')::numeric::integer, 'weight', trim_scale((value->>'weight')::numeric),
+    'isWarmup', coalesce((value->>'isWarmup')::boolean, false)) order by ordinal)
+  into normalized_sets from jsonb_array_elements(p_sets) with ordinality as input(value, ordinal);
+  input_payload := jsonb_build_object('exerciseId', p_exercise_id, 'workoutDate', p_workout_date,
+    'notes', p_notes, 'machineProfileId', p_machine_profile_id, 'sets', normalized_sets);
+  legacy_hash := encode(sha256(convert_to(input_payload::text, 'UTF8')), 'hex');
+  if p_input_unit is not null then input_payload := input_payload || jsonb_build_object('inputUnit', p_input_unit); end if;
+  if p_recording_origin is not null then input_payload := input_payload || jsonb_build_object('recordingOrigin', p_recording_origin); end if;
+  input_hash := encode(sha256(convert_to(input_payload::text, 'UTF8')), 'hex');
+
+  perform pg_advisory_xact_lock(hashtextextended('growth:workouts:' || recording_user::text, 0));
+  if p_request_id is not null then
+    select * into receipt from public.workout_write_requests where user_id = recording_user and request_id = p_request_id;
+    if found then
+      if receipt.payload_hash <> input_hash and receipt.payload_hash <> legacy_hash then raise exception 'This save request was already used for different observations.'; end if;
+      if receipt.session_id is null then raise exception 'This saved workout was deleted. Start a new recording to save new work.'; end if;
+      return receipt.session_id;
+    end if;
+  end if;
+
+  if p_session_id is null then
+    timestamp_value := (p_workout_date::text || 'T12:00:00Z')::timestamptz;
+    insert into public.workout_sessions (user_id, workout_date, notes, machine_profile_id, input_unit, recording_origin, created_at)
+    values (recording_user, p_workout_date, p_notes, p_machine_profile_id, p_input_unit, p_recording_origin, timestamp_value)
+    returning * into saved_session;
+  else
+    select * into saved_session from public.workout_sessions where id = p_session_id and user_id = recording_user for update;
+    if not found then raise exception 'This workout is unavailable or does not belong to you.'; end if;
+    timestamp_value := saved_session.created_at;
+    update public.workout_sessions set workout_date = p_workout_date, notes = p_notes, machine_profile_id = p_machine_profile_id, input_unit = p_input_unit
+    where id = saved_session.id;
+    select coalesce(jsonb_agg(jsonb_build_object('reps', existing.reps, 'weight', existing.weight, 'isWarmup', existing.is_warmup,
+      'performedAt', existing.performed_at, 'evidence', existing.evidence) order by existing.set_number, existing.id), '[]'::jsonb)
+    into previous_sets from public.workout_sets existing where existing.session_id = saved_session.id;
+    delete from public.workout_sets where session_id = saved_session.id;
+  end if;
+
+  for row_value in select value from jsonb_array_elements(normalized_sets) loop
+    set_index := set_index + 1;
+    capture_time := (p_sets->(set_index - 1)->>'performedAt')::timestamptz;
+    capture_evidence := p_sets->(set_index - 1)->>'evidence';
+    if p_session_id is not null then
+      previous_set := previous_sets->(set_index - 1);
+      if previous_set is not null and (previous_set->>'reps')::integer = (row_value->>'reps')::integer
+        and (previous_set->>'weight')::numeric = (row_value->>'weight')::numeric
+        and (previous_set->>'isWarmup')::boolean = (row_value->>'isWarmup')::boolean then
+        capture_evidence := previous_set->>'evidence';
+      else
+        capture_evidence := coalesce(capture_evidence, 'typed');
+      end if;
+      capture_time := coalesce(capture_time, (previous_set->>'performedAt')::timestamptz);
+    end if;
+    insert into public.workout_sets (user_id, session_id, exercise_id, set_number, reps, weight, rir, is_warmup, performed_at, evidence, created_at)
+    values (recording_user, saved_session.id, p_exercise_id, set_index, (row_value->>'reps')::integer,
+      (row_value->>'weight')::numeric, null, (row_value->>'isWarmup')::boolean, capture_time, capture_evidence, timestamp_value);
+  end loop;
+  if p_request_id is not null then
+    insert into public.workout_write_requests (user_id, request_id, payload_hash, session_id)
+    values (recording_user, p_request_id, input_hash, saved_session.id);
+  end if;
+  return saved_session.id;
+end;
+$$;
+revoke all on function public.phase2_save_workout_session(bigint,date,text,text,jsonb,bigint,uuid,text,text) from public, anon, authenticated;
+
+-- Personal exercises: write rules (fresh-install copy of migration).
+-- Columns, the access table and the read policy are defined with the exercise
+-- catalog above. A personal exercise has a creator and its own load type, and its
+-- name never repeats a catalog name, so leaderboards stay catalog-only.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'exercises_load_type_check' and conrelid = 'public.exercises'::regclass) then
+    alter table public.exercises add constraint exercises_load_type_check
+      check (load_type in ('external', 'machine_stack', 'bodyweight_plus_load', 'bodyweight_minus_assistance'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'exercises_personal_shape_check' and conrelid = 'public.exercises'::regclass) then
+    alter table public.exercises add constraint exercises_personal_shape_check
+      check ((creator_id is null and display_name is null)
+        or (creator_id is not null and load_type is not null and char_length(display_name) between 2 and 60 and name = 'personal:' || id));
+  end if;
+end;
+$$;
+
+-- Every row that names an exercise must name one its owner may use: the catalog,
+-- their own, or one shared by a split-sync friend (which then stays theirs to read).
+create or replace function public.reject_unavailable_exercise()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  exercise_owner uuid;
+begin
+  select creator_id into exercise_owner from public.exercises where id = new.exercise_id;
+  -- Catalog movements; a missing id is left to the foreign key.
+  if exercise_owner is null or exercise_owner = new.user_id then return new; end if;
+  if exists (select 1 from public.custom_exercise_access where user_id = new.user_id and exercise_id = new.exercise_id) then return new; end if;
+  if public.shares_workouts(new.user_id, exercise_owner) then
+    insert into public.custom_exercise_access (user_id, exercise_id) values (new.user_id, new.exercise_id) on conflict do nothing;
+    return new;
+  end if;
+  raise exception 'That exercise is not shared with this account.';
+end;
+$$;
+revoke all on function public.reject_unavailable_exercise() from public, anon, authenticated;
+
+drop trigger if exists workout_sets_exercise_available on public.workout_sets;
+create trigger workout_sets_exercise_available before insert or update of exercise_id, user_id on public.workout_sets
+  for each row execute function public.reject_unavailable_exercise();
+drop trigger if exists user_exercise_preferences_exercise_available on public.user_exercise_preferences;
+create trigger user_exercise_preferences_exercise_available before insert or update of exercise_id, user_id on public.user_exercise_preferences
+  for each row execute function public.reject_unavailable_exercise();
+drop trigger if exists muscle_strength_config_exercise_available on public.muscle_strength_config;
+create trigger muscle_strength_config_exercise_available before insert or update of exercise_id, user_id on public.muscle_strength_config
+  for each row execute function public.reject_unavailable_exercise();
+drop trigger if exists leaderboard_score_snapshots_exercise_available on public.leaderboard_score_snapshots;
+create trigger leaderboard_score_snapshots_exercise_available before insert or update of exercise_id, user_id on public.leaderboard_score_snapshots
+  for each row execute function public.reject_unavailable_exercise();
+
+-- Creating is idempotent by name: a retry returns the exercise it already made.
+create or replace function public.create_custom_exercise(p_name text, p_primary_muscle text, p_load_type text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  creator uuid := auth.uid();
+  clean_name text := regexp_replace(btrim(coalesce(p_name, '')), '\s+', ' ', 'g');
+  catalog_name text;
+  saved public.exercises%rowtype;
+begin
+  if creator is null then raise exception 'Please log in again.'; end if;
+  if char_length(clean_name) not between 2 and 60 then raise exception 'Exercise names need 2 to 60 characters.'; end if;
+  if p_primary_muscle is null or p_primary_muscle not in ('Chest', 'Back', 'Shoulders', 'Traps', 'Biceps', 'Triceps', 'Legs', 'Core', 'Forearms') then
+    raise exception 'Choose the main muscle this exercise trains.';
+  end if;
+  if p_load_type is null or p_load_type not in ('external', 'machine_stack', 'bodyweight_plus_load', 'bodyweight_minus_assistance') then
+    raise exception 'Choose how this exercise is loaded.';
+  end if;
+  select name into catalog_name from public.exercises where creator_id is null and lower(name) = lower(clean_name);
+  if catalog_name is not null then raise exception '% is already in the exercise list.', catalog_name; end if;
+  insert into public.exercises (id, name, display_name, primary_muscle, secondary_muscle, is_strength_exercise, creator_id, load_type)
+  select reserved.id, 'personal:' || reserved.id, clean_name, p_primary_muscle, null, 0, creator, p_load_type
+  from (select nextval(pg_get_serial_sequence('public.exercises', 'id')) id) reserved
+  where (select count(*) from public.exercises where creator_id = creator) < 200
+  on conflict (creator_id, (lower(display_name))) where creator_id is not null do nothing
+  returning * into saved;
+  if saved.id is null then
+    select * into saved from public.exercises where creator_id = creator and lower(display_name) = lower(clean_name);
+    if saved.id is null then raise exception 'You can keep up to 200 personal exercises.'; end if;
+    if saved.primary_muscle <> p_primary_muscle or saved.load_type <> p_load_type then
+      raise exception 'You already have an exercise named %.', saved.display_name;
+    end if;
+  end if;
+  return to_jsonb(saved);
+end;
+$$;
+revoke all on function public.create_custom_exercise(text, text, text) from public, anon;
+grant execute on function public.create_custom_exercise(text, text, text) to authenticated;
 
 commit;

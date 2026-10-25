@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS exercises (
   primary_muscle TEXT NOT NULL,
   secondary_muscle TEXT,
   is_strength_exercise INTEGER DEFAULT 1,
-  created_at TEXT
+  created_at TEXT,
+  creator_id INTEGER,
+  load_type TEXT CHECK (load_type IN ('external', 'machine_stack', 'bodyweight_plus_load', 'bodyweight_minus_assistance'))
 );
 
 CREATE TABLE IF NOT EXISTS workout_sessions (
@@ -44,6 +46,8 @@ CREATE TABLE IF NOT EXISTS workout_sets (
   weight REAL,
   rir REAL,
   is_warmup INTEGER NOT NULL DEFAULT 0,
+  performed_at TEXT,
+  evidence TEXT CHECK (evidence IN ('typed', 'flow', 'planned', 'recalled')),
   created_at TEXT
 );
 
