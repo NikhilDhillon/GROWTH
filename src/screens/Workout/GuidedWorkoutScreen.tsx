@@ -16,7 +16,7 @@ import { FlowSetLogger } from "@/components/FlowSetLogger";
 import { FocusShell } from "@/components/FocusShell";
 import { emptyActiveExercise, splitMuscleToExerciseMuscle } from "@/constants/activeWorkout";
 import { ExerciseLoadType, getExerciseLoadType, isBodyweightLoadType, isMachineLoadType, supportsBarbellCalculator } from "@/constants/exercises";
-import { guidedCategoryLabels } from "@/constants/guidedWorkout";
+import { guidedCategoryLabels, restLimits } from "@/constants/guidedWorkout";
 import { preferredMachineProfile, profileAppliesToExercise } from "@/constants/machineProfiles";
 import { WorkoutValidationError } from "@/database/workoutWrite";
 import { isCalendarDate } from "@/domain/calendar";
@@ -42,7 +42,6 @@ import { formatBodyWeight, formatWeight, formatWeightInput, weightFromStorageUni
 import { createEmptyPlateCounts, formatElapsedWorkoutTime } from "@/utils/workout";
 import { createRequestId } from "@/utils/requestId";
 
-const defaultRestSeconds = 90;
 const planBuilderSuggestions = 12;
 
 /** Flow mode: the same workout as a full-screen, one-set-at-a-time flow with no app chrome. */
@@ -505,7 +504,7 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
         if (index < row || isLoggedSet(set) || Boolean(set.isWarmup) !== Boolean(original.isWarmup) || (set.weight.trim() && set.weight !== original.weight)) return set;
         return plannedSuggestion({ ...set, weight: load });
       });
-      const restPeriod: WorkoutRest = { startedAt: at, seconds: active.restSeconds ?? active.rest?.seconds ?? defaultRestSeconds, exerciseId: draft.exerciseId, setIndex: row };
+      const restPeriod: WorkoutRest = { startedAt: at, seconds: guidedWorkoutPreferences.restSeconds, exerciseId: draft.exerciseId, setIndex: row };
       return { ...active, rest: restPeriod, currentExercise: withPrescription(active, { ...draft, sets, requestUnit: draft.requestUnit ?? unitSystem }) };
     });
   }
@@ -550,13 +549,13 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
     });
   }
 
-  /** Winding the rest ring: the rest now ends this many seconds from now, and later rests default to its new length. */
+  /** Winding the rest ring: this rest now ends this many seconds from now, within 1:30 to 5:00 in all. The next rest starts at the setting again. */
   function setRestRemaining(seconds: number) {
     persist((active) => {
       if (!active.rest) return active;
-      const elapsed = Math.max(0, Math.round((Date.now() - Date.parse(active.rest.startedAt)) / 1000));
-      const length = Math.max(1, elapsed + Math.max(0, Math.round(seconds)));
-      return { ...active, restSeconds: length, rest: { ...active.rest, seconds: length } };
+      const elapsed = Math.max(0, (Date.now() - Date.parse(active.rest.startedAt)) / 1000);
+      const length = Math.round(Math.min(restLimits.max, Math.max(restLimits.min, elapsed + Math.max(0, seconds))));
+      return { ...active, rest: { ...active.rest, seconds: length } };
     });
   }
 

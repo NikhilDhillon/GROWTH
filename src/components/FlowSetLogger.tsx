@@ -5,11 +5,12 @@ import Svg, { Defs, LinearGradient, Line, Path, Polygon, Rect, Stop, Text as Svg
 const watchTicks = 60;
 /** The rest ring reads like a kitchen timer: a full turn is three minutes. */
 const restFaceSeconds = 180;
-const maxRestSeconds = 600;
+const secondsPerTick = restFaceSeconds / watchTicks;
 import { Check, Plus } from "lucide-react-native";
 
 import { FlowLoadGhost } from "@/components/FlowLoadGhost";
 import { Body } from "@/components/Text";
+import { restLimits } from "@/constants/guidedWorkout";
 import { isLoggedSet } from "@/services/workouts/setCapture";
 import type { FlowLoadGhostKind } from "@/services/workouts/loadGhost";
 import { angleAt, angleDelta, dialPoint, flowDial, FlowRing, maxRoll, ringAt, ringPath, rolledValue, settledRoll } from "@/services/workouts/flowDial";
@@ -371,8 +372,10 @@ export function FlowSetLogger(props: Props) {
 
 /**
  * Rest as a kitchen timer: the face is three minutes, one tick per three seconds,
- * lit while that time remains. Winding the ring clockwise adds time and
- * anticlockwise takes it away, ticking as it goes; letting go snaps to five seconds.
+ * lit while that time remains. Past three minutes the ring goes round again: an
+ * inner row lights from 12 o'clock for the time beyond. Winding the ring clockwise
+ * adds time and anticlockwise takes it away, keeping the whole rest within 1:30 to
+ * 5:00, ticking as it goes; letting go snaps to five seconds.
  */
 function RestWatch({ rest, caption, disabled, onAddSet, onAdjust }: {
   rest: FlowRest; caption: string; disabled: boolean; onAddSet: () => void; onAdjust?: (seconds: number) => void;
@@ -381,13 +384,20 @@ function RestWatch({ rest, caption, disabled, onAddSet, onAdjust }: {
   const [size, setSize] = useState(0);
   const [winding, setWinding] = useState<number | null>(null);
   const faceRef = useRef<View>(null);
-  const wind = useRef<{ last: number; seconds: number } | null>(null);
+  const wind = useRef<{ last: number; seconds: number; min: number; max: number } | null>(null);
   const shown = winding ?? Math.max(0, rest.remaining);
-  const lit = Math.ceil(Math.min(restFaceSeconds, shown) / (restFaceSeconds / watchTicks));
+  const lit = Math.ceil(Math.min(restFaceSeconds, shown) / secondsPerTick);
+  const lapLit = Math.ceil(Math.max(0, shown - restFaceSeconds) / secondsPerTick);
   const ticks = Array.from({ length: watchTicks }, (_, index) => {
     const major = index % 5 === 0;
     const inner = dialPointOn(major ? 84 : 87, index * 6), outer = dialPointOn(96, index * 6);
     return <Line key={index} x1={inner.x} y1={inner.y} x2={outer.x} y2={outer.y} stroke={index < lit ? palette.ink : palette.border}
+      strokeWidth={major ? 2.4 : 1.4} strokeLinecap="round" />;
+  });
+  const lapTicks = Array.from({ length: lapLit }, (_, index) => {
+    const major = index % 5 === 0;
+    const inner = dialPointOn(major ? 68 : 71, index * 6), outer = dialPointOn(79, index * 6);
+    return <Line key={`lap-${index}`} x1={inner.x} y1={inner.y} x2={outer.x} y2={outer.y} stroke={palette.ink}
       strokeWidth={major ? 2.4 : 1.4} strokeLinecap="round" />;
   });
 
@@ -414,10 +424,12 @@ function RestWatch({ rest, caption, disabled, onAddSet, onAdjust }: {
     const current = wind.current;
     const point = facePoint(event);
     if (!current || !point) return;
-    const before = Math.ceil(current.seconds / (restFaceSeconds / watchTicks));
-    current.seconds = Math.max(0, Math.min(maxRestSeconds, current.seconds + angleDelta(current.last, point.angle) / 6 * (restFaceSeconds / watchTicks)));
+    const before = current.seconds;
+    current.seconds = Math.max(current.min, Math.min(current.max, current.seconds + angleDelta(current.last, point.angle) / 6 * secondsPerTick));
     current.last = point.angle;
-    if (Math.ceil(current.seconds / (restFaceSeconds / watchTicks)) !== before) tickHaptic();
+    // A firmer tap when the ring starts or ends its second turn.
+    if ((before > restFaceSeconds) !== (current.seconds > restFaceSeconds)) confirmHaptic();
+    else if (Math.ceil(current.seconds / secondsPerTick) !== Math.ceil(before / secondsPerTick)) tickHaptic();
     setWinding(current.seconds);
   }
 
@@ -443,7 +455,9 @@ function RestWatch({ rest, caption, disabled, onAddSet, onAdjust }: {
         onResponderGrant={(event) => {
           const point = facePoint(event);
           if (!point) return;
-          wind.current = { last: point.angle, seconds: Math.max(0, rest.remaining) };
+          const elapsed = Math.max(0, rest.total - rest.remaining);
+          wind.current = { last: point.angle, seconds: Math.max(0, rest.remaining),
+            min: Math.max(0, restLimits.min - elapsed), max: Math.max(0, restLimits.max - elapsed) };
           setWinding(wind.current.seconds);
         }}
         onResponderMove={turn}
@@ -456,7 +470,7 @@ function RestWatch({ rest, caption, disabled, onAddSet, onAdjust }: {
         accessibilityActions={[{ name: "increment" }, { name: "decrement" }]}
         onAccessibilityAction={(event) => onAdjust?.(Math.max(0, Math.round(rest.remaining) + (event.nativeEvent.actionName === "increment" ? 15 : -15)))}
       >
-        <Svg width={size} height={size} viewBox="0 0 200 200" pointerEvents="none">{ticks}</Svg>
+        <Svg width={size} height={size} viewBox="0 0 200 200" pointerEvents="none">{ticks}{lapTicks}</Svg>
         <View style={styles.watchCenter} pointerEvents="box-none">
           <Body style={styles.watchTime}>{formatRest(Math.round(shown))}</Body>
           <Body style={styles.heroCaption}>{caption}</Body>

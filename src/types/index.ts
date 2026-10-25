@@ -40,6 +40,8 @@ export type GuidedWorkoutPreferences = {
   exerciseCategories: Record<string, GuidedExerciseCategory>;
   /** Log each set by turning a dial (flow mode) instead of editing the set list (classic). */
   flowMode: boolean;
+  /** Flow mode: every rest starts at this many seconds; winding the ring changes only that rest. */
+  restSeconds: number;
 };
 
 export type Exercise = {
@@ -291,8 +293,6 @@ export type ActiveWorkout = {
   /** Today's exercises in order. The current one's draft lives in `currentExercise`. */
   slots?: WorkoutSlot[];
   rest?: WorkoutRest | null;
-  /** Rest length chosen by winding the rest ring; later rests in this workout start at it. */
-  restSeconds?: number;
   currentExercise: ActiveWorkoutExerciseDraft;
   pendingMuscle: MuscleGroup | null;
   schedulePrompt: "off_plan" | "replace" | null;

@@ -609,17 +609,21 @@ describe("flow mode", () => {
     expect(logger(renderFocus()).props).toMatchObject({ editing: false, row: 1 });
   });
 
-  it("winding the rest ring changes this rest and the ones after it, even if skipped", async () => {
+  it("starts every rest at the rest setting; winding the ring changes only that rest, within 1:30 to 5:00", async () => {
+    state.current.guidedWorkoutPreferences = { ...createDefaultGuidedWorkoutPreferences(), flowMode: true, restSeconds: 150 };
     logger(renderFocus()).props.onLog();
-    await vi.waitFor(() => expect(state.current.activeWorkout.rest).toMatchObject({ seconds: 90 }));
-    logger(renderFocus()).props.onAdjustRest(120);
-    await vi.waitFor(() => expect(state.current.activeWorkout.restSeconds).toBeGreaterThanOrEqual(120));
-    const length = state.current.activeWorkout.restSeconds;
-    expect(state.current.activeWorkout.rest.seconds).toBe(length);
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest).toMatchObject({ setIndex: 0, seconds: 150 }));
+    logger(renderFocus()).props.onAdjustRest(240);
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest.seconds).toBeGreaterThanOrEqual(240));
+    logger(renderFocus()).props.onAdjustRest(900);
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest.seconds).toBe(300));
+    logger(renderFocus()).props.onAdjustRest(0);
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest.seconds).toBe(90));
     logger(renderFocus()).props.onSkipRest();
     await vi.waitFor(() => expect(state.current.activeWorkout.rest).toBeNull());
     logger(renderFocus()).props.onLog();
-    await vi.waitFor(() => expect(state.current.activeWorkout.rest).toMatchObject({ setIndex: 1, seconds: length }));
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest).toMatchObject({ setIndex: 1, seconds: 150 }));
+    expect(state.current.activeWorkout).not.toHaveProperty("restSeconds");
   });
 
   it("keeps the classic page as the plain set list with Save", () => {

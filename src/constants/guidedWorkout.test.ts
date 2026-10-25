@@ -11,4 +11,14 @@ describe("workout logging preference", () => {
     expect(chosen.flowMode).toBe(true);
     expect(normalizeGuidedWorkoutPreferences(JSON.parse(JSON.stringify(chosen)))).toEqual(chosen);
   });
+
+  it("keeps flow mode's rest between 1:30 and 5:00, in five-second steps", () => {
+    expect(createDefaultGuidedWorkoutPreferences().restSeconds).toBe(90);
+    expect(normalizeGuidedWorkoutPreferences({}).restSeconds).toBe(90);
+    expect(normalizeGuidedWorkoutPreferences({ restSeconds: "120" }).restSeconds).toBe(90);
+    expect(normalizeGuidedWorkoutPreferences({ restSeconds: 240 }).restSeconds).toBe(240);
+    expect(normalizeGuidedWorkoutPreferences({ restSeconds: 30 }).restSeconds).toBe(90);
+    expect(normalizeGuidedWorkoutPreferences({ restSeconds: 600 }).restSeconds).toBe(300);
+    expect(normalizeGuidedWorkoutPreferences({ restSeconds: 137 }).restSeconds).toBe(135);
+  });
 });

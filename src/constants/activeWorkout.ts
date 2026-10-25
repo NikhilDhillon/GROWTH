@@ -84,7 +84,6 @@ export function normalizeActiveWorkout(value: unknown): ActiveWorkout | null {
     completedExercises: Array.isArray(input.completedExercises) ? input.completedExercises : [],
     ...(input.slots !== undefined ? { slots: normalizeWorkoutSlots(input.slots) ?? [] } : {}),
     ...(input.rest !== undefined ? { rest: normalizeWorkoutRest(input.rest) } : {}),
-    ...(Number.isSafeInteger(input.restSeconds) && Number(input.restSeconds) > 0 ? { restSeconds: Number(input.restSeconds) } : {}),
     currentExercise: normalizeActiveExercise(input.currentExercise),
     pendingMuscle: input.pendingMuscle ?? null,
     schedulePrompt: input.schedulePrompt === "off_plan" || input.schedulePrompt === "replace" ? input.schedulePrompt : null,
