@@ -131,6 +131,8 @@ class RestTimerService : Service() {
       .setUsesChronometer(true)
       .setVisibility(Notification.VISIBILITY_PUBLIC)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) builder.setChronometerCountDown(true)
+    // Android 12 and later otherwise hold a foreground service's notification back for up to ten seconds.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
       builder.setCategory(Notification.CATEGORY_WORKOUT)
         .setStyle(Notification.ProgressStyle()

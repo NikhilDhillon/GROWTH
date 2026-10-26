@@ -21,7 +21,8 @@ vi.mock("react", async (importOriginal) => ({
     return hooks.slots[index];
   }
 }));
-vi.mock("react-native", () => ({ useColorScheme: () => "light", Platform: { OS: "ios" }, Pressable: "Pressable", View: "View", StyleSheet: { create: (styles: unknown) => styles } }));
+vi.mock("react-native", () => ({ useColorScheme: () => "light", Platform: { OS: "ios" }, Pressable: "Pressable", View: "View", StyleSheet: { create: (styles: unknown) => styles },
+  PanResponder: { create: (pan: unknown) => ({ panHandlers: { pan } }) } }));
 vi.mock("react-native-svg", () => ({ default: "Svg", Circle: "Circle", Defs: "Defs", Line: "Line", LinearGradient: "LinearGradient", Path: "Path", Stop: "Stop", Text: "SvgText" }));
 vi.mock("@/components/Text", () => ({ Body: "Body" }));
 vi.mock("@/utils/touch", () => ({ pressableFeedback: (styles: unknown) => styles }));
@@ -115,9 +116,14 @@ describe("mobile chart inspection", () => {
   it("scrubs to the nearest point while dragging across the chart", () => {
     const props = { points: series(5) };
     const tree = render(props);
-    const surface = elements(tree).find((element) => element.type === "View" && element.props.onTouchMove)!;
+    const pan = elements(tree).find((element) => element.type === "View" && element.props.pan)!.props.pan;
+    // A horizontal drag takes over from the page; a vertical one is left to scroll it.
+    expect(pan.onMoveShouldSetPanResponderCapture({}, { dx: 20, dy: 4 })).toBe(true);
+    expect(pan.onMoveShouldSetPanResponderCapture({}, { dx: 4, dy: 20 })).toBe(false);
+    expect(pan.onPanResponderTerminationRequest()).toBe(false);
     const third = elements(tree).filter((element) => element.type === "Circle" && element.props.r === 2.5)[2];
-    surface.props.onTouchMove({ nativeEvent: { locationX: third.props.cx + 3 } });
+    // The finger's screen position counts, not locationX, which a point's tap target measures from its own corner.
+    pan.onPanResponderMove({ nativeEvent: { pageX: third.props.cx + 3, locationX: 5 } });
     const scrubbed = render(props);
     expect(text(scrubbed)).toContain("102.0");
     expect(text(scrubbed)).toContain("2026-10-03 · Oct 3");

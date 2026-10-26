@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { GestureResponderEvent, Platform, Pressable, StyleSheet, View } from "react-native";
+import { GestureResponderEvent, PanResponder, Platform, Pressable, StyleSheet, View } from "react-native";
 import Svg, { Circle, Defs, Line, LinearGradient, Path, Stop, Text as SvgText } from "react-native-svg";
 
 import { Body } from "@/components/Text";
@@ -51,6 +51,16 @@ export function LineGraph({
   const [showAll, setShowAll] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(340);
   const chartRef = useRef<View>(null);
+  /** The chart's left edge on screen, so a phone touch can be placed whatever view it lands on. */
+  const chartLeft = useRef(0);
+  const scrubRef = useRef<(event: GestureResponderEvent) => void>(() => undefined);
+  // On phones a horizontal drag takes the gesture from the page, so scrolling cannot cut a scrub short; vertical drags still scroll.
+  const scrubber = useRef(PanResponder.create({
+    onMoveShouldSetPanResponderCapture: (_event, gesture) => Math.abs(gesture.dx) > 6 && Math.abs(gesture.dx) > Math.abs(gesture.dy),
+    onPanResponderGrant: (event) => scrubRef.current(event),
+    onPanResponderMove: (event) => scrubRef.current(event),
+    onPanResponderTerminationRequest: () => false
+  })).current;
   const gradientId = useRef(`line-graph-area-${Math.random().toString(36).slice(2, 10)}`).current;
   const pointLimit = showAll ? Number.POSITIVE_INFINITY : Math.max(1, maxPoints);
   const domainSource = xLabels?.length ? xLabels : points.map(pointDomainValue);
@@ -133,6 +143,8 @@ export function LineGraph({
       const clientX = touch?.clientX ?? native.clientX;
       if (typeof clientX === "number") return clientX - node.getBoundingClientRect().left;
     }
+    // locationX is measured from whichever view the finger is on, such as a point's tap target, so phones use the screen position.
+    if (Platform.OS !== "web" && typeof native.pageX === "number") return native.pageX - chartLeft.current;
     return typeof native.locationX === "number" ? native.locationX : null;
   }
 
@@ -140,6 +152,7 @@ export function LineGraph({
     const x = chartX(event);
     if (x !== null) setActiveKey(pointIdentity(nearestTo(x).point));
   }
+  scrubRef.current = scrubTo;
 
   const webPointer = Platform.OS === "web" ? {
     onPointerMove: (event: { nativeEvent: Record<string, any> }) => {
@@ -165,9 +178,8 @@ export function LineGraph({
       <View
         ref={chartRef}
         style={[styles.chart, { height }]}
-        onTouchStart={scrubTo}
-        onTouchMove={scrubTo}
-        {...webPointer}
+        onLayout={() => chartRef.current?.measureInWindow((x) => { chartLeft.current = x; })}
+        {...(Platform.OS === "web" ? { onTouchStart: scrubTo, onTouchMove: scrubTo, ...webPointer } : scrubber.panHandlers)}
       >
         <Svg width={width} height={height}>
           <Defs>
