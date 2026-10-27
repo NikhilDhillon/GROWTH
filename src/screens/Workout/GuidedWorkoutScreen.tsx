@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, TextInput, useWindowDimensions, View } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { Check, ChevronDown, ChevronRight, Plus, Search, Timer, X } from "lucide-react-native";
 
@@ -14,6 +14,8 @@ import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { SetComposerTarget, VisualSetComposer } from "@/components/VisualSetComposer";
 import { FlowSetLogger } from "@/components/FlowSetLogger";
 import { FocusShell } from "@/components/FocusShell";
+import { HoldButton } from "@/components/HoldButton";
+import { PlanChip, PlanChips } from "@/components/PlanChips";
 import { emptyActiveExercise, splitMuscleToExerciseMuscle } from "@/constants/activeWorkout";
 import { ExerciseLoadType, getExerciseLoadType, isBodyweightLoadType, isMachineLoadType, supportsBarbellCalculator } from "@/constants/exercises";
 import { guidedCategoryLabels, restLimits } from "@/constants/guidedWorkout";
@@ -31,9 +33,11 @@ import { existingExerciseNamed } from "@/services/workouts/customExercises";
 import { finalizeSetCapture, flowCapturedSet, isLoggedSet, plannedSuggestion, stampSetCapture } from "@/services/workouts/setCapture";
 import { expectedReps, flowHistoryForRow, nextFlowRow, plannedFlowLoad } from "@/services/workouts/setPrediction";
 import { flowLoadGhost } from "@/services/workouts/loadGhost";
+import { flowLoadStep, loadStepChoices, loadStepKey } from "@/services/workouts/loadStep";
+import { latestSession, shortAgo, timeAgo } from "@/services/workouts/lastPerformance";
 import { clearRestAlert, primeRestAlerts, showRestAlert } from "@/services/workouts/restAlerts";
 import { learnedTemplateExercises, sameTemplateExercises, templateExerciseKey } from "@/services/workouts/templateExercises";
-import { appendWorkoutSlot, removeWorkoutSlot, slotForChosenExercise, workoutSlotProgress } from "@/services/workouts/workoutSlots";
+import { appendWorkoutSlot, moveWorkoutSlot, pairWorkoutSlots, removeWorkoutSlot, slotForChosenExercise, supersetNext, supersetSlots, unlinkWorkoutSlot, workoutSlotProgress } from "@/services/workouts/workoutSlots";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { ActiveWorkout, ActiveWorkoutExerciseDraft, CompletedGuidedWorkout, Exercise, LoggedSetDraft, MachineProfile, UnitSystem, WorkoutRest, WorkoutSession, WorkoutSet, WorkoutSlot } from "@/types";
 import { createThemedStyles } from "@/utils/themedStyles";
@@ -138,6 +142,9 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
   const activeWorkoutFinalizing = useFitnessStore((state) => state.activeWorkoutFinalizing);
   const saveTemplateExercises = useFitnessStore((state) => state.saveTemplateExercises);
   const createCustomExercise = useFitnessStore((state) => state.createCustomExercise);
+  const saveGuidedWorkoutPreferences = useFitnessStore((state) => state.saveGuidedWorkoutPreferences);
+  const deleteWorkoutLog = useFitnessStore((state) => state.deleteWorkoutLog);
+  const { height: windowHeight } = useWindowDimensions();
   const [clock, setClock] = useState(Date.now());
   const [confirmEnd, setConfirmEnd] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -154,7 +161,13 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
   const [exerciseSheet, setExerciseSheet] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
   const [editingRow, setEditingRow] = useState<{ exercise: string; row: number } | null>(null);
+  const [swapMode, setSwapMode] = useState<"skip" | "later">("skip");
+  const [machineSheet, setMachineSheet] = useState(false);
   const autoSaved = useRef<string | null>(null);
+  /** What to open once the current exercise's sets are saved, e.g. after a swap. */
+  const pendingOpen = useRef<{ exerciseId: number } | { slotId: string } | null>(null);
+  /** Finishing or discarding: nothing else may change or open the draft meanwhile. */
+  const closing = useRef(false);
 
   useEffect(() => {
     const interval = setInterval(() => setClock(Date.now()), 1000);
@@ -254,7 +267,17 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
   ];
   const flowMode = focus;
   const flowRow = flowMode && selectedExercise && !pendingSave ? nextFlowRow(current.sets) : null;
-  const flowStep = flowLoadStep(unitSystem, isMachineLoadType(loadType) ? selectedMachineProfile : null);
+  const machineLoad = isMachineLoadType(loadType);
+  const loadStepId = selectedExercise ? loadStepKey(selectedExercise.id, machineLoad ? current.machineProfileId : null, unitSystem) : null;
+  // A machine's own history shows its increment: the finest jump between loads used on it.
+  const machineLoads = useMemo(() => {
+    if (!selectedExercise || !machineLoad) return undefined;
+    const onMachine = new Set(sessions.filter((session) => (session.machine_profile_id ?? null) === (current.machineProfileId ?? null)).map((session) => session.id));
+    return sets.filter((set) => set.exercise_id === selectedExercise.id && onMachine.has(set.session_id) && !set.is_warmup)
+      .map((set) => Number(formatWeightInput(set.weight, unitSystem)));
+  }, [selectedExercise, machineLoad, sessions, sets, current.machineProfileId, unitSystem]);
+  const flowStep = flowLoadStep({ chosen: loadStepId ? guidedWorkoutPreferences.loadSteps?.[loadStepId] : undefined, unitSystem,
+    profile: machineLoad ? selectedMachineProfile : null, machineLoads });
   /** Where the dial starts for the next row: its planned load and the reps you will probably get. */
   const flowPrediction = useMemo(() => {
     if (flowRow === null || !selectedExercise) return null;
@@ -280,6 +303,26 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
   const restActive = Boolean(rest && restRemaining > 0);
   const exerciseLogged = flowMode && Boolean(selectedExercise) && !pendingSave && flowRow === null && loggedSetCount > 0;
   const autoSaveKey = `${workout.startedAt}:${current.slotId ?? current.exerciseId}:${loggedSetCount}`;
+  const partners = supersetSlots(workout, current.slotId).filter((slot) => slot.id !== current.slotId)
+    .map((slot) => exercises.find((exercise) => exercise.id === slot.exerciseId)?.name ?? "Exercise");
+  const lastTime = flowMode && recommendation?.latest?.sets.length
+    ? `Last time ${recommendation.latest.sets.map((set) => isBodyweightLoadType(loadType) && set.weight === 0 ? `${set.reps} reps`
+      : `${formatFlowLoad(Number(formatWeightInput(set.weight, unitSystem)))} × ${set.reps}`).join(", ")} · ${timeAgo(recommendation.latest.date, workout.workoutDate)}`
+    : null;
+  // Swapping offers the same muscle first, most recently trained first, with what you did then.
+  const alternatives = useMemo(() => {
+    if (!flowMode || !selectedExercise) return [];
+    const done = new Set(activeWorkout.completedExercises.map((entry) => entry.exerciseId));
+    return exercises.filter((exercise) => exercise.id !== selectedExercise.id && exercise.primary_muscle === selectedExercise.primary_muscle && !done.has(exercise.id))
+      .map((exercise) => ({ exercise, last: latestSession({ exerciseId: exercise.id, sessions, sets, before: workout.workoutDate }) }))
+      .sort((a, b) => (b.last?.date ?? "").localeCompare(a.last?.date ?? "") || a.exercise.name.localeCompare(b.exercise.name))
+      .slice(0, 5)
+      .map(({ exercise, last }) => {
+        const top = last?.sets.reduce((best, set) => set.weight > best.weight ? set : best, last.sets[0]);
+        const load = top ? isBodyweightLoadType(getExerciseLoadType(exercise)) && top.weight === 0 ? "BW" : formatFlowLoad(Number(formatWeightInput(top.weight, unitSystem))) : null;
+        return { exercise, detail: top && last ? `${load} × ${top.reps} · ${shortAgo(last.date, workout.workoutDate)}` : "new" };
+      });
+  }, [flowMode, selectedExercise, activeWorkout.completedExercises, exercises, sessions, sets, workout.workoutDate, unitSystem]);
 
   // Flow mode never asks to save: once the rest after an exercise's last set ends, it saves and the next one opens.
   useEffect(() => {
@@ -306,7 +349,7 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
   }, [focus]);
 
   function persist(updater: (workout: ActiveWorkout) => ActiveWorkout) {
-    if (savingRef.current || useFitnessStore.getState().activeWorkoutFinalizing || useFitnessStore.getState().activeDraftConflict) return;
+    if (closing.current || savingRef.current || useFitnessStore.getState().activeWorkoutFinalizing || useFitnessStore.getState().activeDraftConflict) return;
     const latest = useFitnessStore.getState().activeWorkout;
     if (!latest || latest.startedAt !== workout.startedAt) return;
     if (latest.currentExercise.requestId) {
@@ -345,10 +388,14 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
     if (selectedExercise && !current.prescription && !pendingSave && !recordingLocked) updateDraft({});
   }, [selectedExercise?.id, current.prescription, pendingSave, recordingLocked]);
 
-  // When an exercise is saved (or removed), the next planned one opens by itself.
+  // When an exercise is saved (or removed), the one you picked opens, else the next planned one (resuming a set-aside one).
   useEffect(() => {
-    if (current.exerciseId !== null || pendingSave || recordingLocked || !nextSlot) return;
-    activateSlot(nextSlot);
+    if (current.exerciseId !== null || pendingSave || recordingLocked || closing.current) return;
+    const open = pendingOpen.current;
+    pendingOpen.current = null;
+    if (open && "exerciseId" in open) return chooseExercise(open.exerciseId);
+    const slot = open ? workout.slots?.find((item) => item.id === open.slotId) ?? nextSlot : nextSlot;
+    if (slot) activateSlot(slot);
   }, [current.exerciseId, nextSlot?.id, pendingSave, recordingLocked]);
 
   function updateDisplayedSets(sets: LoggedSetDraft[]) {
@@ -383,8 +430,9 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
     }).catch((caught) => setError(errorMessage(caught)));
   }
 
-  async function completeCurrent(endAfterSave: boolean) {
-    if (savingRef.current || useFitnessStore.getState().activeWorkoutFinalizing || useFitnessStore.getState().activeDraftConflict) return;
+  /** Saves the current exercise; true once its sets are recorded (or there was nothing to record before finishing). */
+  async function completeCurrent(endAfterSave: boolean): Promise<boolean> {
+    if (savingRef.current || useFitnessStore.getState().activeWorkoutFinalizing || useFitnessStore.getState().activeDraftConflict) return false;
     setSaving(true);
     savingRef.current = true;
     setError(null);
@@ -403,7 +451,7 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
       if (endAfterSave && !hasEnteredSets(draft.sets)) {
         if (draft.requestId) throw new Error("A save is pending. Retry it before discarding or finishing this workout.");
         await finish(snapshot);
-        return;
+        return true;
       }
       if (!exercise) throw new Error("Choose an exercise and enter working sets first.");
       const recordingLoadType = getExerciseLoadType(exercise);
@@ -453,9 +501,10 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
       if (!recordedEntry) throw new Error("This entry was already recorded by an earlier attempt. Its original data was preserved; review it in Logs before reconciling this draft.");
       if (endAfterSave && !latest.activeWorkout.currentExercise.exerciseId) {
         await finish(latest.activeWorkout);
-        return;
+        return true;
       }
       if (latest.activeWorkout.currentExercise.exerciseId) setError("Exercise saved. A newer draft was kept and the workout remains open; review it before continuing.");
+      return true;
     } catch (caught) {
       // Validation of a reused request proves nothing about its earlier uncertain attempt.
       if (caught instanceof WorkoutValidationError && newRequestId && !canonicalCommitted) {
@@ -465,11 +514,12 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
             await updateActiveWorkout({ ...latest, currentExercise: { ...latest.currentExercise, requestId: undefined, requestUnit: undefined } });
           } catch (releaseError) {
             setError(`${errorMessage(caught)} ${errorMessage(releaseError)}`);
-            return;
+            return false;
           }
         }
       }
       setError(errorMessage(caught));
+      return false;
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -506,7 +556,8 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
     catch { useFitnessStore.setState({ operationNotice: "Workout saved. Its exercise list could not be remembered for next time." }); }
   }
 
-  function logFlowSet() {
+  /** Logs the dialed set; holding Done makes it the last, dropping the sets still waiting. */
+  function logFlowSet(last = false) {
     if (flowRow === null || !dialValues) return;
     primeRestAlerts();
     const at = new Date().toISOString();
@@ -518,14 +569,136 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
       if (nextFlowRow(draft.sets) !== row) return active;
       const original = draft.sets[row];
       // A different load carries down to the waiting rows that shared the planned load; they stay suggestions.
-      const sets = draft.sets.map((set, index) => {
+      const logged = draft.sets.map((set, index) => {
         if (index === row) return flowCapturedSet(set, { reps, weight: load }, at);
         if (index < row || isLoggedSet(set) || Boolean(set.isWarmup) !== Boolean(original.isWarmup) || (set.weight.trim() && set.weight !== original.weight)) return set;
         return plannedSuggestion({ ...set, weight: load });
       });
+      const sets = last ? logged.filter(isLoggedSet) : logged;
       const restPeriod: WorkoutRest = { startedAt: at, seconds: guidedWorkoutPreferences.restSeconds, exerciseId: draft.exerciseId, setIndex: row };
-      return { ...active, rest: restPeriod, currentExercise: withPrescription(active, { ...draft, sets, requestUnit: draft.requestUnit ?? unitSystem }) };
+      return afterFlowSet({ ...active, currentExercise: withPrescription(active, { ...draft, sets, requestUnit: draft.requestUnit ?? unitSystem }) }, restPeriod);
     });
+  }
+
+  /** Whether a slot's exercise still has sets to do: the open one, a set-aside one, or one not started. */
+  function setsLeft(active: ActiveWorkout, slotId: string) {
+    const draft = active.currentExercise.slotId === slotId ? active.currentExercise : active.parkedExercises?.find((item) => item.slotId === slotId);
+    return draft ? nextFlowRow(draft.sets) !== null : true;
+  }
+
+  /** After a set a superset goes straight to the next partner with sets left, resting once per round; anything else rests. */
+  function afterFlowSet(active: ActiveWorkout, restPeriod: WorkoutRest): ActiveWorkout {
+    const slotId = active.currentExercise.slotId;
+    const group = supersetSlots(active, slotId);
+    if (!slotId || !group.length) return { ...active, rest: restPeriod };
+    const next = supersetNext(group.map((slot) => slot.id), slotId, (id) => setsLeft(active, id));
+    const moved = next.slotId && next.slotId !== slotId ? switchToSlot(active, next.slotId) : active;
+    return { ...moved, rest: next.rest ? restPeriod : null };
+  }
+
+  /** "That was the last set": the waiting sets are dropped. A superset carries on with a partner that has sets left. */
+  function endCurrentHere() {
+    persist((active) => {
+      const draft = active.currentExercise;
+      const sets = draft.sets.filter(isLoggedSet);
+      if (!sets.length || sets.length === draft.sets.length) return active;
+      const ended = { ...active, currentExercise: withPrescription(active, { ...draft, sets }) };
+      const group = supersetSlots(ended, draft.slotId);
+      if (!draft.slotId || !group.length) return ended;
+      const next = supersetNext(group.map((slot) => slot.id), draft.slotId, (id) => id !== draft.slotId && setsLeft(ended, id));
+      return next.slotId ? switchToSlot(ended, next.slotId) : ended;
+    });
+  }
+
+  /** Drops the open exercise from today's plan before any set of it is logged. */
+  function skipCurrentToday() {
+    if (current.slotId) removeSlot(current.slotId);
+    else persist((active) => ({ ...active, currentExercise: emptyActiveExercise() }));
+  }
+
+  /**
+   * Opens a planned slot. The open exercise, if started, is set aside with its
+   * slot (a superset partner between its sets), or is let go if untouched.
+   */
+  function switchToSlot(active: ActiveWorkout, slotId: string): ActiveWorkout {
+    const slot = active.slots?.find((item) => item.id === slotId);
+    if (!slot) return active;
+    const draft = active.currentExercise;
+    const parked = active.parkedExercises ?? [];
+    const resumed = parked.find((item) => item.slotId === slotId);
+    const keep = draft.slotId && draft.exerciseId !== null && hasLoggedSets(draft.sets) ? [draft] : [];
+    const parkedExercises = [...parked.filter((item) => item.slotId !== slotId && item.slotId !== draft.slotId), ...keep];
+    const opened = resumed ?? withPrescription(active, { ...draft, ...exerciseDraft(slot.exerciseId, slot) });
+    return { ...active, currentExercise: opened, parkedExercises };
+  }
+
+  /** Finish: the open exercise and any set-aside one with logged sets are saved first. Nothing else opens meanwhile. */
+  async function finishAll() {
+    if (closing.current) return;
+    closing.current = true;
+    try {
+      for (let guard = 0; guard < 12; guard += 1) {
+        const latest = useFitnessStore.getState().activeWorkout;
+        if (!latest || latest.startedAt !== workout.startedAt) return;
+        const draft = latest.currentExercise;
+        if (draft.exerciseId !== null && (draft.requestId || hasLoggedSets(draft.sets))) {
+          if (!(await completeCurrent(false))) return;
+          const after = useFitnessStore.getState().activeWorkout?.currentExercise;
+          if (after?.exerciseId === draft.exerciseId && after.slotId === draft.slotId) return;
+          continue;
+        }
+        const waiting = latest.parkedExercises?.find((item) => hasLoggedSets(item.sets));
+        if (!waiting) break;
+        try {
+          await updateActiveWorkout({ ...latest, currentExercise: waiting, parkedExercises: latest.parkedExercises!.filter((item) => item !== waiting) });
+        } catch (caught) {
+          setError(errorMessage(caught));
+          return;
+        }
+      }
+      await finishFromAction();
+    } finally {
+      closing.current = false;
+    }
+  }
+
+  /** Discarding retires the workout and deletes what it saved; it is confirmed by holding. */
+  async function discardWorkout() {
+    if (closing.current || savingRef.current || useFitnessStore.getState().activeWorkoutFinalizing || useFitnessStore.getState().activeDraftConflict) return;
+    const latest = useFitnessStore.getState().activeWorkout;
+    if (!latest || latest.startedAt !== workout.startedAt) return;
+    if (latest.currentExercise.requestId) {
+      setError("A save is pending. Retry it before discarding or finishing this workout.");
+      return;
+    }
+    const sessionIds = latest.completedExercises.map((entry) => entry.sessionId).filter((id): id is number => Number.isSafeInteger(id));
+    closing.current = true;
+    savingRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      await finishActiveWorkout();
+      let kept = 0;
+      for (const sessionId of sessionIds) {
+        try { await deleteWorkoutLog(sessionId); } catch { kept += 1; }
+      }
+      if (kept) useFitnessStore.setState({ operationNotice: `Workout discarded. ${kept} saved ${kept === 1 ? "exercise" : "exercises"} could not be deleted; remove ${kept === 1 ? "it" : "them"} in History.` });
+      navigation.navigate("Home");
+    } catch (caught) {
+      closing.current = false;
+      setError(errorMessage(caught));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }
+
+  /** Remembers the weight dial's step for this exercise on this machine. */
+  function saveLoadStep(step: number) {
+    if (!loadStepId) return;
+    const preferences = useFitnessStore.getState().guidedWorkoutPreferences;
+    void saveGuidedWorkoutPreferences({ ...preferences, loadSteps: { ...preferences.loadSteps, [loadStepId]: step } })
+      .catch((caught) => setError(errorMessage(caught)));
   }
 
   /** Saves the corrected values of a reopened set, keeping when it was performed. */
@@ -560,11 +733,17 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
     return loadType === "bodyweight_plus_load" ? `${unitSystem} added` : loadType === "bodyweight_minus_assistance" ? `${unitSystem} assist` : unitSystem;
   }
 
-  function addFlowSet() {
+  /** A working set goes at the end; a warm-up is the next set, at about half the working load. */
+  function addFlowSet(warmup = false) {
     persist((active) => {
       const draft = active.currentExercise;
       const lastWorking = [...draft.sets].reverse().find((set) => !set.isWarmup);
-      return { ...active, currentExercise: withPrescription(active, { ...draft, sets: [...draft.sets, { reps: "", weight: lastWorking?.weight ?? "" }] }) };
+      if (!warmup) return { ...active, currentExercise: withPrescription(active, { ...draft, sets: [...draft.sets, { reps: "", weight: lastWorking?.weight ?? "" }] }) };
+      const at = nextFlowRow(draft.sets) ?? draft.sets.length;
+      const working = Number(draft.sets.slice(at).find((set) => !set.isWarmup)?.weight || lastWorking?.weight || 0);
+      const weight = working > 0 ? formatFlowLoad(Math.round(working * 0.5 / flowStep) * flowStep) : "";
+      const sets = [...draft.sets.slice(0, at), { reps: "", weight, isWarmup: true }, ...draft.sets.slice(at)];
+      return { ...active, currentExercise: withPrescription(active, { ...draft, sets }) };
     });
   }
 
@@ -585,6 +764,11 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
   /** Flow mode: one full-screen step at a time (plan, set, rest), with nothing else of the app visible. */
   function focusView() {
     const exerciseName = selectedExercise?.name ?? "Exercise";
+    const savedCount = activeWorkout.completedExercises.length;
+    const parkedLogged = (activeWorkout.parkedExercises ?? []).some((draft) => hasLoggedSets(draft.sets));
+    const anythingDone = savedCount > 0 || loggedSetCount > 0 || parkedLogged;
+    const menuStatus = [savedCount ? `${savedCount} ${savedCount === 1 ? "exercise" : "exercises"} saved` : "Nothing saved yet",
+      selectedExercise && loggedSetCount ? `${exerciseName} has ${loggedSetCount} ${loggedSetCount === 1 ? "set" : "sets"}` : null].filter(Boolean).join(" · ");
     const position = progress.length ? `${Math.min(currentPosition, progress.length)} / ${progress.length}` : null;
     const blocked = draftConflict || Boolean(recoveredDrafts?.length);
     const stepKey = blocked ? "blocked" : needsPlan ? "plan" : String(current.slotId ?? current.exerciseId ?? (nextSlot ? "opening" : "end"));
@@ -629,9 +813,13 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
       </View>;
     } else {
       body = <>
-        <Pressable accessibilityRole="button" accessibilityLabel={`${exerciseName}. Change exercise`} disabled={recordingLocked} onPress={() => setExerciseSheet(true)} style={pressableFeedback(styles.focusTitle)}>
-          <Body numberOfLines={2} style={styles.focusTitleText}>{exerciseName}</Body>
-          <ChevronDown size={18} color={palette.muted} />
+        <Pressable accessibilityRole="button" accessibilityLabel={`${exerciseName}${partners.length ? `, superset with ${partners.join(" and ")}` : ""}. Change exercise`}
+          disabled={recordingLocked} onPress={() => setExerciseSheet(true)} style={pressableFeedback([styles.focusTitle, partners.length > 0 && styles.focusTitleGrouped])}>
+          <View style={styles.focusTitleRow}>
+            <Body numberOfLines={2} style={styles.focusTitleText}>{exerciseName}</Body>
+            <ChevronDown size={18} color={palette.muted} />
+          </View>
+          {partners.length ? <Body numberOfLines={1} style={styles.focusSuperset}>Superset with {partners.join(" and ")}</Body> : null}
         </Pressable>
         {current.sets.length ? <FlowSetLogger
           fill
@@ -649,22 +837,29 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
             remaining: restRemaining, total: rest.seconds,
             next: flowRow !== null && dialValues ? `${formatFlowLoad(dialValues.weight)} × ${dialValues.reps}` : null,
             nextExercise: flowRow === null ? nextSlotName : null,
-            canAddSet: flowRow === null
+            canAddSet: flowRow === null,
+            canEnd: flowRow !== null && loggedSetCount > 0
           } : null}
           status={exerciseLogged && editing === null ? `Saving ${exerciseName}…` : null}
           disabled={recordingLocked}
           onChange={(values) => setFlowValues({ key: dialKey, ...values })}
-          onLog={editing !== null ? saveEditedSet : logFlowSet}
+          onLog={editing !== null ? saveEditedSet : () => logFlowSet()}
+          onLogLast={() => logFlowSet(true)}
+          onEndExercise={endCurrentHere}
           onSkipRest={endRest}
           note={current.notes}
           onNote={() => setNoteOpen(true)}
+          lastTime={lastTime}
+          stepChoices={loadStepChoices(unitSystem)}
+          onStepChange={saveLoadStep}
+          machine={machineLoad ? { label: selectedMachineProfile?.label ?? "Pick machine", onPress: () => setMachineSheet(true) } : null}
           onAddSet={addFlowSet}
           onAdjustRest={setRestRemaining}
           onEditSet={(row) => { setFlowValues(null); setEditingRow({ exercise: exerciseKey, row }); }}
           onUnlog={unlogEditedSet}
           onCancelEdit={() => setEditingRow(null)}
         /> : <View style={styles.focusCenter}>
-          <Pressable accessibilityRole="button" onPress={addFlowSet} style={pressableFeedback(styles.primaryButton)}>
+          <Pressable accessibilityRole="button" onPress={() => addFlowSet()} style={pressableFeedback(styles.primaryButton)}>
             <Body style={styles.primaryText}>Add a set</Body>
           </Pressable>
         </View>}
@@ -678,31 +873,75 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
         <Modal visible={focusMenu} transparent animationType="none" statusBarTranslucent onRequestClose={() => setFocusMenu(false)}>
           <BottomSheet title="Workout" closeLabel="Keep going" onClose={() => setFocusMenu(false)}>
             <View style={styles.focusSheet}>
+              <Body style={styles.focusMeta}>{menuStatus}</Body>
               <Pressable accessibilityRole="button" disabled={recordingLocked} onPress={() => {
                 setFocusMenu(false);
-                if (selectedExercise && hasLoggedSets(current.sets) && !pendingSave) void completeCurrent(true);
-                else void finishFromAction();
+                void (anythingDone ? finishAll() : finishFromAction());
               }} style={pressableFeedback(styles.primaryButton)}>
-                <Body style={styles.primaryText}>{activeWorkout.completedExercises.length || hasLoggedSets(current.sets) ? "Finish workout" : "Discard workout"}</Body>
+                <Body style={styles.primaryText}>{anythingDone ? "Finish workout" : "Discard workout"}</Body>
               </Pressable>
+              {selectedExercise && !pendingSave && loggedSetCount > 0 && flowRow !== null ? <Pressable accessibilityRole="button" disabled={recordingLocked}
+                onPress={() => { setFocusMenu(false); endCurrentHere(); }} style={pressableFeedback(styles.secondaryButton)}>
+                <Body style={styles.buttonText}>{`End ${exerciseName} here${nextSlotName && !partners.length ? ` · next ${nextSlotName}` : ""}`}</Body>
+              </Pressable> : selectedExercise && !pendingSave && loggedSetCount === 0 ? <Pressable accessibilityRole="button" disabled={recordingLocked}
+                onPress={() => { setFocusMenu(false); skipCurrentToday(); }} style={pressableFeedback(styles.secondaryButton)}>
+                <Body style={styles.buttonText}>{`Skip ${exerciseName} today`}</Body>
+              </Pressable> : null}
               <Pressable accessibilityRole="button" onPress={() => { setFocusMenu(false); navigation.navigate("Home"); }} style={pressableFeedback(styles.secondaryButton)}>
                 <Body style={styles.buttonText}>Leave flow · workout keeps running</Body>
               </Pressable>
               <Pressable accessibilityRole="button" onPress={() => { setFocusMenu(false); navigation.navigate("ActiveWorkout"); }} style={pressableFeedback(styles.secondaryButton)}>
                 <Body style={styles.buttonText}>Edit sets in the full view</Body>
               </Pressable>
+              {anythingDone ? <>
+                <HoldButton label="Hold to discard workout" disabled={recordingLocked} onConfirm={() => { setFocusMenu(false); void discardWorkout(); }} />
+                <Body style={styles.planMeta}>{savedCount
+                  ? `Discarding deletes the ${savedCount === 1 ? "saved exercise" : `${savedCount} saved exercises`} too.`
+                  : "Discarding drops the sets logged so far."}</Body>
+              </> : null}
             </View>
           </BottomSheet>
         </Modal>
         <Modal visible={exerciseSheet} transparent animationType="none" statusBarTranslucent onRequestClose={() => setExerciseSheet(false)}>
           <BottomSheet title="Exercises" onClose={() => setExerciseSheet(false)}>
-            <View style={styles.focusSheet}>
+            <ScrollView style={{ maxHeight: windowHeight * 0.72 }} contentContainerStyle={styles.focusSheet} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               {progress.length ? planStrip : null}
-              <SearchableExercisePicker exercises={exercises} caption={selectedExercise ? "Swap or add an exercise" : "Choose an exercise"} disabled={recordingLocked || pendingSave}
-                onSelect={(exerciseId) => { setExerciseSheet(false); chooseExercise(exerciseId); }}
+              {selectedExercise && !pendingSave ? <View style={styles.swapCard}>
+                <Body style={styles.swapText}>{loggedSetCount
+                  ? `Pick one below to swap. Your ${loggedSetCount} ${exerciseName} ${loggedSetCount === 1 ? "set is" : "sets are"} saved first.`
+                  : "Pick one below to swap."}</Body>
+                {!loggedSetCount && current.slotId ? <View style={styles.segment}>
+                  {(["skip", "later"] as const).map((mode) => <Pressable key={mode} accessibilityRole="button" accessibilityState={{ selected: swapMode === mode }}
+                    onPress={() => setSwapMode(mode)} style={pressableFeedback([styles.segmentItem, swapMode === mode && styles.segmentItemOn])}>
+                    <Body numberOfLines={1} style={[styles.segmentText, swapMode === mode && styles.segmentTextOn]}>{mode === "skip" ? `Skip ${exerciseName}` : "Do it later"}</Body>
+                  </Pressable>)}
+                </View> : null}
+              </View> : null}
+              {selectedExercise && !pendingSave && alternatives.length ? <>
+                <Label>Instead of {exerciseName} · {selectedExercise.primary_muscle}</Label>
+                <View style={styles.altList}>
+                  {alternatives.map((item, index) => <Pressable key={item.exercise.id} accessibilityRole="button" accessibilityLabel={`Swap to ${item.exercise.name}, last ${item.detail}`}
+                    disabled={recordingLocked} onPress={() => swapTo(item.exercise.id)} style={pressableFeedback([styles.altRow, index > 0 && styles.altRowBorder])}>
+                    <Body numberOfLines={1} style={styles.altName}>{item.exercise.name}</Body>
+                    <Body style={styles.planMeta}>{item.detail}</Body>
+                  </Pressable>)}
+                </View>
+              </> : null}
+              <SearchableExercisePicker exercises={exercises} caption={selectedExercise ? "Or search everything" : "Choose an exercise"} disabled={recordingLocked || pendingSave}
+                onSelect={swapTo}
                 onCreate={createCustomExercise} defaultMuscle={newExerciseMuscle} suggested={suggested}
                 suggestedLabel={activeWorkout.plannedMuscles.length ? `Suggested for ${activeWorkout.plannedMuscles.join(" / ")}` : "Suggested"} />
-            </View>
+            </ScrollView>
+          </BottomSheet>
+        </Modal>
+        <Modal visible={machineSheet} transparent animationType="none" statusBarTranslucent onRequestClose={() => setMachineSheet(false)}>
+          <BottomSheet title="Machine" eyebrow={exerciseName} closeLabel="Done" onClose={() => setMachineSheet(false)}>
+            <ScrollView style={{ maxHeight: windowHeight * 0.72 }} contentContainerStyle={styles.focusSheet} keyboardShouldPersistTaps="handled">
+              <Body style={styles.planMeta}>The machine sets the weight stack picture and the dial's step. Each machine keeps its own history.</Body>
+              {selectedExercise ? <MachineProfilePanel profiles={machineProfiles} selectedProfileId={current.machineProfileId} exerciseId={selectedExercise.id}
+                exerciseName={selectedExercise.name} unitSystem={unitSystem} lastLoad={lastMachineLoad}
+                onSelectProfile={(machineProfileId) => updateDraft({ machineProfileId })} onSaveProfile={saveMachineProfile} onDeleteProfile={deleteMachineProfile} /> : null}
+            </ScrollView>
           </BottomSheet>
         </Modal>
         <Modal visible={noteOpen} transparent animationType="none" statusBarTranslucent onRequestClose={() => setNoteOpen(false)}>
@@ -777,40 +1016,37 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
     </>
   );
 
+  const planChips: PlanChip[] = progress.map((item) => ({
+    id: item.slot.id,
+    name: exercises.find((exercise) => exercise.id === item.slot.exerciseId)?.name ?? "Exercise",
+    status: item.status,
+    superset: item.slot.superset ?? null,
+    logged: (workout.parkedExercises ?? []).find((draft) => draft.slotId === item.slot.id)?.sets.filter(isLoggedSet).length || undefined,
+    fixed: item.slot.id.startsWith("entry:")
+  }));
   const planStrip = (
     <>
     <View style={styles.summaryRow}>
       <Label style={styles.flex}>Today's plan</Label>
       <Body style={styles.planMeta}>{doneCount} of {progress.length} done</Body>
     </View>
-    <View style={styles.planChips}>
-      {progress.map((item) => {
-        const name = exercises.find((exercise) => exercise.id === item.slot.exerciseId)?.name ?? "Exercise";
-        if (item.status === "done") return (
-          <View key={item.slot.id} style={[styles.planChip, styles.planChipDone]}>
-            <Check size={14} color={palette.success} />
-            <Body numberOfLines={1} style={styles.planChipDoneText}>{name}</Body>
-          </View>
-        );
-        const isCurrent = item.status === "current";
-        return (
-          <View key={item.slot.id} style={[styles.planChip, isCurrent && styles.planChipCurrent]}>
-            <Pressable accessibilityRole="button" accessibilityLabel={isCurrent ? `${name}, current exercise` : `Switch to ${name}`} disabled={isCurrent || recordingLocked || pendingSave}
-              onPress={() => activateSlot(item.slot)} style={pressableFeedback(styles.planChipLabel)}>
-              <Body numberOfLines={1} style={[styles.planChipText, isCurrent && styles.planChipCurrentText]}>{name}</Body>
-            </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${name} from today's plan`} hitSlop={touchHitSlop} disabled={recordingLocked || pendingSave}
-              onPress={() => removeSlot(item.slot.id)} style={pressableFeedback(styles.planChipRemove)}>
-              <X size={14} color={isCurrent ? palette.surface : palette.muted} />
-            </Pressable>
-          </View>
-        );
-      })}
-      <Pressable accessibilityRole="button" accessibilityLabel="Add an exercise to today's plan" accessibilityState={{ expanded: addingSlot }} disabled={recordingLocked}
+    <PlanChips items={planChips} disabled={recordingLocked || pendingSave}
+      onActivate={(id) => {
+        const slot = workout.slots?.find((item) => item.id === id);
+        if (!slot || slot.id === current.slotId) return;
+        setExerciseSheet(false);
+        activateSlot(slot);
+      }}
+      onRemove={removeSlot}
+      onMove={(id, targetId, placement) => persist((active) => moveWorkoutSlot(active, id, targetId, placement))}
+      onPair={(id, targetId) => persist((active) => pairWorkoutSlots(active, id, targetId))}
+      onUnlink={(id) => persist((active) => unlinkWorkoutSlot(active, id))}
+      trailing={<Pressable accessibilityRole="button" accessibilityLabel="Add an exercise to today's plan" accessibilityState={{ expanded: addingSlot }} disabled={recordingLocked}
         onPress={() => setAddingSlot(!addingSlot)} style={pressableFeedback([styles.planChip, styles.planAdd])}>
         <Plus size={16} color={palette.ink} />
-      </Pressable>
-    </View>
+      </Pressable>} />
+    {planChips.filter((chip) => !chip.fixed && chip.status !== "done").length > 1
+      ? <Body style={styles.planMeta}>Hold and drag to reorder. Drop one on another to superset them.</Body> : null}
     {addingSlot ? <SearchableExercisePicker exercises={exercises} caption="Add to today's plan" disabled={recordingLocked} onSelect={addSlot}
       onCreate={createCustomExercise} defaultMuscle={newExerciseMuscle}
       suggested={suggested} suggestedLabel={activeWorkout.plannedMuscles.length ? `Suggested for ${activeWorkout.plannedMuscles.join(" / ")}` : "Suggested"} /> : null}
@@ -985,7 +1221,8 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
                   <Pressable disabled={recordingLocked || pendingSave} onPress={() => void finishFromAction()} style={pressableFeedback(styles.secondaryButton)}>
                     <Body style={styles.buttonText}>Discard current & finish</Body>
                   </Pressable>
-                  <Pressable disabled={recordingLocked} onPress={() => void completeCurrent(true)} style={pressableFeedback(styles.primaryButton)}>
+                  <Pressable disabled={recordingLocked} onPress={() => void (workout.parkedExercises?.some((draft) => hasLoggedSets(draft.sets)) ? finishAll() : completeCurrent(true))}
+                    style={pressableFeedback(styles.primaryButton)}>
                     <Body style={styles.primaryText}>Save current & finish</Body>
                   </Pressable>
                 </>
@@ -1037,38 +1274,65 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
     };
   }
 
-  function chooseExercise(exerciseId: number) {
+  /**
+   * Opens another exercise. In flow mode the sets logged so far are saved first;
+   * otherwise it takes the open exercise's place in today's plan when replacing,
+   * or goes before it so the open one comes next.
+   */
+  function chooseExercise(exerciseId: number, replacing = false) {
     if (exerciseId === current.exerciseId) return;
     if (current.exerciseId && hasLoggedSets(current.sets)) {
-      setError("Save this exercise, or delete its sets, before switching.");
+      if (!focus) {
+        setError("Save this exercise, or delete its sets, before switching.");
+        return;
+      }
+      saveThenOpen({ exerciseId });
       return;
     }
     setError(null);
     persist((active) => {
-      const { slots, slot } = slotForChosenExercise(active, exerciseId, null);
+      const { slots, slot } = slotForChosenExercise(active, exerciseId, null, replacing);
       return { ...active, slots, currentExercise: withPrescription(active, { ...active.currentExercise, ...exerciseDraft(exerciseId, slot) }) };
     });
   }
 
+  /** The swap list and search: the planned exercise is skipped today or done later, as chosen. */
+  function swapTo(exerciseId: number) {
+    setExerciseSheet(false);
+    chooseExercise(exerciseId, swapMode === "skip");
+  }
+
+  function saveThenOpen(next: { exerciseId: number } | { slotId: string }) {
+    pendingOpen.current = next;
+    void completeCurrent(false).then((saved) => { if (!saved) pendingOpen.current = null; });
+  }
+
+  /** Opens a planned exercise. A superset partner sets the open one aside; otherwise flow mode saves its sets first. */
   function activateSlot(slot: WorkoutSlot) {
     if (slot.id === current.slotId) return;
-    if (current.exerciseId && hasLoggedSets(current.sets)) {
-      setError("Save this exercise, or delete its sets, before switching.");
+    const partner = supersetSlots(workout, current.slotId).some((item) => item.id === slot.id);
+    if (current.exerciseId && hasLoggedSets(current.sets) && !partner) {
+      if (!focus) {
+        setError("Save this exercise, or delete its sets, before switching.");
+        return;
+      }
+      saveThenOpen({ slotId: slot.id });
       return;
     }
     setError(null);
-    persist((active) => ({ ...active, currentExercise: withPrescription(active, { ...active.currentExercise, ...exerciseDraft(slot.exerciseId, slot) }) }));
+    persist((active) => switchToSlot(active, slot.id));
   }
 
   function removeSlot(slotId: string) {
     const removingCurrent = current.slotId === slotId;
-    if (removingCurrent && hasLoggedSets(current.sets)) {
+    const parked = workout.parkedExercises?.find((draft) => draft.slotId === slotId);
+    if ((removingCurrent && hasLoggedSets(current.sets)) || (parked && hasLoggedSets(parked.sets))) {
       setError("Save this exercise, or delete its sets, before removing it from today's plan.");
       return;
     }
     setError(null);
     persist((active) => {
-      const next = removeWorkoutSlot(active, slotId);
+      const next = { ...removeWorkoutSlot(active, slotId), parkedExercises: (active.parkedExercises ?? []).filter((draft) => draft.slotId !== slotId) };
       return removingCurrent ? { ...next, currentExercise: emptyActiveExercise() } : next;
     });
   }
@@ -1093,12 +1357,6 @@ function ActiveGuidedWorkoutScreen({ activeWorkout, focus }: { activeWorkout: Ac
     setPlanCreating(false);
   }
 
-}
-
-/** The dial offers one machine increment when the tag records it in the display unit, else a common plate step. */
-function flowLoadStep(unitSystem: UnitSystem, profile: MachineProfile | null) {
-  if (profile && profile.stackUnit === unitSystem && profile.increment > 0) return profile.increment;
-  return unitSystem === "kg" ? 2.5 : 5;
 }
 
 function formatFlowLoad(load: number) {
@@ -1238,7 +1496,21 @@ const useStyles = createThemedStyles((palette) => StyleSheet.create({
   focusCenter: { flex: 1, justifyContent: "center", gap: spacing.md },
   focusMeta: { color: palette.muted, fontSize: 15, lineHeight: 21 },
   focusScroll: { gap: spacing.md, paddingTop: spacing.md, paddingBottom: spacing.xl },
-  focusTitle: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, marginTop: spacing.sm, marginBottom: spacing.xl, alignSelf: "center", maxWidth: "100%" },
+  focusTitle: { alignItems: "center", marginTop: spacing.sm, marginBottom: spacing.xl, alignSelf: "center", maxWidth: "100%" },
+  focusTitleGrouped: { marginBottom: spacing.md },
+  focusTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.xs, maxWidth: "100%" },
+  focusSuperset: { color: palette.muted, fontSize: 13, fontWeight: "700", marginTop: 2 },
+  swapCard: { backgroundColor: palette.surfaceAlt, borderRadius: 12, padding: spacing.md, gap: spacing.sm },
+  swapText: { color: palette.ink, fontSize: 13, lineHeight: 18 },
+  segment: { flexDirection: "row", borderRadius: 10, borderWidth: 1, borderColor: palette.border, overflow: "hidden" },
+  segmentItem: { flex: 1, minHeight: 36, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.sm },
+  segmentItemOn: { backgroundColor: palette.ink },
+  segmentText: { color: palette.ink, fontSize: 13, fontWeight: "700" },
+  segmentTextOn: { color: palette.surface },
+  altList: { borderRadius: 12, backgroundColor: palette.surfaceAlt },
+  altRow: { minHeight: 46, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md, paddingHorizontal: spacing.md },
+  altRowBorder: { borderTopWidth: 1, borderTopColor: palette.border },
+  altName: { color: palette.ink, fontSize: 15, fontWeight: "700", flexShrink: 1 },
   focusTitleText: { color: palette.ink, fontSize: 22, fontWeight: "800", textAlign: "center", flexShrink: 1 },
   focusLink: { minHeight: 40, alignItems: "center", justifyContent: "center" },
   focusLinkText: { color: palette.muted, fontSize: 14, fontWeight: "700", textDecorationLine: "underline" },

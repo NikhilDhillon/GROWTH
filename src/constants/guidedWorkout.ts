@@ -75,8 +75,19 @@ export function normalizeGuidedWorkoutPreferences(value: unknown): GuidedWorkout
     inactivityDays: positiveInteger(input.inactivityDays, defaults.inactivityDays),
     exerciseCategories: categories,
     flowMode: input.flowMode === true,
-    restSeconds: Number.isFinite(input.restSeconds) ? clampRestSeconds(Number(input.restSeconds)) : defaults.restSeconds
+    restSeconds: Number.isFinite(input.restSeconds) ? clampRestSeconds(Number(input.restSeconds)) : defaults.restSeconds,
+    ...(input.loadSteps !== undefined ? { loadSteps: normalizeLoadSteps(input.loadSteps) } : {})
   };
+}
+
+/** A dial step is a plain positive number no bigger than a few plates. */
+export function isLoadStep(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 100;
+}
+
+function normalizeLoadSteps(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(Object.entries(value).filter(([key, step]) => key && isLoadStep(step)));
 }
 
 function positiveInteger(value: unknown, fallback: number) {
