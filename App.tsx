@@ -114,6 +114,8 @@ export default function App() {
     meta.content = palette.background;
   }, [colorScheme, palette]);
 
+  // The app names the tab itself; NavigationContainer's documentTitle is off, or it would
+  // retitle it after each screen and to "undefined" on the login page, which has none.
   useEffect(() => {
     if (typeof document === "undefined") return;
     document.title = isPasswordRecovery ? "Reset Password - GROWTH" : currentUser ? "GROWTH" : "Login - GROWTH";
@@ -177,7 +179,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       {Platform.OS === "web" ? <Analytics /> : null}
-      <NavigationContainer theme={{ ...DefaultTheme, dark: colorScheme === "dark", colors: { ...DefaultTheme.colors, primary: palette.accent, background: palette.background, card: palette.surface, text: palette.ink, border: palette.border, notification: palette.danger } }} key={currentUser?.id ?? "guest"} ref={navigationRef} linking={{ ...appLinking, enabled: Boolean(currentUser) && !isPasswordRecovery }} onReady={updateActiveRoute} onStateChange={updateActiveRoute}>
+      <NavigationContainer theme={{ ...DefaultTheme, dark: colorScheme === "dark", colors: { ...DefaultTheme.colors, primary: palette.accent, background: palette.background, card: palette.surface, text: palette.ink, border: palette.border, notification: palette.danger } }} key={currentUser?.id ?? "guest"} ref={navigationRef} documentTitle={{ enabled: false }} linking={{ ...appLinking, enabled: Boolean(currentUser) && !isPasswordRecovery }} onReady={updateActiveRoute} onStateChange={updateActiveRoute}>
         <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
         {dataError || operationNotice ? (
           <View style={{ backgroundColor: palette.surface, borderBottomWidth: 1, borderColor: palette.border, padding: spacing.md, gap: spacing.sm }}>
