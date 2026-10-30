@@ -21,4 +21,9 @@ describe("workout logging preference", () => {
     expect(normalizeGuidedWorkoutPreferences({ restSeconds: 600 }).restSeconds).toBe(300);
     expect(normalizeGuidedWorkoutPreferences({ restSeconds: 137 }).restSeconds).toBe(135);
   });
+
+  it("keeps only sensible remembered dial steps", () => {
+    expect(normalizeGuidedWorkoutPreferences({}).loadSteps).toBeUndefined();
+    expect(normalizeGuidedWorkoutPreferences({ loadSteps: { "4|cable|kg": 2.5, "5||lb": 0, "6||lb": "5", "7||lb": 500 } }).loadSteps).toEqual({ "4|cable|kg": 2.5 });
+  });
 });

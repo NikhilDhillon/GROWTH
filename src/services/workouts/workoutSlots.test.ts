@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createActiveWorkout, emptyActiveExercise, normalizeActiveWorkout } from "@/constants/activeWorkout";
 import { learnedTemplateExercises, normalizeTemplateExercises, templateExerciseKey, withTemplateExercises } from "@/services/workouts/templateExercises";
-import { appendWorkoutSlot, nextPendingSlot, removeWorkoutSlot, slotForChosenExercise, slotsFromTemplate, workoutSlotProgress } from "@/services/workouts/workoutSlots";
+import { appendWorkoutSlot, moveWorkoutSlot, nextPendingSlot, pairWorkoutSlots, removeWorkoutSlot, slotForChosenExercise, slotsFromTemplate, supersetNext, supersetSlots, unlinkWorkoutSlot, workoutSlotProgress } from "@/services/workouts/workoutSlots";
 import type { ActiveWorkout, CompletedWorkoutExercise, WorkoutSlot } from "@/types";
 
 const bench = 1, dip = 2, fly = 3, pushdown = 4;
@@ -54,6 +54,80 @@ describe("workout slots", () => {
     expect(normalized?.slots).toEqual(slots);
     expect(normalized?.rest).toEqual({ startedAt: "2026-10-24T18:00:00.000Z", seconds: 90, exerciseId: null, setIndex: 1 });
     expect(normalizeActiveWorkout({ ...workout(), rest: { startedAt: "soon", seconds: 90 } })?.rest).toBeNull();
+  });
+});
+
+describe("swapping and reordering today's plan", () => {
+  const open = (slotId: string, exerciseId: number) => ({ currentExercise: { ...emptyActiveExercise(), exerciseId, slotId } });
+  const order = (active: ActiveWorkout) => active.slots?.map((slot) => slot.superset ? `${slot.id}+` : slot.id);
+
+  it("replaces the open exercise in its place, or puts the new one first so the open one comes next", () => {
+    const active = workout(open("b", dip));
+    const replaced = slotForChosenExercise(active, pushdown, null, true);
+    expect(replaced.slots.map((slot) => slot.exerciseId)).toEqual([bench, pushdown, fly]);
+    expect(slotForChosenExercise(active, pushdown, null).slots.map((slot) => slot.exerciseId)).toEqual([bench, pushdown, dip, fly]);
+    // A planned exercise moves up rather than being planned twice.
+    const pulled = slotForChosenExercise(active, fly, null, true);
+    expect(pulled.slot.id).toBe("c");
+    expect(pulled.slots.map((slot) => slot.id)).toEqual(["a", "c"]);
+  });
+
+  it("places a pick made after a save before the next waiting exercise", () => {
+    const afterSave = workout({ completedExercises: [done(bench, 10)] });
+    expect(slotForChosenExercise(afterSave, pushdown, null).slots.map((slot) => slot.exerciseId)).toEqual([bench, pushdown, dip, fly]);
+  });
+
+  it("moves a slot before or after another", () => {
+    expect(order(moveWorkoutSlot(workout(), "c", "a", "before"))).toEqual(["c", "a", "b"]);
+    expect(order(moveWorkoutSlot(workout(), "a", "b", "after"))).toEqual(["b", "a", "c"]);
+  });
+
+  it("makes supersets by dropping one exercise on another, and keeps partners side by side", () => {
+    const paired = pairWorkoutSlots(workout(), "c", "a");
+    expect(order(paired)).toEqual(["a+", "c+", "b"]);
+    expect(new Set(paired.slots?.map((slot) => slot.superset).filter(Boolean)).size).toBe(1);
+    const three = pairWorkoutSlots(paired, "b", "a");
+    expect(order(three)).toEqual(["a+", "c+", "b+"]);
+    // Dragged out, a partner leaves; dropped inside another superset, a slot lands after it.
+    expect(order(moveWorkoutSlot(paired, "c", "b", "after"))).toEqual(["a", "b", "c"]);
+    expect(order(moveWorkoutSlot(paired, "b", "c", "before"))).toEqual(["a+", "c+", "b"]);
+    expect(order(moveWorkoutSlot(paired, "b", "a", "before"))).toEqual(["b", "a+", "c+"]);
+  });
+
+  it("splits a superset when a partner is unlinked or removed", () => {
+    const paired = pairWorkoutSlots(workout(), "b", "a");
+    expect(order(unlinkWorkoutSlot(paired, "a"))).toEqual(["b", "a", "c"]);
+    expect(order(removeWorkoutSlot(paired, "b"))).toEqual(["a", "c"]);
+  });
+
+  it("keeps set-aside exercises through normalization, once per slot", () => {
+    const parked = { ...emptyActiveExercise(), exerciseId: dip, slotId: "b", sets: [{ reps: "8", weight: "40" }] };
+    const normalized = normalizeActiveWorkout({ ...workout(), parkedExercises: [parked, { ...parked, exerciseId: fly }, { ...parked, slotId: undefined }, "junk"] });
+    expect(normalized?.parkedExercises).toEqual([expect.objectContaining({ exerciseId: dip, slotId: "b" })]);
+    expect(normalizeActiveWorkout(workout())).not.toHaveProperty("parkedExercises");
+  });
+
+  it("keeps supersets through normalization, but not a superset of one", () => {
+    const normalized = normalizeActiveWorkout({ ...workout(), slots: [{ ...slots[0], superset: "g" }, slots[1], { ...slots[2], superset: "g" }, { id: "d", exerciseId: 9, superset: "lonely" }] });
+    expect(normalized?.slots?.map((slot) => [slot.id, slot.superset ?? null])).toEqual([["a", "g"], ["c", "g"], ["b", null], ["d", null]]);
+  });
+
+  it("finds a slot's partners that are not done yet", () => {
+    const paired = pairWorkoutSlots(workout(open("a", bench)), "b", "a");
+    expect(supersetSlots(paired, "a").map((slot) => slot.id)).toEqual(["a", "b"]);
+    expect(supersetSlots({ ...paired, completedExercises: [done(dip, 11)] }, "a")).toEqual([]);
+    expect(supersetSlots(paired, "c")).toEqual([]);
+  });
+
+  it("alternates partners within a round and rests once the round is over", () => {
+    const left = new Set(["a", "b", "c"]);
+    const has = (id: string) => left.has(id);
+    expect(supersetNext(["a", "b", "c"], "a", has)).toEqual({ slotId: "b", rest: false });
+    expect(supersetNext(["a", "b", "c"], "c", has)).toEqual({ slotId: "a", rest: true });
+    left.delete("a");
+    expect(supersetNext(["a", "b", "c"], "c", has)).toEqual({ slotId: "b", rest: true });
+    left.clear();
+    expect(supersetNext(["a", "b"], "b", has)).toEqual({ slotId: null, rest: true });
   });
 });
 

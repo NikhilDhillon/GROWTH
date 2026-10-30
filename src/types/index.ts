@@ -42,6 +42,8 @@ export type GuidedWorkoutPreferences = {
   flowMode: boolean;
   /** Flow mode: every rest starts at this many seconds; winding the ring changes only that rest. */
   restSeconds: number;
+  /** Flow mode: how far one click of the weight dial moves, by exercise, machine and unit (see loadStepKey). */
+  loadSteps?: Record<string, number>;
 };
 
 export type Exercise = {
@@ -235,7 +237,11 @@ export type TemplateExercise = { exerciseId: number; machineProfileId: string | 
 export type TemplateExercises = Record<string, TemplateExercise[]>;
 
 /** One planned exercise in an active workout. Whether it is done is derived from completed entries. */
-export type WorkoutSlot = { id: string; exerciseId: number; machineProfileId?: string | null };
+export type WorkoutSlot = {
+  id: string; exerciseId: number; machineProfileId?: string | null;
+  /** Slots sharing this id are a superset: their sets alternate, with one rest after each round. */
+  superset?: string | null;
+};
 
 /** A running rest period, and which set started it so that set can be undone. */
 export type WorkoutRest = { startedAt: string; seconds: number; exerciseId?: number | null; setIndex?: number | null };
@@ -294,6 +300,8 @@ export type ActiveWorkout = {
   slots?: WorkoutSlot[];
   rest?: WorkoutRest | null;
   currentExercise: ActiveWorkoutExerciseDraft;
+  /** Exercises started but set aside, e.g. a superset partner between its sets; each keeps its slot. */
+  parkedExercises?: ActiveWorkoutExerciseDraft[];
   pendingMuscle: MuscleGroup | null;
   schedulePrompt: "off_plan" | "replace" | null;
   scheduleChanges: string[];

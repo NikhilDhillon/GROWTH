@@ -21,7 +21,7 @@ vi.mock("react", async (importOriginal) => ({
   }
 }));
 vi.mock("react-native", () => ({ useColorScheme: () => "light",
-  Modal: "Modal", Pressable: "Pressable", ScrollView: "ScrollView", TextInput: "TextInput", View: "View",
+  Modal: "Modal", Pressable: "Pressable", ScrollView: "ScrollView", TextInput: "TextInput", View: "View", useWindowDimensions: () => ({ width: 390, height: 844 }),
   Platform: { OS: "web", select: (values: { web: unknown }) => values.web }, StyleSheet: { create: (styles: unknown) => styles }
 }));
 vi.mock("lucide-react-native", () => ({ Check: "Check", ChevronDown: "ChevronDown", ChevronRight: "ChevronRight", Plus: "Plus", Search: "Search", Timer: "Timer", X: "X" }));
@@ -32,6 +32,8 @@ vi.mock("@/components/BottomSheet", () => ({ BottomSheet: "BottomSheet" }));
 vi.mock("@/components/VisualSetComposer", () => ({ VisualSetComposer: "VisualSetComposer" }));
 vi.mock("@/components/FlowSetLogger", () => ({ FlowSetLogger: "FlowSetLogger" }));
 vi.mock("@/components/FocusShell", () => ({ FocusShell: "FocusShell" }));
+vi.mock("@/components/HoldButton", () => ({ HoldButton: "HoldButton" }));
+vi.mock("@/components/PlanChips", () => ({ PlanChips: "PlanChips" }));
 vi.mock("@/components/NewExerciseForm", () => ({ NewExerciseForm: "NewExerciseForm" }));
 vi.mock("@/components/Panel", () => ({ Panel: "Panel" }));
 vi.mock("@/components/Screen", () => ({ Screen: "Screen" }));
@@ -624,6 +626,123 @@ describe("flow mode", () => {
     logger(renderFocus()).props.onLog();
     await vi.waitFor(() => expect(state.current.activeWorkout.rest).toMatchObject({ setIndex: 1, seconds: 150 }));
     expect(state.current.activeWorkout).not.toHaveProperty("restSeconds");
+  });
+
+  const hammer = { id: 2, name: "Hammer Curl", primary_muscle: "Biceps", is_strength_exercise: 1, created_at: "2026-01-01" };
+  function planned(slots: Array<{ id: string; exerciseId: number; superset?: string }>, currentSlot = slots[0].id) {
+    state.current.exercises = [...state.current.exercises, hammer];
+    state.current.activeWorkout = { ...state.current.activeWorkout, slots, currentExercise: { ...state.current.activeWorkout.currentExercise, slotId: currentSlot } };
+  }
+  const sets = () => state.current.activeWorkout.currentExercise.sets as LoggedSetDraft[];
+
+  it("makes the set just done the last one from the rest timer, dropping the waiting sets", async () => {
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest).toBeTruthy());
+    expect(logger(renderFocus()).props.rest).toMatchObject({ canEnd: true, canAddSet: false });
+    logger(renderFocus()).props.onEndExercise();
+    await vi.waitFor(() => expect(sets()).toHaveLength(1));
+    expect(state.current.activeWorkout.rest).toBeTruthy();
+    expect(logger(renderFocus()).props).toMatchObject({ row: null, rest: expect.objectContaining({ canAddSet: true, canEnd: false }) });
+  });
+
+  it("holding Done logs the set as the last one", async () => {
+    logger(renderFocus()).props.onLogLast();
+    await vi.waitFor(() => expect(sets()).toHaveLength(1));
+    expect(sets()[0]).toMatchObject({ weight: "100", evidence: "flow" });
+    expect(state.current.activeWorkout.rest).toMatchObject({ setIndex: 0 });
+  });
+
+  it("adds a warm-up as the next set at half the load, or a working set at the end", async () => {
+    logger(renderFocus()).props.onAddSet(true);
+    await vi.waitFor(() => expect(sets()).toHaveLength(4));
+    expect(sets()[0]).toMatchObject({ isWarmup: true, weight: "50", reps: "" });
+    expect(logger(renderFocus()).props).toMatchObject({ row: 0, weight: 50 });
+    logger(renderFocus()).props.onAddSet();
+    await vi.waitFor(() => expect(sets()).toHaveLength(5));
+    expect(sets()[4]).toMatchObject({ weight: "100", reps: "" });
+  });
+
+  it("remembers the weight step for the exercise", async () => {
+    state.current.saveGuidedWorkoutPreferences = vi.fn(async (preferences) => { state.current.guidedWorkoutPreferences = preferences; });
+    expect(logger(renderFocus()).props.weightStep).toBe(5);
+    logger(renderFocus()).props.onStepChange(2.5);
+    await vi.waitFor(() => expect(state.current.saveGuidedWorkoutPreferences).toHaveBeenCalled());
+    expect(state.current.guidedWorkoutPreferences.loadSteps).toEqual({ "1||lb": 2.5 });
+    expect(logger(renderFocus()).props.weightStep).toBe(2.5);
+  });
+
+  it("shows last session under the set row", () => {
+    state.current.sessions = [{ id: 7, workout_date: "2026-10-01", notes: "", created_at: "2026-10-01T12:00:00Z" }];
+    state.current.sets = [8, 7].map((reps, index) => ({ id: 70 + index, session_id: 7, exercise_id: 1, set_number: index + 1, reps, weight: 95, is_warmup: 0, created_at: "2026-10-01T12:00:00Z" }));
+    expect(logger(renderFocus()).props.lastTime).toBe("Last time 95 × 8, 95 × 7 · 3 days ago");
+  });
+
+  it("swaps the planned exercise out for today, or keeps it for later", () => {
+    planned([{ id: "a", exerciseId: 1 }, { id: "z", exerciseId: 3 }]);
+    const picker = () => elements(renderFocus()).find((element) => element.type === "SearchableExercisePicker")!;
+    picker().props.onSelect(2);
+    expect(state.current.activeWorkout.slots.map((slot: { exerciseId: number }) => slot.exerciseId)).toEqual([2, 3]);
+    expect(state.current.activeWorkout.currentExercise.exerciseId).toBe(2);
+
+    planned([{ id: "a", exerciseId: 1 }, { id: "z", exerciseId: 3 }]);
+    state.current.activeWorkout.currentExercise = { ...state.current.activeWorkout.currentExercise, exerciseId: 1 };
+    button(renderFocus(), "Do it later").props.onPress();
+    picker().props.onSelect(2);
+    expect(state.current.activeWorkout.slots.map((slot: { exerciseId: number }) => slot.exerciseId)).toEqual([2, 1, 3]);
+  });
+
+  it("saves the sets already done before swapping, instead of refusing", async () => {
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest).toBeTruthy());
+    elements(renderFocus()).find((element) => element.type === "SearchableExercisePicker")!.props.onSelect(2);
+    await vi.waitFor(() => expect(actions.save).toHaveBeenCalledTimes(1));
+    expect(actions.save.mock.calls[0][0].sets).toHaveLength(1);
+    expect(hasMessage("before switching")).toBe(false);
+  });
+
+  it("alternates a superset: straight to the partner, then one rest, then back", async () => {
+    planned([{ id: "a", exerciseId: 1, superset: "g" }, { id: "b", exerciseId: 2, superset: "g" }]);
+    expect(elements(renderFocus()).some((element) => element.props.children === "Superset with Hammer Curl" || (Array.isArray(element.props.children) && element.props.children.join("") === "Superset with Hammer Curl"))).toBe(true);
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.currentExercise.slotId).toBe("b"));
+    expect(state.current.activeWorkout.rest).toBeNull();
+    expect(state.current.activeWorkout.parkedExercises).toEqual([expect.objectContaining({ slotId: "a" })]);
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.currentExercise.slotId).toBe("a"));
+    expect(state.current.activeWorkout.rest).toMatchObject({ exerciseId: 2, setIndex: 0 });
+    expect(state.current.activeWorkout.parkedExercises).toEqual([expect.objectContaining({ slotId: "b" })]);
+    expect(logger(renderFocus()).props).toMatchObject({ row: 1, rest: expect.objectContaining({ next: expect.stringMatching(/^100 × \d+$/) }) });
+  });
+
+  it("finishing saves a superset partner that was set aside", async () => {
+    planned([{ id: "a", exerciseId: 1, superset: "g" }, { id: "b", exerciseId: 2, superset: "g" }]);
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.currentExercise.slotId).toBe("b"));
+    button(renderFocus(), "Finish workout").props.onPress();
+    await vi.waitFor(() => expect(actions.finish).toHaveBeenCalled());
+    expect(actions.save).toHaveBeenCalledTimes(1);
+    expect(actions.save.mock.calls[0][0]).toMatchObject({ exerciseId: 1, sets: [expect.objectContaining({ evidence: "flow" })] });
+  });
+
+  it("offers to skip an untouched exercise, and to end a started one early", async () => {
+    planned([{ id: "a", exerciseId: 1 }, { id: "z", exerciseId: 2 }]);
+    expect(button(renderFocus(), "Skip Barbell Curl today")).toBeTruthy();
+    logger(renderFocus()).props.onLog();
+    await vi.waitFor(() => expect(state.current.activeWorkout.rest).toBeTruthy());
+    button(renderFocus(), "End Barbell Curl here · next Hammer Curl").props.onPress();
+    await vi.waitFor(() => expect(sets()).toHaveLength(1));
+  });
+
+  it("discarding by holding retires the workout and deletes what it saved", async () => {
+    state.current.deleteWorkoutLog = vi.fn(async () => undefined);
+    state.current.activeWorkout = { ...state.current.activeWorkout, completedExercises: [{ exerciseId: 1, sessionId: 42, exerciseName: "", muscle: "Biceps", sets: [], completedAt: "2026-10-04T20:00:00Z" }] };
+    const hold = elements(renderFocus()).find((element) => element.type === "HoldButton")!;
+    expect(hold.props.label).toBe("Hold to discard workout");
+    expect(elements(renderFocus()).some((element) => element.props.children === "Discarding deletes the saved exercise too.")).toBe(true);
+    hold.props.onConfirm();
+    await vi.waitFor(() => expect(actions.navigate).toHaveBeenCalledWith("Home"));
+    expect(actions.finish).toHaveBeenCalledWith();
+    expect(state.current.deleteWorkoutLog).toHaveBeenCalledWith(42);
   });
 
   it("keeps the classic page as the plain set list with Save", () => {

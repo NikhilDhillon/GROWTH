@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { GestureResponderEvent, Platform, Pressable, StyleSheet, View } from "react-native";
-import Svg, { Defs, LinearGradient, Line, Path, Polygon, Rect, Stop, Text as SvgText } from "react-native-svg";
+import { GestureResponderEvent, Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
+import Svg, { Circle, Defs, LinearGradient, Line, Path, Polygon, Rect, Stop, Text as SvgText } from "react-native-svg";
 
 const watchTicks = 60;
 /** The rest ring reads like a kitchen timer: a full turn is three minutes. */
 const restFaceSeconds = 180;
 const secondsPerTick = restFaceSeconds / watchTicks;
-import { Check, Plus } from "lucide-react-native";
+import { Check, Plus, Settings2 } from "lucide-react-native";
 
 import { FlowLoadGhost } from "@/components/FlowLoadGhost";
 import { Body } from "@/components/Text";
@@ -27,6 +27,8 @@ export type FlowRest = {
   next: string | null;
   nextExercise: string | null;
   canAddSet: boolean;
+  /** Sets are still waiting, so the one just done can be made the last. */
+  canEnd: boolean;
 };
 
 type Props = {
@@ -52,7 +54,19 @@ type Props = {
   onChange: (values: { weight: number; reps: number }) => void;
   onLog: () => void;
   onSkipRest: () => void;
-  onAddSet: () => void;
+  /** A working set at the end, or a warm-up as the next set. */
+  onAddSet: (warmup?: boolean) => void;
+  /** Holding Done: log the dialed set as the exercise's last. */
+  onLogLast?: () => void;
+  /** Drop the waiting sets, so the set just done was the last. */
+  onEndExercise?: () => void;
+  /** What you did last time, faint under the set row. */
+  lastTime?: string | null;
+  /** The weight dial's step choices; picking one is remembered. */
+  stepChoices?: readonly number[];
+  onStepChange?: (step: number) => void;
+  /** The machine this exercise is on, beside the note; tapping it picks another. */
+  machine?: { label: string; onPress: () => void } | null;
   /** Winding the rest ring: the rest now ends this many seconds from now. */
   onAdjustRest?: (seconds: number) => void;
   /** The current exercise's note, shown under the set pills; tapping it opens the note. */
@@ -76,6 +90,10 @@ const frictionPerMs = 0.992;
 /** Degrees per millisecond; a hard flick still travels only a handful of values. */
 const maxSpin = 1.1;
 const maxCoastMs = 1200;
+/** Holding Done this long logs the set as the last one; the ring shows only after a tap would have ended. */
+const holdMs = 600;
+const holdShowMs = 120;
+const holdRadius = flowDial.hub + 5;
 
 function formatRest(seconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
@@ -100,6 +118,11 @@ export function FlowSetLogger(props: Props) {
   const frame = useRef<number | null>(null);
   const coasting = useRef<FlowRing | null>(null);
   const settledLoad = useRef(weight);
+  const [adding, setAdding] = useState(false);
+  const [typing, setTyping] = useState<{ ring: FlowRing | "step"; text: string } | null>(null);
+  const [stepOpen, setStepOpen] = useState(false);
+  const [hold, setHold] = useState(0);
+  const holdFrame = useRef<number | null>(null);
 
   const scale = width / frameWidth;
   const resting = Boolean(rest);
@@ -115,7 +138,10 @@ export function FlowSetLogger(props: Props) {
   }
   // The load picture follows the wheel only once it has settled.
   if (!motion.current && frame.current === null) settledLoad.current = weight;
-  useEffect(() => () => { if (frame.current !== null) cancelAnimationFrame(frame.current); }, []);
+  useEffect(() => () => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    if (holdFrame.current !== null) cancelAnimationFrame(holdFrame.current);
+  }, []);
 
   const stepOf = (ring: FlowRing) => ring === "reps" ? 1 : weightStep;
   const minimumOf = (ring: FlowRing) => ring === "reps" ? 1 : 0;
@@ -235,9 +261,12 @@ export function FlowSetLogger(props: Props) {
       if (Math.abs(index - center) <= 2) {
         const nearness = Math.max(0, 1 - Math.abs(angle) / degreesPerStep);
         const point = dialPoint(middle, angle);
+        const label = ring === "reps" ? String(value) : formatLoad(value);
+        // Loads like 152.5 are set smaller so neighbours never touch.
+        const fit = label.length >= 5 ? 0.8 : 1;
         marks.push(<SvgText key={`${ring}-${index}`} x={point.x} y={point.y + 5 + 2 * nearness} textAnchor="middle" fontFamily={dialFont}
-          fill={nearness > 0.5 ? palette.ink : palette.muted} fontSize={13 + 6 * nearness} fontWeight={nearness > 0.5 ? "800" : "600"}>
-          {ring === "reps" ? String(value) : formatLoad(value)}
+          fill={nearness > 0.5 ? palette.ink : palette.muted} fontSize={(13 + 6 * nearness) * fit} fontWeight={nearness > 0.5 ? "800" : "600"}>
+          {label}
         </SvgText>);
       } else {
         const inner = dialPoint(middle - 3, angle), outer = dialPoint(middle + 3, angle);
@@ -247,18 +276,62 @@ export function FlowSetLogger(props: Props) {
     return marks;
   }
 
+  /** A typed number replaces the dial's value; a typed step becomes the dial's step. */
+  function commitTyping() {
+    const current = typing;
+    setTyping(null);
+    if (!current) return;
+    const value = Number(current.text.replace(",", "."));
+    if (!current.text.trim() || !Number.isFinite(value)) return;
+    if (current.ring === "step") {
+      if (value > 0 && value <= 100) props.onStepChange?.(Math.round(value * 100) / 100);
+      setStepOpen(false);
+      return;
+    }
+    if (current.ring === "reps") props.onChange({ weight, reps: Math.max(1, Math.min(999, Math.round(value))) });
+    else props.onChange({ weight: Math.max(0, Math.min(9999, Math.round(value * 100) / 100)), reps });
+  }
+
+  function numberField(ring: FlowRing | "step", style: object, label: string) {
+    return <TextInput accessibilityLabel={label} autoFocus selectTextOnFocus value={typing?.text ?? ""} keyboardType={ring === "reps" ? "number-pad" : "decimal-pad"}
+      returnKeyType="done" onChangeText={(text) => setTyping((value) => value && { ...value, text })} onSubmitEditing={commitTyping} onBlur={commitTyping}
+      style={style} />;
+  }
+
+  function startHold() {
+    if (!props.onLogLast || row === null || resting || editing || disabled) return;
+    const started = Date.now();
+    const run = () => {
+      const elapsed = Date.now() - started;
+      setHold(elapsed < holdShowMs ? 0 : Math.min(1, elapsed / holdMs));
+      if (elapsed < holdMs) holdFrame.current = requestAnimationFrame(run);
+      else holdFrame.current = null;
+    };
+    holdFrame.current = requestAnimationFrame(run);
+  }
+
+  function endHold() {
+    if (holdFrame.current !== null) cancelAnimationFrame(holdFrame.current);
+    holdFrame.current = null;
+    setHold(0);
+  }
+
   function nudge(ring: FlowRing, direction: 1 | -1) {
     const value = Math.max(minimumOf(ring), Math.round((valueOf(ring) + direction * stepOf(ring)) * 100) / 100);
     props.onChange(ring === "reps" ? { weight, reps: value } : { weight: value, reps });
   }
 
-  const hubLabel = resting ? "Skip" : editing ? "Save" : row !== null ? "Done" : "…";
+  const hubLabel = resting ? "Skip" : editing ? "Save" : row !== null ? hold > 0.3 ? "Last set" : "Done" : "…";
   const hubAccessibility = resting ? "Skip rest" : editing ? `Save set ${(row ?? 0) + 1} as ${formatLoad(weight)} ${weightCaption} for ${reps} reps`
     : row !== null ? `Log ${formatLoad(weight)} ${weightCaption} for ${reps} reps` : status ?? "Saving";
   const onHub = resting ? props.onSkipRest : row !== null ? () => { confirmHaptic(); props.onLog(); } : undefined;
   let working = 0;
   const setNames = sets.map((set) => set.isWarmup ? "Warm-up" : `Set ${++working}`);
   const restCaption = !rest ? "" : rest.next ? `next ${rest.next}` : rest.nextExercise ? `next: ${rest.nextExercise}` : "rest";
+  const canHold = Boolean(props.onLogLast) && row !== null && !resting && !editing;
+  const showStep = turning && !editing && Boolean(props.stepChoices?.length && props.onStepChange);
+  const stepChoices = props.stepChoices ?? [];
+  const steps = stepChoices.includes(weightStep) ? stepChoices : [...stepChoices, weightStep].sort((a, b) => a - b);
 
   return (
     <View style={[styles.wrap, fill && styles.fill]}>
@@ -278,15 +351,36 @@ export function FlowSetLogger(props: Props) {
             <Body style={[styles.pillText, current && styles.pillCurrentText]}>{setNames[index]}</Body>
           </View>;
         })}
+        {editing ? null : adding ? <>
+          <Pressable accessibilityRole="button" accessibilityLabel="Add a set at the end" disabled={disabled} onPress={() => { setAdding(false); props.onAddSet(false); }}
+            style={pressableFeedback([styles.pill, styles.pillAdd])}>
+            <Plus size={13} color={palette.ink} /><Body style={styles.pillAddText}>Set</Body>
+          </Pressable>
+          <Pressable accessibilityRole="button" accessibilityLabel="Add a warm-up as the next set" disabled={disabled} onPress={() => { setAdding(false); props.onAddSet(true); }}
+            style={pressableFeedback([styles.pill, styles.pillAdd])}>
+            <Plus size={13} color={palette.ink} /><Body style={styles.pillAddText}>Warm-up</Body>
+          </Pressable>
+        </> : <Pressable accessibilityRole="button" accessibilityLabel="Add a set or a warm-up" disabled={disabled} onPress={() => setAdding(true)}
+          hitSlop={{ top: 0, bottom: 6, left: 4, right: 4 }} style={pressableFeedback([styles.pill, styles.pillPlus])}>
+          <Plus size={15} color={palette.muted} />
+        </Pressable>}
       </View>
+      {props.lastTime ? <Body numberOfLines={1} style={styles.lastTime}>{props.lastTime}</Body> : null}
 
-      {props.onNote ? <Pressable accessibilityRole="button" accessibilityLabel={props.note?.trim() ? `Note: ${props.note.trim()}. Edit note` : "Add a note"} disabled={disabled}
-        onPress={props.onNote} style={pressableFeedback(styles.note)}>
-        {props.note?.trim() ? null : <Plus size={14} color={palette.muted} />}
-        <Body numberOfLines={1} style={[styles.noteText, Boolean(props.note?.trim()) && styles.noteTextFilled]}>{props.note?.trim() || "Add note"}</Body>
-      </Pressable> : null}
+      {props.onNote || props.machine ? <View style={styles.noteRow}>
+        {props.onNote ? <Pressable accessibilityRole="button" accessibilityLabel={props.note?.trim() ? `Note: ${props.note.trim()}. Edit note` : "Add a note"} disabled={disabled}
+          onPress={props.onNote} style={pressableFeedback(styles.note)}>
+          {props.note?.trim() ? null : <Plus size={14} color={palette.muted} />}
+          <Body numberOfLines={1} style={[styles.noteText, Boolean(props.note?.trim()) && styles.noteTextFilled]}>{props.note?.trim() || "Add note"}</Body>
+        </Pressable> : null}
+        {props.machine ? <Pressable accessibilityRole="button" accessibilityLabel={`Machine: ${props.machine.label}. Change machine`} disabled={disabled}
+          onPress={props.machine.onPress} style={pressableFeedback([styles.note, styles.machine])}>
+          <Settings2 size={13} color={palette.muted} />
+          <Body numberOfLines={1} style={styles.noteText}>{props.machine.label}</Body>
+        </Pressable> : null}
+      </View> : null}
 
-      {rest ? <RestWatch rest={rest} caption={restCaption} disabled={disabled} onAddSet={props.onAddSet} onAdjust={props.onAdjustRest} /> : null}
+      {rest ? <RestWatch rest={rest} caption={restCaption} disabled={disabled} onAddSet={() => props.onAddSet(false)} onEnd={props.onEndExercise} onAdjust={props.onAdjustRest} /> : null}
       {rest ? null : <View accessibilityLiveRegion="polite" style={[styles.hero, fill && styles.heroFill]}>
         {row === null ? <View style={styles.heroBlock}>
           <Body style={styles.heroDone}>{status ?? `${loggedCount} ${loggedCount === 1 ? "set" : "sets"} logged`}</Body>
@@ -295,15 +389,19 @@ export function FlowSetLogger(props: Props) {
             dimmed={activeRing === "weight" || coasting.current === "weight"} /> : null}
           {editing ? <Body style={styles.heroCaption}>Fixing {setNames[row ?? 0]?.toLowerCase()}</Body> : null}
           <View style={styles.heroValues}>
-          <View style={styles.heroBlock}>
-            <Body style={[styles.heroNumber, fill && styles.heroNumberFill, activeRing === "reps" && styles.heroDimmed]}>{formatLoad(weight)}</Body>
-            <Body style={styles.heroCaption}>{weightCaption}</Body>
-          </View>
-          <Body style={[styles.heroTimes, fill && styles.heroTimesFill]}>×</Body>
-          <View style={styles.heroBlock}>
-            <Body style={[styles.heroNumber, fill && styles.heroNumberFill, activeRing === "weight" && styles.heroDimmed]}>{reps}</Body>
-            <Body style={styles.heroCaption}>reps</Body>
-          </View>
+          {(["weight", "reps"] as const).map((ring, index) => {
+            const text = ring === "weight" ? formatLoad(weight) : String(reps);
+            const numberStyle = [styles.heroNumber, fill && styles.heroNumberFill, activeRing && activeRing !== ring && styles.heroDimmed];
+            return [index ? <Body key="times" style={[styles.heroTimes, fill && styles.heroTimesFill]}>×</Body> : null,
+              <View key={ring} style={styles.heroBlock}>
+                {typing?.ring === ring ? numberField(ring, [...numberStyle, styles.heroInput], ring === "reps" ? "Reps" : `Weight in ${weightCaption}`)
+                  : <Pressable accessibilityRole="button" accessibilityLabel={ring === "reps" ? `${reps} reps. Type reps` : `${text} ${weightCaption}. Type a weight`}
+                    disabled={!turning} onPress={() => setTyping({ ring, text })}>
+                    <Body style={numberStyle}>{text}</Body>
+                  </Pressable>}
+                <Body style={styles.heroCaption}>{ring === "reps" ? "reps" : weightCaption}</Body>
+              </View>];
+          })}
           </View>
           {editing ? <View style={styles.links}>
             <Pressable accessibilityRole="button" disabled={disabled} onPress={props.onUnlog} style={pressableFeedback(styles.link)}>
@@ -315,6 +413,19 @@ export function FlowSetLogger(props: Props) {
           </View> : null}
         </View>}
       </View>}
+
+      {showStep && stepOpen ? <View accessibilityLabel="Weight step" style={styles.steps}>
+        {steps.map((step) => <Pressable key={step} accessibilityRole="button" accessibilityState={{ selected: step === weightStep }}
+          accessibilityLabel={`Step ${formatLoad(step)} ${weightCaption}`} onPress={() => { props.onStepChange?.(step); setStepOpen(false); }}
+          style={pressableFeedback([styles.pill, styles.stepPill, step === weightStep && styles.pillCurrent])}>
+          <Body style={[styles.pillText, step === weightStep && styles.pillCurrentText]}>{formatLoad(step)}</Body>
+        </Pressable>)}
+        {typing?.ring === "step" ? numberField("step", [styles.pill, styles.stepPill, styles.stepInput], "Type a step")
+          : <Pressable accessibilityRole="button" accessibilityLabel="Type another step" onPress={() => setTyping({ ring: "step", text: "" })}
+            style={pressableFeedback([styles.pill, styles.stepPill])}>
+            <Body style={styles.pillText}>Other</Body>
+          </Pressable>}
+      </View> : null}
 
       {rest ? <Pressable accessibilityRole="button" accessibilityLabel="Skip rest" disabled={disabled} onPress={props.onSkipRest} style={pressableFeedback(styles.skip)}>
         <Body style={styles.skipText}>Skip rest</Body>
@@ -347,6 +458,8 @@ export function FlowSetLogger(props: Props) {
             }) : <Path d={ringPath(flowDial.rings.reps.r0, flowDial.rings.weight.r1)} fillRule="evenodd" fill={palette.surfaceAlt} />}
             {turning ? [...ringMarks("weight"), ...ringMarks("reps")] : null}
             {turning ? <Polygon points={`${cx - 6},4 ${cx + 6},4 ${cx},13`} fill={palette.ink} /> : null}
+            {hold > 0 ? <Circle cx={cx} cy={cy} r={holdRadius} fill="none" stroke={palette.ink} strokeWidth={4} strokeLinecap="round"
+              strokeDasharray={`${2 * Math.PI * holdRadius}`} strokeDashoffset={2 * Math.PI * holdRadius * (1 - hold)} transform={`rotate(-90 ${cx} ${cy})`} /> : null}
             <Rect x={0} y={cy} width={frameWidth} height={frameHeight - cy} fill="url(#flowDialFade)" />
           </Svg>
         ) : null}
@@ -359,8 +472,17 @@ export function FlowSetLogger(props: Props) {
             onAccessibilityAction={(event) => nudge(ring, event.nativeEvent.actionName === "increment" ? 1 : -1)}
             style={[styles.ringTarget, { left: (cx * scale) - size / 2, top: (cy - flowDial.rings[ring].r1 + 4) * scale, width: size, height: size }]} />;
         }) : null}
+        {width && showStep ? <Pressable accessibilityRole="button" accessibilityLabel={`Weight step ${formatLoad(weightStep)} ${weightCaption}. Change step`}
+          accessibilityState={{ expanded: stepOpen }} hitSlop={6} onPress={() => setStepOpen((open) => !open)}
+          style={pressableFeedback([styles.stepChip, { left: (cx + 14) * scale }, stepOpen && styles.stepChipOpen])}>
+          <Body style={[styles.stepChipText, stepOpen && styles.pillCurrentText]}>±{formatLoad(weightStep)}</Body>
+        </Pressable> : null}
         {width ? (
           <Pressable accessibilityRole="button" accessibilityLabel={hubAccessibility} disabled={disabled || !onHub} onPress={onHub}
+            onLongPress={canHold ? () => { endHold(); confirmHaptic(); props.onLogLast?.(); } : undefined} delayLongPress={holdMs}
+            onPressIn={canHold ? startHold : undefined} onPressOut={canHold ? endHold : undefined}
+            accessibilityActions={canHold ? [{ name: "longpress", label: "Log as the last set" }] : undefined}
+            onAccessibilityAction={(event) => { if (event.nativeEvent.actionName === "longpress") props.onLogLast?.(); }}
             style={pressableFeedback([styles.hub, { left: (cx - hub) * scale, top: (cy - hub) * scale, width: hub * 2 * scale, height: hub * 2 * scale, borderRadius: hub * scale }])}>
             <Body style={styles.hubText}>{hubLabel}</Body>
           </Pressable>
@@ -377,8 +499,8 @@ export function FlowSetLogger(props: Props) {
  * adds time and anticlockwise takes it away, keeping the whole rest within 1:30 to
  * 5:00, ticking as it goes; letting go snaps to five seconds.
  */
-function RestWatch({ rest, caption, disabled, onAddSet, onAdjust }: {
-  rest: FlowRest; caption: string; disabled: boolean; onAddSet: () => void; onAdjust?: (seconds: number) => void;
+function RestWatch({ rest, caption, disabled, onAddSet, onEnd, onAdjust }: {
+  rest: FlowRest; caption: string; disabled: boolean; onAddSet: () => void; onEnd?: () => void; onAdjust?: (seconds: number) => void;
 }) {
   const { palette, styles } = useStyles();
   const [size, setSize] = useState(0);
@@ -476,6 +598,8 @@ function RestWatch({ rest, caption, disabled, onAddSet, onAdjust }: {
           <Body style={styles.heroCaption}>{caption}</Body>
           {rest.canAddSet ? <Pressable accessibilityRole="button" disabled={disabled} onPress={onAddSet} style={pressableFeedback(styles.link)}>
             <Body style={styles.linkText}>Add a set</Body>
+          </Pressable> : rest.canEnd && onEnd ? <Pressable accessibilityRole="button" disabled={disabled} onPress={onEnd} style={pressableFeedback(styles.link)}>
+            <Body style={styles.linkText}>Make that the last set</Body>
           </Pressable> : null}
         </View>
       </View> : null}
@@ -499,6 +623,10 @@ const useStyles = createThemedStyles((palette) => StyleSheet.create({
   pillText: { color: palette.muted, fontSize: 13, fontWeight: "700" },
   pillCurrentText: { color: palette.surface },
   pillDoneText: { color: palette.muted, fontSize: 13, fontWeight: "700" },
+  pillPlus: { paddingHorizontal: spacing.md, borderStyle: "dashed" },
+  pillAdd: { borderStyle: "dashed", paddingHorizontal: spacing.md },
+  pillAddText: { color: palette.ink, fontSize: 13, fontWeight: "700" },
+  lastTime: { color: palette.muted, fontSize: 12, textAlign: "center", marginTop: -spacing.xs },
   hero: { minHeight: 112, alignItems: "center", justifyContent: "center" },
   heroFill: { flex: 1 },
   heroValues: { flexDirection: "row", alignItems: "flex-start", justifyContent: "center", gap: spacing.md },
@@ -510,6 +638,13 @@ const useStyles = createThemedStyles((palette) => StyleSheet.create({
   heroTimesFill: { lineHeight: 74 },
   heroDone: { color: palette.ink, fontSize: 24, lineHeight: 30, fontWeight: "800", textAlign: "center" },
   heroCaption: { color: palette.muted, fontSize: 13 },
+  heroInput: { minWidth: 96, textAlign: "center", padding: 0, borderBottomWidth: 2, borderColor: palette.ink },
+  steps: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: spacing.xs },
+  stepPill: { minHeight: 32, paddingHorizontal: spacing.md, justifyContent: "center" },
+  stepInput: { width: 72, color: palette.ink, fontSize: 13, fontWeight: "700", textAlign: "center" },
+  stepChip: { position: "absolute", top: 0, minHeight: 24, paddingHorizontal: 9, borderRadius: 999, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.background, justifyContent: "center" },
+  stepChipOpen: { backgroundColor: palette.ink, borderColor: palette.ink },
+  stepChipText: { color: palette.ink, fontSize: 12, fontWeight: "800", fontVariant: ["tabular-nums"] },
   links: { flexDirection: "row", justifyContent: "center", gap: spacing.md, marginTop: spacing.xs },
   link: { minHeight: 36, justifyContent: "center", paddingHorizontal: spacing.sm },
   linkText: { color: palette.ink, fontSize: 13, fontWeight: "700", textDecorationLine: "underline" },
@@ -521,7 +656,9 @@ const useStyles = createThemedStyles((palette) => StyleSheet.create({
   hub: { position: "absolute", backgroundColor: palette.ink, alignItems: "center", justifyContent: "center" },
   hubText: { color: palette.surface, fontSize: 17, fontWeight: "900" },
   ringTarget: { position: "absolute", backgroundColor: "transparent" },
-  note: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 36, marginTop: spacing.xs, alignSelf: "center", maxWidth: "100%", paddingHorizontal: spacing.md },
+  noteRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", flexWrap: "wrap", gap: spacing.xs, marginTop: spacing.xs },
+  note: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 36, maxWidth: "100%", paddingHorizontal: spacing.md },
+  machine: { borderRadius: 999, backgroundColor: palette.surfaceAlt, minHeight: 30, maxWidth: 200 },
   noteText: { color: palette.muted, fontSize: 13, fontWeight: "600", flexShrink: 1 },
   noteTextFilled: { color: palette.ink, fontWeight: "500" },
   watchArea: { flex: 1, alignItems: "center", justifyContent: "center" },
