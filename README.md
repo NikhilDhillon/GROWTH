@@ -25,7 +25,7 @@ npm run typecheck
 npm run build
 ```
 
-The web export is written to `dist/`. `vercel.json` supplies filesystem-first SPA rewrites so deep links and draft recovery survive reloads. Native development uses `npm run ios` or `npm run android`.
+The web export is written to `dist/`. `vercel.json` supplies filesystem-first SPA rewrites so deep links and draft recovery survive reloads. Native development uses `npm run ios` or `npm run android`. The [Android app](ANDROID.md) covers building an APK and publishing on Google Play.
 
 ## Implementation and rollout
 

@@ -1,0 +1,13 @@
+<!-- The GROWTH mark (bar and plates), drawn in white for the status bar. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+  android:width="24dp"
+  android:height="24dp"
+  android:viewportWidth="120"
+  android:viewportHeight="120">
+  <path android:fillColor="#FFFFFFFF" android:pathData="M12,57h20v6h-20z" />
+  <path android:fillColor="#FFFFFFFF" android:pathData="M30,56h76v8h-76z" />
+  <path android:fillColor="#FFFFFFFF" android:pathData="M26,48h7v24h-7z" />
+  <path android:fillColor="#FFFFFFFF" android:pathData="M36,25h14v70h-14z" />
+  <path android:fillColor="#FFFFFFFF" android:pathData="M53,25h14v70h-14z" />
+  <path android:fillColor="#FFFFFFFF" android:fillAlpha="0.4" android:pathData="M70,25h14v70h-14z" />
+</vector>

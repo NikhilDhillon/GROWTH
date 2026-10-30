@@ -85,6 +85,7 @@ export function normalizeActiveWorkout(value: unknown): ActiveWorkout | null {
     ...(input.slots !== undefined ? { slots: normalizeWorkoutSlots(input.slots) ?? [] } : {}),
     ...(input.rest !== undefined ? { rest: normalizeWorkoutRest(input.rest) } : {}),
     currentExercise: normalizeActiveExercise(input.currentExercise),
+    ...(input.parkedExercises !== undefined ? { parkedExercises: normalizeParkedExercises(input.parkedExercises) } : {}),
     pendingMuscle: input.pendingMuscle ?? null,
     schedulePrompt: input.schedulePrompt === "off_plan" || input.schedulePrompt === "replace" ? input.schedulePrompt : null,
     scheduleChanges: Array.isArray(input.scheduleChanges) ? input.scheduleChanges.filter((message): message is string => typeof message === "string") : []
@@ -109,6 +110,17 @@ function normalizeActiveExercise(value: unknown): ActiveWorkoutExerciseDraft {
     barWeight: typeof input.barWeight === "string" ? input.barWeight : defaults.barWeight,
     plateCounts: input.plateCounts && typeof input.plateCounts === "object" ? input.plateCounts : defaults.plateCounts
   };
+}
+
+/** A set-aside draft is only kept with its slot and exercise, once per slot. */
+function normalizeParkedExercises(value: unknown): ActiveWorkoutExerciseDraft[] {
+  if (!Array.isArray(value)) return [];
+  const slots = new Set<string>();
+  return value.map(normalizeActiveExercise).filter((draft) => {
+    if (!draft.slotId || draft.exerciseId === null || slots.has(draft.slotId)) return false;
+    slots.add(draft.slotId);
+    return true;
+  });
 }
 
 function normalizeWorkoutRest(value: unknown): WorkoutRest | null {

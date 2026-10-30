@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.resetModules(); });
 
 async function load() { return (await import("./webLocks")).webLocks; }
 
@@ -31,6 +31,15 @@ describe("web lock selection", () => {
     expect(order).toEqual([]);
     release();
     await Promise.all([first, second]);
+    expect(order).toEqual(["first", "second"]);
+  });
+
+  it("queues within the phone app, which has a single page, even in a release build", async () => {
+    vi.stubGlobal("navigator", {});
+    vi.stubEnv("EXPO_OS", "android");
+    const locks = (await load())()!;
+    const order: string[] = [];
+    await Promise.all([locks.request("db", async () => { await Promise.resolve(); order.push("first"); }), locks.request("db", () => { order.push("second"); })]);
     expect(order).toEqual(["first", "second"]);
   });
 

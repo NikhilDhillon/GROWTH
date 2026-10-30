@@ -1,3 +1,4 @@
+import "@/platform/polyfills";
 import "react-native-gesture-handler";
 
 import { Analytics } from "@vercel/analytics/react";
@@ -155,7 +156,7 @@ export default function App() {
     if (!currentUser || !pendingInviteToken || isPasswordRecovery) return;
     void acceptFriendInvite(pendingInviteToken).finally(() => {
       setPendingInviteToken(null);
-      if (typeof window !== "undefined") {
+      if (Platform.OS === "web" && typeof window !== "undefined") {
         const url = new URL(window.location.href);
         url.searchParams.delete("invite");
         window.history.replaceState(window.history.state, document.title, `${url.pathname}${url.search}${url.hash}`);
@@ -175,7 +176,7 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <Analytics />
+      {Platform.OS === "web" ? <Analytics /> : null}
       <NavigationContainer theme={{ ...DefaultTheme, dark: colorScheme === "dark", colors: { ...DefaultTheme.colors, primary: palette.accent, background: palette.background, card: palette.surface, text: palette.ink, border: palette.border, notification: palette.danger } }} key={currentUser?.id ?? "guest"} ref={navigationRef} linking={{ ...appLinking, enabled: Boolean(currentUser) && !isPasswordRecovery }} onReady={updateActiveRoute} onStateChange={updateActiveRoute}>
         <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
         {dataError || operationNotice ? (
@@ -195,7 +196,7 @@ export default function App() {
             forcePasswordUpdate
             onPasswordUpdated={() => {
               setIsPasswordRecovery(false);
-              if (typeof window !== "undefined") {
+              if (Platform.OS === "web" && typeof window !== "undefined") {
                 window.history.replaceState({}, document.title, window.location.origin);
               }
             }}
@@ -235,13 +236,13 @@ export default function App() {
 }
 
 function isRecoveryUrl() {
-  if (typeof window === "undefined") return false;
+  if (Platform.OS !== "web" || typeof window === "undefined") return false;
   const value = `${window.location.search}&${window.location.hash}`;
   return value.includes("type=recovery");
 }
 
 function getInviteToken() {
-  if (typeof window === "undefined") return null;
+  if (Platform.OS !== "web" || typeof window === "undefined") return null;
   return new URLSearchParams(window.location.search).get("invite");
 }
 
