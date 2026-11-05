@@ -4,12 +4,14 @@ A strength and body-progress tracker built with Expo, React Native, TypeScript, 
 
 [Live site](https://growth-lift-tracker.vercel.app) — the local work described here has not been deployed.
 
-- Home, Record, Progress, and History, with supporting tools under More.
+- Home, Record, Progress, and History, with supporting tools in the menu behind your initials at the top right.
 - Neutral ChatGPT-style light/dark colors that follow the system appearance automatically, including live changes.
 - Guided and Quick workout recording with recoverable input drafts.
 - Day templates remember their exercises and order. Flow mode (Settings → Workout logging) turns a started workout into a full-screen focus flow: each set starts from your last session and is set on a rolling thumb dial (momentum, settle, haptic ticks), Done logs it and starts rest, and each finished exercise saves itself and opens the next. A top-bar note button adds a note to the current exercise. Classic keeps the editable set list. Each set records when it was captured and how (`typed`, `flow`, `planned`).
 - Personal exercises for movements the catalog lacks, added from any exercise search with their own load type. Split-sync friends can use them; leaderboards stay catalog-only.
 - Daily bodyweight and optional sparse tape measurements in one check-in.
+- Tape progress opens on a body map with a row for every body part, so all your measurements read at a glance. Tapping a muscle or row opens that part's chart. Settings → Body map picks the male or female figure.
+- Charts share one range slider, from a week to all time.
 - Versioned Performance Points: first eligible session per exercise/equipment context = 100; 45% strength, 35% working volume, 20% fatigue resistance. Absolute observations remain visible.
 - Fixed aggregate cohorts with coverage and freshness; bodyweight estimates use prior observations up to 14 calendar days old.
 - Friend comparisons from narrow, portable exercise projections; private notes, machine tags, and body observations stay private. Shared plans require direct consent.
@@ -38,6 +40,10 @@ The web export is written to `dist/`. `vercel.json` supplies filesystem-first SP
 - [Phases 6–7 verification](PHASE67_COMPLETION.md), [cleanup audit](PHASE7_CLEANUP.md)
 
 Apply migrations in documented order before releasing the matching cloud client. Local SQL harnesses under `supabase/tests/` create disposable databases and never verify deployed production state.
+
+## Credits
+
+The body map outlines come from [react-native-body-highlighter](https://www.npmjs.com/package/react-native-body-highlighter) (MIT, © 2022 ELABBASSI Hicham). The licence notice is at the top of `src/screens/BodyMeasurements/bodyFigureShapes.ts`.
 
 ## Appearance
 

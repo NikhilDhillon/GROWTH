@@ -55,3 +55,8 @@ describe("body check-in form observations", () => {
     ]);
   });
 });
+
+it("keeps only the units on a check-in draft, not other body preferences", () => {
+  const preferences = { weight: "kg", circumference: "in", figure: "female" } as const;
+  expect(createBodyCheckInDraft("2026-07-01", preferences).inputUnits).toEqual({ weight: "kg", circumference: "in" });
+});

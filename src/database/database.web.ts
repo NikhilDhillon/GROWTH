@@ -8,7 +8,7 @@ import { normalizeTemplateExercises } from "@/services/workouts/templateExercise
 import { assertCustomExercise, customExerciseLimit, existingExerciseNamed, isCustomExercise } from "@/services/workouts/customExercises";
 import { createDefaultTrainingSplit, normalizeTrainingSplit, upgradeUncustomisedTrainingSplit } from "@/constants/trainingSplit";
 import { buildWorkoutFingerprint, ImportBodyMeasurementLog, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
-import { ActiveWorkout, BodyMeasurementLog, CustomExerciseInput, BodyMeasurementValues, BodyUnitPreferences, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, Friend, FriendInvite, GuidedWorkoutPreferences, LeaderboardEntry, MachineProfile, MuscleStrengthConfig, SocialData, TemplateExercises, TrainingSplit, TrainingSplitDay, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyMeasurementLog, CustomExerciseInput, BodyMeasurementValues, BodyPreferences, BodyWeightLog, CompletedGuidedWorkout, Exercise, ExerciseScorePoint, Friend, FriendInvite, GuidedWorkoutPreferences, LeaderboardEntry, MachineProfile, MuscleStrengthConfig, SocialData, TemplateExercises, TrainingSplit, TrainingSplitDay, UnitSystem, User, UserExercisePreference, WorkoutSession, WorkoutSet } from "@/types";
 import { bodyMeasurementsFromLegacyWeights, defaultBodyUnitPreferences, normalizeBodyMeasurementLog, normalizeBodyUnitPreferences, parseStoredMeasurements } from "@/utils/bodyMeasurements";
 import { assertWorkoutWrite, editedSetCaptureColumns, matchesWorkoutWritePayload, sameStoredJson, setCaptureColumns, WorkoutWriteInput, workoutWritePayload } from "@/database/workoutWrite";
 import { assertCalendarDate } from "@/domain/calendar";
@@ -63,7 +63,7 @@ type WebDatabase = {
   users: User[];
   currentUserId: number | null;
   unitSystem: UnitSystem;
-  bodyUnitPreferences: BodyUnitPreferences;
+  bodyUnitPreferences: BodyPreferences;
   importFingerprints: string[];
   trainingSplit: TrainingSplit;
   activeWorkout: ActiveWorkout | null;
@@ -1206,7 +1206,7 @@ export async function updateUnitSystem(unitSystem: UnitSystem) {
   });
 }
 
-export async function updateBodyUnitPreferences(preferences: BodyUnitPreferences) {
+export async function updateBodyUnitPreferences(preferences: BodyPreferences) {
   const normalized = normalizeBodyUnitPreferences(preferences);
   if (supabase) {
     const user = await requireCloudUser(supabase);

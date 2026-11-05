@@ -2,16 +2,17 @@ import {
   BodyLimbMeasurement,
   BodyMeasurementLog,
   BodyMeasurementValues,
-  BodyUnitPreferences,
+  BodyPreferences,
   BodyWeightLog,
   CircumferenceUnit,
   UnitSystem
 } from "@/types";
 import { weightFromStorageUnit, weightToStorageUnit } from "@/utils/units";
 
-export const defaultBodyUnitPreferences: BodyUnitPreferences = {
+export const defaultBodyUnitPreferences: BodyPreferences = {
   weight: "kg",
-  circumference: "in"
+  circumference: "in",
+  figure: "male"
 };
 
 export const bodyMeasurementDefinitions = [
@@ -43,6 +44,17 @@ export function circumferenceFromStorageUnit(value: number, unit: CircumferenceU
 export function formatCircumference(value: number, unit: CircumferenceUnit) {
   const converted = circumferenceFromStorageUnit(value, unit);
   return `${converted.toFixed(1).replace(/\.0$/, "")} ${unit}`;
+}
+
+/** A change as it reads on screen, so "0.0" and a neutral colour always agree. */
+export function roundCircumferenceChange(valueCm: number, unit: CircumferenceUnit) {
+  return Number(circumferenceFromStorageUnit(valueCm, unit).toFixed(1));
+}
+
+export function formatCircumferenceChange(valueCm: number, unit: CircumferenceUnit) {
+  const rounded = roundCircumferenceChange(valueCm, unit);
+  if (rounded === 0) return "0.0";
+  return `${rounded > 0 ? "+" : "−"}${Math.abs(rounded).toFixed(1)}`;
 }
 
 export function formatCircumferenceInput(value: number, unit: CircumferenceUnit) {
@@ -102,12 +114,13 @@ export function bodyWeightFromStorage(value: number, unit: UnitSystem) {
   return weightFromStorageUnit(value, unit);
 }
 
-export function normalizeBodyUnitPreferences(value: unknown): BodyUnitPreferences {
+export function normalizeBodyUnitPreferences(value: unknown): BodyPreferences {
   if (!value || typeof value !== "object") return defaultBodyUnitPreferences;
-  const candidate = value as Partial<BodyUnitPreferences>;
+  const candidate = value as Partial<BodyPreferences>;
   return {
     weight: candidate.weight === "lb" ? "lb" : "kg",
-    circumference: candidate.circumference === "cm" ? "cm" : "in"
+    circumference: candidate.circumference === "cm" ? "cm" : "in",
+    figure: candidate.figure === "female" ? "female" : "male"
   };
 }
 

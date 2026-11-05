@@ -8,7 +8,8 @@ import { LineGraph } from "@/components/LineGraph";
 import { DetailsDisclosure } from "@/components/DetailsDisclosure";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
-import { SegmentedControl } from "@/components/SegmentedControl";
+import { RangeSlider } from "@/components/RangeSlider";
+import { chartRangeDays, chartRangeLabel, chartRanges, isChartRange, type ChartRange } from "@/utils/chartRange";
 import { Body, Label, SectionTitle } from "@/components/Text";
 import { useReportContext } from "@/hooks/useReportContext";
 import { addCalendarDays } from "@/domain/calendar";
@@ -22,14 +23,7 @@ import { spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { bodyWeightFromStorageUnit, formatBodyWeight } from "@/utils/units";
 
-type BodyweightRange = "week" | "month" | "year" | "all";
-
-const ranges: Array<{ key: BodyweightRange; label: string; accessibilityLabel: string }> = [
-  { key: "week", label: "1W", accessibilityLabel: "Week" },
-  { key: "month", label: "1M", accessibilityLabel: "Month" },
-  { key: "year", label: "1Y", accessibilityLabel: "Year" },
-  { key: "all", label: "All", accessibilityLabel: "All time" }
-];
+type BodyweightRange = ChartRange;
 
 export function BodyweightScreen({ progressTabs }: { progressTabs?: ReactNode } = {}) {
   const { palette, styles } = useStyles();
@@ -100,10 +94,10 @@ export function BodyweightScreen({ progressTabs }: { progressTabs?: ReactNode } 
           suffix={` ${unit}`}
           tone="neutral"
           height={190}
-          emptyMessage={`Add a bodyweight entry to draw this ${rangeLabel(range)} trend.`}
+          emptyMessage="Add a bodyweight entry to draw this trend."
           showTrendLine={showTrendLine}
         />
-        <SegmentedControl variant="pills" accessibilityLabel="Bodyweight range" value={range} onChange={setRange} options={ranges} />
+        <RangeSlider accessibilityLabel="Bodyweight range" value={range} onChange={setRange} options={chartRanges} />
         <View style={styles.statGrid}>
           <View style={styles.stat}>
             <Label numberOfLines={1}>Average</Label>
@@ -161,26 +155,17 @@ export function BodyweightScreen({ progressTabs }: { progressTabs?: ReactNode } 
 
 function validWeightContext(value: unknown): value is { range: BodyweightRange; trend: boolean; averages: boolean } {
   const p = value as { range: string; trend: boolean; averages: boolean } | null;
-  return !!p && ["week", "month", "year", "all"].includes(p.range) && typeof p.trend === "boolean" && typeof p.averages === "boolean";
+  return !!p && isChartRange(p.range) && typeof p.trend === "boolean" && typeof p.averages === "boolean";
 }
 function filterLogsByRange(logs: BodyWeightLog[], range: BodyweightRange) {
   const asOf = todayIso();
-  const cutoff = range === "all" ? "0001-01-01" : addCalendarDays(asOf, -rangeDays(range) + 1);
+  const days = chartRangeDays(range);
+  const cutoff = days === null ? "0001-01-01" : addCalendarDays(asOf, -days + 1);
   return logs.filter((log) => bodyweightDate(log) >= cutoff && bodyweightDate(log) <= asOf);
 }
 
-function rangeDays(range: Exclude<BodyweightRange, "all">) {
-  if (range === "week") return 7;
-  if (range === "month") return 30;
-  return 365;
-}
-
-function rangeLabel(range: BodyweightRange) {
-  return range === "all" ? "all-time" : range;
-}
-
 function rangeAverageLabel(range: BodyweightRange) {
-  return `${range === "all" ? "All-time" : range[0].toUpperCase() + range.slice(1)} average`;
+  return range === "all" ? "All-time average" : `${chartRangeLabel(range)} average`;
 }
 
 function buildMonthlyAveragePoints(logs: BodyWeightLog[], unit: "lb" | "kg") {

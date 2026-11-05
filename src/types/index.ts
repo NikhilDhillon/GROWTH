@@ -121,6 +121,11 @@ export type BodyUnitPreferences = {
   circumference: CircumferenceUnit;
 };
 
+export type BodyFigureChoice = "male" | "female";
+
+/** Saved together so they follow the account. Only the units belong on a check-in. */
+export type BodyPreferences = BodyUnitPreferences & { figure: BodyFigureChoice };
+
 export type BodyLimbMeasurement =
   | { mode: "single"; value: number }
   | { mode: "sides"; left?: number; right?: number };

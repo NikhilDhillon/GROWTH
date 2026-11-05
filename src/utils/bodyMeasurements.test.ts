@@ -8,7 +8,8 @@ import {
   circumferenceFromStorageUnit,
   circumferenceToStorageUnit,
   normalizeBodyMeasurementValues,
-  normalizeBodyUnitPreferences
+  normalizeBodyUnitPreferences,
+  formatCircumferenceChange
 } from "@/utils/bodyMeasurements";
 
 describe("body measurement units", () => {
@@ -30,8 +31,10 @@ describe("body measurement units", () => {
   });
 
   it("defaults body preferences to kg and inches", () => {
-    expect(normalizeBodyUnitPreferences(null)).toEqual({ weight: "kg", circumference: "in" });
-    expect(normalizeBodyUnitPreferences({ weight: "lb", circumference: "cm" })).toEqual({ weight: "lb", circumference: "cm" });
+    expect(normalizeBodyUnitPreferences(null)).toEqual({ weight: "kg", circumference: "in", figure: "male" });
+    expect(normalizeBodyUnitPreferences({ weight: "lb", circumference: "cm" })).toEqual({ weight: "lb", circumference: "cm", figure: "male" });
+    expect(normalizeBodyUnitPreferences({ weight: "lb", circumference: "cm", figure: "female" }).figure).toBe("female");
+    expect(normalizeBodyUnitPreferences({ figure: "robot" }).figure).toBe("male");
   });
 });
 
@@ -81,5 +84,13 @@ describe("body measurement normalization", () => {
     ]);
     expect(projected).toHaveLength(1);
     expect(projected[0]).toEqual(expect.objectContaining({ id: 3, weight: 175 }));
+  });
+
+  it("signs changes and never shows a negative zero", () => {
+    expect(formatCircumferenceChange(2.54, "in")).toBe("+1.0");
+    expect(formatCircumferenceChange(-1.016, "in")).toBe("−0.4");
+    expect(formatCircumferenceChange(-0.05, "in")).toBe("0.0");
+    expect(formatCircumferenceChange(0, "cm")).toBe("0.0");
+    expect(formatCircumferenceChange(1.5, "cm")).toBe("+1.5");
   });
 });

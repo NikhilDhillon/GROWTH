@@ -5,6 +5,7 @@ import { LineGraph } from "@/components/LineGraph";
 import { DetailsDisclosure } from "@/components/DetailsDisclosure";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
+import { RangeSlider } from "@/components/RangeSlider";
 import { Body, Label, SectionTitle, Title } from "@/components/Text";
 import { BulkAnalyticsInput, calculateBulkAnalytics } from "@/services/analytics/bulkAnalyticsService";
 import { useReportContext } from "@/hooks/useReportContext";
@@ -18,6 +19,7 @@ import { muscles, spacing } from "@/utils/theme";
 import { bodyWeightFromStorageUnit } from "@/utils/units";
 
 const ranges: BulkAnalyticsRange[] = ["7d", "14d", "30d", "60d", "90d", "all"];
+const rangeStops = ranges.map((key) => ({ key, short: key === "all" ? "All" : key, label: key === "all" ? "All time" : `Last ${key.replace("d", "")} days`, marked: true }));
 const scopeKinds = ["overall", "muscle", "exercise"] as const;
 
 type ReportContext = { range: BulkAnalyticsRange; scopeKind: (typeof scopeKinds)[number]; muscleGroup: MuscleGroup; exerciseId: number; comparisonKey: string };
@@ -78,13 +80,7 @@ export function BulkAnalyticsScreen({ progressTabs, initialContext, onContextCha
 
       <Panel>
         <SectionTitle>Range</SectionTitle>
-        <View style={styles.chipRow}>
-          {ranges.map((item) => (
-            <Pressable key={item} onPress={() => setRange(item)} style={[styles.chip, range === item && styles.chipActive]}>
-              <Body style={[styles.chipText, range === item && styles.chipTextActive]}>{item === "all" ? "All" : item}</Body>
-            </Pressable>
-          ))}
-        </View>
+        <RangeSlider accessibilityLabel="Comparison range" value={range} onChange={setRange} options={rangeStops} />
       </Panel>
 
       <Panel>

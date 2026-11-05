@@ -22,6 +22,10 @@ cd android && JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Content
 
 The APK is `android/app/build/outputs/apk/release/app-release.apk`. It is signed with the debug key, so it is for testing only. An APK from another machine cannot update it; uninstall first.
 
+## Import a backup
+
+The website picks a JSON file. Android has no file picker, so paste the JSON into Settings → Import instead. Dates that already have a check-in are skipped.
+
 ## Publish on Google Play
 
 `eas.json` has a `preview` profile (an APK to share) and a `production` profile (an app bundle for Play, version codes counted by EAS).

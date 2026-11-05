@@ -73,8 +73,13 @@ export function buildDemoImport(today = todayIso(), weeks = 18) {
       bodyMeasurements.push({ date, measurements: {
         waist: Number((32.6 - week * 0.02 + (noise(offset + 900) - 0.5) * 0.2).toFixed(2)),
         chest: Number((40.5 + week * 0.06).toFixed(2)),
+        abdomen: Number((34.6 - week * 0.035).toFixed(2)),
+        thinnest_waist: Number((31.4 - week * 0.02).toFixed(2)),
         arm_flexed: { left: Number((14.6 + week * 0.025).toFixed(2)), right: Number((14.8 + week * 0.025).toFixed(2)) },
-        thigh: { left: Number((23.4 + week * 0.03).toFixed(2)), right: Number((23.5 + week * 0.03).toFixed(2)) }
+        arm_unflexed: { left: Number((13.4 + week * 0.015).toFixed(2)), right: Number((13.5 + week * 0.015).toFixed(2)) },
+        forearm: { left: Number((12.1 + week * 0.01).toFixed(2)), right: Number((12.2 + week * 0.01).toFixed(2)) },
+        thigh: { left: Number((23.4 + week * 0.03).toFixed(2)), right: Number((23.5 + week * 0.03).toFixed(2)) },
+        calves: { left: Number((15.2 + week * 0.006).toFixed(2)), right: Number((15.3 + week * 0.006).toFixed(2)) }
       } });
     }
     const plan = rotation[calendarWeekday(date)];

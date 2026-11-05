@@ -11,7 +11,7 @@ import { migrateLegacyBodyMeasurements } from "@/database/bodyMigration";
 import { assertWorkoutWrite, editedSetCaptureColumns, matchesWorkoutWritePayload, sameStoredJson, setCaptureColumns, WorkoutWriteInput, workoutWritePayload } from "@/database/workoutWrite";
 import { baseSchema } from "@/database/schema";
 import { buildWorkoutFingerprint, ImportBodyMeasurementLog, ImportBodyWeightLog, ImportWorkoutLog } from "@/services/import/importService";
-import { ActiveWorkout, BodyMeasurementLog, BodyMeasurementValues, BodyUnitPreferences, BodyWeightLog, CompletedGuidedWorkout, CustomExerciseInput, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, MachineProfile, MuscleStrengthConfig, SocialData, TemplateExercises, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyMeasurementLog, BodyMeasurementValues, BodyPreferences, BodyWeightLog, CompletedGuidedWorkout, CustomExerciseInput, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, MachineProfile, MuscleStrengthConfig, SocialData, TemplateExercises, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { defaultBodyUnitPreferences, normalizeBodyMeasurementLog, normalizeBodyUnitPreferences, parseStoredMeasurements } from "@/utils/bodyMeasurements";
 import { assertCalendarDate } from "@/domain/calendar";
 import { assertBodyCheckInWrite, BodyCheckInConflictError, BodyCheckInWriteInput, bodyCheckInObservationUnits, bodyCheckInWritePayload, sameBodyCheckInSnapshot } from "@/domain/bodyCheckInRecording";
@@ -736,7 +736,7 @@ export async function updateUnitSystem(unitSystem: UnitSystem) {
   await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["unit_system", unitSystem]);
 }
 
-export async function updateBodyUnitPreferences(preferences: BodyUnitPreferences) {
+export async function updateBodyUnitPreferences(preferences: BodyPreferences) {
   const db = await getDatabase();
   const normalized = normalizeBodyUnitPreferences(preferences);
   await db.runAsync("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)", ["body_unit_preferences", JSON.stringify(normalized)]);
