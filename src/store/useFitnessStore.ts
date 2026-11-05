@@ -16,7 +16,7 @@ import { recordBodyCheckIn as recordStoredBodyCheckIn, deleteBodyCheckIn as dele
 import { BodyCheckInCaptureInput, prepareBodyCheckInWrite } from "@/services/body/bodyCheckInRecording";
 import { acceptFriendInvite as acceptStoredFriendInvite, createCustomExercise as createStoredCustomExercise, createFriendInvite as createStoredFriendInvite, deleteBodyMeasurementLog as deleteStoredBodyMeasurementLog, deleteBodyWeightLog as deleteStoredBodyWeightLog, deleteWorkoutSession, importTrainingData as importStoredTrainingData, loadAllData, loadSocialData as loadStoredSocialData, loginUser, logoutUser, logWorkout, registerUser, removeFriend as removeStoredFriend, removeSplitSync as removeStoredSplitSync, requestPasswordReset, requestSplitSync as requestStoredSplitSync, respondSplitSync as respondStoredSplitSync, revokeFriendInvite as revokeStoredFriendInvite, saveActiveWorkout as saveStoredActiveWorkout, saveBodyMeasurementLog as saveStoredBodyMeasurementLog, saveBodyWeightLog as saveStoredBodyWeightLog, saveCompletedGuidedWorkouts as saveStoredCompletedGuidedWorkouts, saveMachineProfiles as saveStoredMachineProfiles, saveTemplateExercises as saveStoredTemplateExercises, setExerciseEnabled as setStoredExerciseEnabled, updateBodyMeasurementLog as updateStoredBodyMeasurementLog, updateBodyUnitPreferences as updateStoredBodyUnitPreferences, updateBodyWeightLog as updateStoredBodyWeightLog, updateConfigWeight, updateCurrentUserPassword, updateGuidedWorkoutPreferences as updateStoredGuidedWorkoutPreferences, updateTrainingSplit as updateStoredTrainingSplit, updateUnitSystem, updateWorkoutSession, updateWorkoutSessionMachineProfile } from "@/database/database";
 import { ImportResult, ParsedImportData } from "@/services/import/importService";
-import { ActiveWorkout, BodyMeasurementLog, BodyMeasurementValues, BodyUnitPreferences, BodyWeightLog, CompletedGuidedWorkout, CustomExerciseInput, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, LoggedSetDraft, MachineProfile, MuscleScorePoint, MuscleStrengthConfig, SocialData, TemplateExercise, TemplateExercises, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
+import { ActiveWorkout, BodyMeasurementLog, BodyMeasurementValues, BodyPreferences, BodyWeightLog, CompletedGuidedWorkout, CustomExerciseInput, Exercise, ExerciseScorePoint, GuidedWorkoutPreferences, LoggedSetDraft, MachineProfile, MuscleScorePoint, MuscleStrengthConfig, SocialData, TemplateExercise, TemplateExercises, TrainingSplit, TrainingSplitDay, UnitSystem, User, WorkoutSession, WorkoutSet } from "@/types";
 import { assertCalendarDate } from "@/domain/calendar";
 import { parseObservedSets } from "@/domain/observations";
 import { bodyMeasurementValuesToStorage, bodyWeightLogsFromMeasurements, bodyWeightToStorage, defaultBodyUnitPreferences, hasBodyMeasurementData, normalizeBodyMeasurementValues } from "@/utils/bodyMeasurements";
@@ -35,7 +35,7 @@ type FitnessState = {
   sets: WorkoutSet[];
   bodyMeasurementLogs: BodyMeasurementLog[];
   bodyWeightLogs: BodyWeightLog[];
-  bodyUnitPreferences: BodyUnitPreferences;
+  bodyUnitPreferences: BodyPreferences;
   configs: MuscleStrengthConfig[];
   trainingSplit: TrainingSplit;
   activeWorkout: ActiveWorkout | null;
@@ -92,7 +92,7 @@ type FitnessState = {
   deleteBodyCheckIn: (id: number, expected?: BodyMeasurementLog) => Promise<void>;
   importTrainingData: (input: ParsedImportData & { expectedAccountId?: string | number }) => Promise<ImportResult>;
   setUnitSystem: (unitSystem: UnitSystem) => Promise<void>;
-  setBodyUnitPreferences: (preferences: BodyUnitPreferences) => Promise<void>;
+  setBodyUnitPreferences: (preferences: BodyPreferences) => Promise<void>;
   saveTrainingSplit: (days: TrainingSplitDay[]) => Promise<void>;
   startActiveWorkout: (activeWorkout: ActiveWorkout) => Promise<void>;
   updateActiveWorkout: (activeWorkout: ActiveWorkout) => Promise<void>;
