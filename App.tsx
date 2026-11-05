@@ -5,18 +5,18 @@ import { Analytics } from "@vercel/analytics/react";
 import { DefaultTheme, CommonActions, NavigationContainer, createNavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { StatusBar } from "expo-status-bar";
-import { BarChart3, Dumbbell, Home, ListChecks, Menu, Plus, Settings, Users } from "lucide-react-native";
+import { BarChart3, Dumbbell, Home, ListChecks, Plus, Settings, Users } from "lucide-react-native";
 import type { ComponentType } from "react";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Avatar } from "@/components/Avatar";
 import { LogoMark } from "@/components/LogoMark";
 import { BottomSheet } from "@/components/BottomSheet";
 import { createThemedStyles } from "@/utils/themedStyles";
 import { spacing } from "@/utils/theme";
-import { pressableFeedback } from "@/utils/touch";
+import { pressableFeedback, touchHitSlop } from "@/utils/touch";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { HomeScreen } from "@/screens/Home/HomeScreen";
 import { RecordScreen } from "@/screens/Record/RecordScreen";
@@ -78,7 +78,7 @@ export default function App() {
   const [isPasswordRecovery, setIsPasswordRecovery] = useState(() => isRecoveryUrl());
   const [pendingInviteToken, setPendingInviteToken] = useState(() => getInviteToken());
   const [activeRouteName, setActiveRouteName] = useState<CurrentRouteName>("Home");
-  const [moreOpen, setMoreOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const isLaptopWeb = Platform.OS === "web" && width >= 768;
   // Flow mode is a focus mode: no header, sidebar or tab bar while it is open.
   const focused = activeRouteName === "FlowWorkout";
@@ -91,7 +91,7 @@ export default function App() {
   }
 
   function navigateApp(destination: Destination) {
-    setMoreOpen(false);
+    setAccountMenuOpen(false);
     if (navigationRef.isReady() && (destination.name !== activeRouteName || destination.params)) {
       navigationRef.dispatch(CommonActions.navigate({ name: destination.name, params: destination.params }));
     }
@@ -213,6 +213,7 @@ export default function App() {
                     <AppHeader
                       currentRouteName={route.name}
                       currentUserName={displayName(currentUser.name, currentUser.email)}
+                      onOpenMenu={() => setAccountMenuOpen(true)}
                     />
                   )
               })}
@@ -226,8 +227,8 @@ export default function App() {
               <Stack.Screen name="FlowWorkout" component={FlowWorkoutScreen} getId={() => "FlowWorkout"} options={{ headerShown: false, animation: "fade" }} />
               <Stack.Screen name="WorkoutSummary" component={WorkoutSummaryScreen} getId={({ params }) => params?.workoutId} />
             </Stack.Navigator>
-            {!isLaptopWeb && !focused ? <MobileNavigation activeRouteName={activeRouteName} onNavigate={navigateApp} onMore={() => setMoreOpen(true)} /> : null}
-            <MoreMenu visible={moreOpen} onClose={() => setMoreOpen(false)} onNavigate={navigateApp} />
+            {!isLaptopWeb && !focused ? <MobileNavigation activeRouteName={activeRouteName} onNavigate={navigateApp} /> : null}
+            {currentUser ? <AccountMenu visible={accountMenuOpen} name={displayName(currentUser.name, currentUser.email)} email={currentUser.email} onClose={() => setAccountMenuOpen(false)} onNavigate={navigateApp} /> : null}
           </View>
         ) : (
           <AuthScreen />
@@ -256,25 +257,27 @@ function isAppRouteName(value: unknown): value is AppRouteName {
   return typeof value === "string" && value in routeTitles;
 }
 
-function AppHeader({ currentRouteName, currentUserName }: {
+function AppHeader({ currentRouteName, currentUserName, onOpenMenu }: {
   currentRouteName: CurrentRouteName;
   currentUserName: string;
+  onOpenMenu: () => void;
 }) {
   const { palette, styles } = useStyles();
   return (
     <SafeAreaView style={styles.headerSafe} edges={["top", "left", "right"]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle} numberOfLines={1}>{routeTitles[currentRouteName]}</Text>
-        <Avatar name={currentUserName} />
+        <Pressable accessibilityRole="button" accessibilityLabel={`Account menu for ${currentUserName}`} hitSlop={touchHitSlop} onPress={onOpenMenu} style={pressableFeedback(styles.accountButton)}>
+          <Avatar name={currentUserName} />
+        </Pressable>
       </View>
     </SafeAreaView>
   );
 }
 
-function MobileNavigation({ activeRouteName, onNavigate, onMore }: {
+function MobileNavigation({ activeRouteName, onNavigate }: {
   activeRouteName: CurrentRouteName;
   onNavigate: (destination: Destination) => void;
-  onMore: () => void;
 }) {
   const { palette, styles } = useStyles();
   const section = navigationSection(activeRouteName);
@@ -285,7 +288,6 @@ function MobileNavigation({ activeRouteName, onNavigate, onMore }: {
         const Icon = route.Icon;
         return <Pressable key={route.key} accessibilityRole="button" accessibilityLabel={route.label} accessibilityState={{ selected }} onPress={() => onNavigate(route)} style={pressableFeedback([styles.bottomItem, selected && styles.bottomItemActive])}><Icon size={22} color={selected ? palette.ink : palette.muted} /><Text style={[styles.bottomLabel, selected && styles.menuItemTextActive]}>{route.label}</Text></Pressable>;
       })}
-      <Pressable accessibilityRole="button" accessibilityLabel="More" accessibilityState={{ selected: section === "More" }} onPress={onMore} style={pressableFeedback([styles.bottomItem, section === "More" && styles.bottomItemActive])}><Menu size={22} color={section === "More" ? palette.ink : palette.muted} /><Text style={[styles.bottomLabel, section === "More" && styles.menuItemTextActive]}>More</Text></Pressable>
     </View>
   </SafeAreaView>;
 }
@@ -296,11 +298,18 @@ function DestinationButton({ destination, selected = false, onNavigate }: { dest
   return <Pressable accessibilityRole="button" accessibilityLabel={destination.label} accessibilityState={{ selected }} onPress={() => onNavigate(destination)} style={pressableFeedback([styles.menuItem, selected && styles.menuItemActive])}><Icon size={20} color={selected ? palette.ink : palette.muted} /><Text numberOfLines={1} style={[styles.menuItemText, selected && styles.menuItemTextActive]}>{destination.label}</Text></Pressable>;
 }
 
-function MoreMenu({ visible, onClose, onNavigate }: { visible: boolean; onClose: () => void; onNavigate: (destination: Destination) => void }) {
+function AccountMenu({ visible, name, email, onClose, onNavigate }: { visible: boolean; name: string; email: string; onClose: () => void; onNavigate: (destination: Destination) => void }) {
+  const { styles } = useStyles();
+  const insets = useSafeAreaInsets();
   return <Modal animationType="none" transparent statusBarTranslucent visible={visible} onRequestClose={onClose}>
-    <BottomSheet title="More" closeLabel="Close More menu" onClose={onClose}>
+    <Pressable accessibilityRole="button" accessibilityLabel="Close account menu" onPress={onClose} style={styles.accountBackdrop} />
+    <View accessibilityViewIsModal style={[styles.accountMenu, { top: insets.top + 58 }]}>
+      <View style={styles.accountWho}>
+        <Text numberOfLines={1} style={styles.accountName}>{name}</Text>
+        {email && email !== name ? <Text numberOfLines={1} style={styles.accountEmail}>{email}</Text> : null}
+      </View>
       {moreRoutes.map((destination) => <DestinationButton key={destination.key} destination={destination} onNavigate={onNavigate} />)}
-    </BottomSheet>
+    </View>
   </Modal>;
 }
 
@@ -328,6 +337,12 @@ const useStyles = createThemedStyles((palette) => StyleSheet.create({
   },
   bottomSafe: { backgroundColor: palette.surface, borderTopWidth: 1, borderColor: palette.border },
   bottomBar: { flexDirection: "row", paddingHorizontal: spacing.xs, paddingVertical: spacing.xs, gap: 2 },
+  accountButton: { borderRadius: 999 },
+  accountBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: palette.overlay },
+  accountMenu: { position: "absolute", right: spacing.md, width: 232, maxWidth: "90%", paddingBottom: spacing.xs, borderRadius: 16, borderWidth: 1, borderColor: palette.border, backgroundColor: palette.surface, overflow: "hidden" },
+  accountWho: { paddingHorizontal: spacing.lg, paddingVertical: spacing.md, borderBottomWidth: 1, borderBottomColor: palette.border, marginBottom: spacing.xs, gap: 2 },
+  accountName: { color: palette.ink, fontSize: 15, fontWeight: "700" },
+  accountEmail: { color: palette.muted, fontSize: 12 },
   bottomItem: { flex: 1, minWidth: 44, minHeight: 56, borderRadius: 8, alignItems: "center", justifyContent: "center", gap: 4 },
   bottomItemActive: { backgroundColor: palette.accentSoft },
   bottomLabel: { color: palette.muted, fontSize: 11, fontWeight: "800" },

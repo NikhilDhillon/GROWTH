@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from "react-native";
 
 import { createThemedStyles } from "@/utils/themedStyles";
 
-/** Initials in a circle: identifies the signed-in account without reading as a button. */
+/** Initials in a circle that identify the signed-in account. Wrap it to make it a button. */
 export function Avatar({ name, size = 34 }: { name: string; size?: number }) {
   const { styles } = useStyles();
   return (
