@@ -12,7 +12,13 @@ export const lightPalette = {
   danger: "#c03936",
   success: "#177245",
   blue: "#2563eb",
-  overlay: "rgba(0, 0, 0, 0.4)"
+  overlay: "rgba(0, 0, 0, 0.4)",
+  grew: "#2f7fe0",
+  shrank: "#e2662a",
+  steady: "#8e8e93",
+  muscle: "#e4e4e6",
+  muscleHair: "#c9c9cc",
+  muscleEdge: "#b5b5b8"
 };
 export type ThemePalette = typeof lightPalette;
 export const darkPalette: ThemePalette = {
@@ -28,7 +34,13 @@ export const darkPalette: ThemePalette = {
   danger: "#ff8a84",
   success: "#7bcf9a",
   blue: "#91b6ff",
-  overlay: "rgba(0, 0, 0, 0.64)"
+  overlay: "rgba(0, 0, 0, 0.64)",
+  grew: "#2f7fe0",
+  shrank: "#e2662a",
+  steady: "#c4c4c9",
+  muscle: "#4a4a4c",
+  muscleHair: "#3b3b3d",
+  muscleEdge: "#1f1f20"
 };
 
 export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 };

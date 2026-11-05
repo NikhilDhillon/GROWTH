@@ -1,29 +1,27 @@
 import { ReactNode, useMemo, useRef, useState } from "react";
 import { useNavigation } from "@react-navigation/native";
-import { ActivityIndicator, Pressable, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Pencil, Plus, Trash2 } from "lucide-react-native";
 
+import { BottomSheet } from "@/components/BottomSheet";
 import { LineGraph } from "@/components/LineGraph";
 import { DetailsDisclosure } from "@/components/DetailsDisclosure";
 import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
-import { SegmentedControl } from "@/components/SegmentedControl";
+import { RangeSlider } from "@/components/RangeSlider";
 import { Body, Label, SectionTitle } from "@/components/Text";
-import { buildBodyMeasurementReport, filterBodyMeasurementLogs, type BodyMeasurementRange } from "@/services/body/bodyMeasurementReport";
+import { buildBodyMeasurementOverview, buildBodyMeasurementSeries, filterBodyMeasurementLogs, type BodyMeasurementRange, type MeasurementChannel } from "@/services/body/bodyMeasurementReport";
+import { TapeOverview } from "@/screens/BodyMeasurements/TapeOverview";
 import { useReportContext } from "@/hooks/useReportContext";
 import { useFitnessStore } from "@/store/useFitnessStore";
 import { BodyMeasurementLog } from "@/types";
 import { BodyMeasurementKey, bodyMeasurementDefinitions, circumferenceFromStorageUnit, formatCircumference } from "@/utils/bodyMeasurements";
+import { chartRanges, isChartRange } from "@/utils/chartRange";
 import { formatCompactDate, formatShortDate } from "@/utils/date";
 import { deleteWithConfirmation } from "@/utils/deletion";
 import { createThemedStyles } from "@/utils/themedStyles";
 import { spacing } from "@/utils/theme";
 import { fastTouchStyle, pressableFeedback } from "@/utils/touch";
-
-const ranges: Array<{ key: BodyMeasurementRange; label: string; accessibilityLabel: string }> = [
-  { key: "week", label: "1W", accessibilityLabel: "Week" }, { key: "month", label: "1M", accessibilityLabel: "Month" },
-  { key: "year", label: "1Y", accessibilityLabel: "Year" }, { key: "all", label: "All", accessibilityLabel: "All time" }
-];
 
 export function BodyMeasurementsScreen({ progressTabs }: { progressTabs?: ReactNode }) {
   const { palette, styles } = useStyles();
@@ -32,12 +30,13 @@ export function BodyMeasurementsScreen({ progressTabs }: { progressTabs?: ReactN
   const preferences = useFitnessStore((state) => state.bodyUnitPreferences);
   const deleteBodyMeasurementLog = useFitnessStore((state) => state.deleteBodyMeasurementLog);
   const account = useFitnessStore((state) => state.currentUser?.id);
-  const context = useReportContext(account, "tape", { range: "year" as BodyMeasurementRange, metric: "waist" as BodyMeasurementKey, trend: false }, validTapeContext);
-  const { range, metric, trend: showTrendLine } = context.value;
-  const setRange = (range: BodyMeasurementRange) => context.update({ ...context.value, range });
-  const setMetric = (metric: BodyMeasurementKey) => context.update({ ...context.value, metric });
-  const setShowTrendLine = (fn: (current: boolean) => boolean) => context.update({ ...context.value, trend: fn(showTrendLine) });
-  const [selectedChannel, setSelectedChannel] = useState("");
+  const context = useReportContext(account, "tape-overview", { range: "year" as BodyMeasurementRange, trend: false }, validTapeContext);
+  const { range, trend: showTrendLine } = context.value;
+  const setRange = (range: BodyMeasurementRange) => context.update({ range, trend: showTrendLine });
+  const setShowTrendLine = (fn: (current: boolean) => boolean) => context.update({ range, trend: fn(showTrendLine) });
+  /** The chart in the sheet. It is not saved, so the tab always opens on the body map. */
+  const [opened, setOpened] = useState<{ key: BodyMeasurementKey; channel: MeasurementChannel } | null>(null);
+  const closeChart = () => setOpened(null);
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -45,8 +44,9 @@ export function BodyMeasurementsScreen({ progressTabs }: { progressTabs?: ReactN
   const logs = useMemo(() => allLogs.filter((log) => Object.keys(log.measurements).length > 0), [allLogs]);
   const sortedLogs = filterBodyMeasurementLogs(logs, "all");
   const rangedLogs = filterBodyMeasurementLogs(logs, range);
-  const series = buildBodyMeasurementReport(sortedLogs, metric);
-  const activeSeries = series.find((item) => item.channel === selectedChannel) ?? series[0];
+  const series = opened ? buildBodyMeasurementSeries(sortedLogs, opened.key) : [];
+  const overview = useMemo(() => buildBodyMeasurementOverview(logs, range), [logs, range]);
+  const activeSeries = series.find((item) => item.channel === opened?.channel) ?? series[0];
   const rangedIds = new Set(rangedLogs.map((log) => log.id));
 
   async function confirmDelete(log: BodyMeasurementLog) {
@@ -68,9 +68,7 @@ export function BodyMeasurementsScreen({ progressTabs }: { progressTabs?: ReactN
     }
   }
 
-  const recordedKeys = new Set(logs.flatMap((log) => Object.keys(log.measurements)));
-  const metricOptions = recordedKeys.size ? bodyMeasurementDefinitions.filter((item) => recordedKeys.has(item.key) || item.key === metric) : bodyMeasurementDefinitions;
-  const metricLabel = bodyMeasurementDefinitions.find((item) => item.key === metric)?.label ?? "Measurement";
+  const openedLabel = bodyMeasurementDefinitions.find((item) => item.key === opened?.key)?.label ?? "Measurement";
   const visibleHistory = [...sortedLogs].reverse();
   return (
     <Screen>
@@ -85,34 +83,36 @@ export function BodyMeasurementsScreen({ progressTabs }: { progressTabs?: ReactN
             <Body style={styles.checkInText}>Check-in</Body>
           </Pressable>
         </View>
-        <View style={styles.chipRow}>
-          {metricOptions.map((item) => (
-            <Pressable key={item.key} accessibilityRole="button" accessibilityState={{ selected: metric === item.key }} onPress={() => setMetric(item.key)} style={pressableFeedback([styles.chip, metric === item.key && styles.chipActive])}>
-              <Body style={[styles.chipText, metric === item.key && styles.chipTextActive]}>{item.label}</Body>
-            </Pressable>
-          ))}
-        </View>
-        {series.length > 1 ? <View style={styles.sideRow}>{series.map((item) => <Pressable key={item.channel} accessibilityRole="button" accessibilityState={{ selected: activeSeries?.channel === item.channel }} onPress={() => setSelectedChannel(item.channel)} style={pressableFeedback([styles.side, activeSeries?.channel === item.channel && styles.sideActive])}><Body numberOfLines={1} style={[styles.sideText, activeSeries?.channel === item.channel && styles.sideTextActive]}>{item.label}</Body></Pressable>)}</View> : null}
-        {activeSeries ? [activeSeries].map((item) => (
-          <LineGraph key={item.channel} points={item.points.filter((point) => rangedIds.has(point.checkInId)).map((point) => ({
-            key: `check-in:${point.checkInId}:${item.channel}`, date: point.date, label: formatCompactDate(point.date),
-            value: circumferenceFromStorageUnit(point.valueCm, preferences.circumference),
-            details: [item.label, `Recorded ${point.date}`]
-          }))} suffix={` ${preferences.circumference}`} tone="neutral" height={180} showTrendLine={showTrendLine}
-            emptyMessage={`No ${metricLabel.toLowerCase()} entries in this range. Pick a longer range.`} />
-        )) : <LineGraph points={[]} emptyMessage={`Record ${metricLabel.toLowerCase()} in a check-in to draw this trend.`} />}
-        <SegmentedControl variant="pills" accessibilityLabel="Tape range" value={range} onChange={setRange} options={ranges} />
-        {activeSeries ? <Body style={styles.hint}>All-time change {formatChange(activeSeries.changeFromStartCm, preferences.circumference)} since {formatCompactDate(activeSeries.start.date)}</Body> : null}
-        <View style={styles.toggleRow}>
-          <Pressable accessibilityRole="switch" accessibilityLabel="Toggle trendline" accessibilityState={{ checked: showTrendLine }} onPress={() => setShowTrendLine((value) => !value)} style={pressableFeedback([styles.toggle, showTrendLine && styles.toggleActive])}>
-            <View style={[styles.toggleDot, showTrendLine && styles.toggleDotActive]} />
-            <Body style={[styles.toggleText, showTrendLine && styles.toggleTextActive]}>Trendline</Body>
-          </Pressable>
-        </View>
+        <RangeSlider accessibilityLabel="Tape range" value={range} onChange={setRange} options={chartRanges} />
+        <TapeOverview overview={overview} figure={preferences.figure} unit={preferences.circumference} onOpen={(key, channel) => setOpened({ key, channel })} />
         <DetailsDisclosure title="How measurements are compared">
-          <Body>Trends use actual recording dates. Each measurement channel keeps its own history; left and right sides are never averaged together.</Body>
+          <Body>Every row uses the same scale, so a longer bar is a bigger change. Change runs from the first to the last entry in this range, so parts measured on different dates can cover different spans. Left and right stay separate. If a part switched between one value and left and right, its change compares the single value with the average of left and right, marked avg. The body shows your flexed arm if you have measured it, and the three waist measurements sit on the abs only approximately.</Body>
         </DetailsDisclosure>
       </Panel>
+
+      <Modal transparent visible={opened !== null} animationType="none" statusBarTranslucent onRequestClose={closeChart}>
+        {opened ? (
+          <BottomSheet eyebrow="Tape" title={openedLabel} closeLabel="Back to all body parts" onClose={closeChart}>
+            <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetBody} showsVerticalScrollIndicator={false}>
+              {series.length > 1 ? <View style={styles.sideRow}>{series.map((item) => <Pressable key={item.channel} accessibilityRole="button" accessibilityState={{ selected: activeSeries?.channel === item.channel }} onPress={() => setOpened({ ...opened, channel: item.channel })} style={pressableFeedback([styles.side, activeSeries?.channel === item.channel && styles.sideActive])}><Body numberOfLines={1} style={[styles.sideText, activeSeries?.channel === item.channel && styles.sideTextActive]}>{channelName(item.channel)}</Body></Pressable>)}</View> : null}
+              {activeSeries ? <LineGraph key={activeSeries.channel} points={activeSeries.points.filter((point) => rangedIds.has(point.checkInId)).map((point) => ({
+                key: `check-in:${point.checkInId}:${activeSeries.channel}`, date: point.date, label: formatCompactDate(point.date),
+                value: circumferenceFromStorageUnit(point.valueCm, preferences.circumference),
+                details: [`${openedLabel} · ${channelName(activeSeries.channel)}`, `Recorded ${point.date}`]
+              }))} suffix={` ${preferences.circumference}`} tone="neutral" height={180} showTrendLine={showTrendLine}
+                emptyMessage={`No ${openedLabel.toLowerCase()} entries in this range. Pick a longer range.`} /> : null}
+              <RangeSlider accessibilityLabel="Chart range" value={range} onChange={setRange} options={chartRanges} />
+              {activeSeries ? <Body style={styles.hint}>All-time change {formatChange(activeSeries.changeFromStartCm, preferences.circumference)} since {formatCompactDate(activeSeries.start.date)}</Body> : null}
+              <View style={styles.toggleRow}>
+                <Pressable accessibilityRole="switch" accessibilityLabel="Toggle trendline" accessibilityState={{ checked: showTrendLine }} onPress={() => setShowTrendLine((value) => !value)} style={pressableFeedback([styles.toggle, showTrendLine && styles.toggleActive])}>
+                  <View style={[styles.toggleDot, showTrendLine && styles.toggleDotActive]} />
+                  <Body style={[styles.toggleText, showTrendLine && styles.toggleTextActive]}>Trendline</Body>
+                </Pressable>
+              </View>
+            </ScrollView>
+          </BottomSheet>
+        ) : null}
+      </Modal>
 
       <Panel>
         <View style={styles.rowBetween}>
@@ -147,9 +147,13 @@ export function BodyMeasurementsScreen({ progressTabs }: { progressTabs?: ReactN
   );
 }
 
-function validTapeContext(value: unknown): value is { range: BodyMeasurementRange; metric: BodyMeasurementKey; trend: boolean } {
-  const p = value as { range: string; metric: BodyMeasurementKey; trend: boolean } | null;
-  return !!p && ["week", "month", "year", "all"].includes(p.range) && bodyMeasurementDefinitions.some((definition) => definition.key === p.metric) && typeof p.trend === "boolean";
+function validTapeContext(value: unknown): value is { range: BodyMeasurementRange; trend: boolean } {
+  const p = value as { range: string; trend: boolean } | null;
+  return !!p && isChartRange(p.range) && typeof p.trend === "boolean";
+}
+
+function channelName(channel: MeasurementChannel) {
+  return channel === "left" ? "Left" : channel === "right" ? "Right" : channel === "average" ? "Average" : channel === "single" ? "One value" : "Measured";
 }
 
 function formatChange(valueCm: number, unit: "in" | "cm") {
@@ -177,11 +181,8 @@ const useStyles = createThemedStyles((palette) => StyleSheet.create({
   rowBetween: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.md },
   checkInButton: { minHeight: 36, flexDirection: "row", alignItems: "center", gap: spacing.xs, paddingHorizontal: spacing.md, borderRadius: 10, backgroundColor: palette.ink, ...fastTouchStyle },
   checkInText: { color: palette.surface, fontSize: 13, fontWeight: "700" },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  chip: { minHeight: 34, paddingHorizontal: spacing.md, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: palette.surfaceAlt, ...fastTouchStyle },
-  chipActive: { backgroundColor: palette.ink },
-  chipText: { color: palette.ink, fontSize: 13, fontWeight: "700" },
-  chipTextActive: { color: palette.surface },
+  sheetScroll: { flexShrink: 1 },
+  sheetBody: { gap: spacing.md, paddingHorizontal: spacing.sm, paddingBottom: spacing.sm },
   sideRow: { flexDirection: "row", gap: spacing.xs, padding: 3, borderRadius: 12, backgroundColor: palette.surfaceAlt },
   side: { flex: 1, minWidth: 0, minHeight: 34, borderRadius: 9, alignItems: "center", justifyContent: "center", paddingHorizontal: spacing.xs, ...fastTouchStyle },
   sideActive: { backgroundColor: palette.surface },

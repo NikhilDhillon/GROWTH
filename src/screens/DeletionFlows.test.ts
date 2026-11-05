@@ -33,7 +33,7 @@ vi.mock("react", async (importOriginal) => ({
 vi.mock("@/hooks/useReportContext", () => ({ useReportContext: (_account: unknown, _report: string, defaults: unknown) => {
   const [value, update] = React.useState(defaults); return { value, update, error: null };
 } }));
-vi.mock("react-native", () => ({ useColorScheme: () => "light",
+vi.mock("react-native", () => ({ useColorScheme: () => "light", ScrollView: "ScrollView", Modal: "Modal",
   ActivityIndicator: "ActivityIndicator", Pressable: "Pressable", TextInput: "TextInput", View: "View",
   Alert: { alert: vi.fn() }, Platform: { OS: "web", select: (values: { web: unknown }) => values.web },
   StyleSheet: { create: (styles: unknown) => styles }, useWindowDimensions: () => ({ width: 390, height: 844 })
@@ -42,6 +42,9 @@ vi.mock("lucide-react-native", () => ({ Check: "Check", ChevronDown: "ChevronDow
 vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ navigate: actions.navigate }) }));
 vi.mock("@/components/DatePickerField", () => ({ DatePickerField: "DatePickerField" }));
 vi.mock("@/components/LineGraph", () => ({ LineGraph: "LineGraph" }));
+vi.mock("@/screens/BodyMeasurements/TapeOverview", () => ({ TapeOverview: "TapeOverview" }));
+vi.mock("@/components/BottomSheet", () => ({ BottomSheet: "BottomSheet" }));
+vi.mock("@/components/RangeSlider", () => ({ RangeSlider: "RangeSlider" }));
 vi.mock("@/components/MachineProfilePanel", () => ({ MachineProfilePanel: "MachineProfilePanel" }));
 vi.mock("@/components/Panel", () => ({ Panel: "Panel" }));
 vi.mock("@/components/Screen", () => ({ Screen: "Screen" }));
@@ -158,14 +161,34 @@ it("shows one tape chart at a time without averaging left and right measurements
   store.bodyMeasurementLogs[0].measurements = { waist: 80, arm_flexed: { mode: "sides", left: 30, right: 40 } } as typeof original;
   try {
     let tree = render(() => BodyMeasurementsScreen({}));
-    elements(tree).find((item) => item.type === "Pressable" && hasMessage(item.props.children, "Arm (flexed)"))!.props.onPress();
+    expect(elements(tree).filter((item) => item.type === "LineGraph")).toHaveLength(0);
+    elements(tree).find((item) => item.type === "TapeOverview")!.props.onOpen("arm_flexed", "left");
     tree = render(() => BodyMeasurementsScreen({}));
     let charts = elements(tree).filter((item) => item.type === "LineGraph");
     expect(charts).toHaveLength(1);
     expect(charts[0].props.points[0].value).toBe(30);
-    elements(tree).find((item) => item.type === "Pressable" && hasMessage(item.props.children, "Arm (flexed) · right"))!.props.onPress();
+    elements(tree).find((item) => item.type === "Pressable" && hasMessage(item.props.children, "Right"))!.props.onPress();
     charts = elements(render(() => BodyMeasurementsScreen({}))).filter((item) => item.type === "LineGraph");
     expect(charts).toHaveLength(1);
     expect(charts[0].props.points[0].value).toBe(40);
+  } finally { store.bodyMeasurementLogs[0].measurements = original; }
+});
+
+it("opens a chart over the body map and closes back to it without leaving the screen", () => {
+  const original = store.bodyMeasurementLogs[0].measurements;
+  store.bodyMeasurementLogs[0].measurements = { arm_flexed: { mode: "sides", left: 30, right: 40 } } as unknown as typeof original;
+  try {
+    let tree = render(() => BodyMeasurementsScreen({}));
+    expect(elements(tree).find((item) => item.type === "Modal")!.props.visible).toBe(false);
+    elements(tree).find((item) => item.type === "TapeOverview")!.props.onOpen("arm_flexed", "right");
+    tree = render(() => BodyMeasurementsScreen({}));
+    expect(elements(tree).find((item) => item.type === "Modal")!.props.visible).toBe(true);
+    expect(elements(tree).filter((item) => item.type === "TapeOverview")).toHaveLength(1);
+    expect(elements(tree).find((item) => item.type === "BottomSheet")!.props.title).toBe("Arm (flexed)");
+    expect(elements(tree).filter((item) => item.type === "LineGraph")[0].props.points[0].value).toBe(40);
+    elements(tree).find((item) => item.type === "Modal")!.props.onRequestClose();
+    tree = render(() => BodyMeasurementsScreen({}));
+    expect(elements(tree).find((item) => item.type === "Modal")!.props.visible).toBe(false);
+    expect(elements(tree).filter((item) => item.type === "LineGraph")).toHaveLength(0);
   } finally { store.bodyMeasurementLogs[0].measurements = original; }
 });

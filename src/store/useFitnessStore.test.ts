@@ -55,7 +55,7 @@ function summary(): CompletedGuidedWorkout {
 function applicationData(currentUser: User | null = user) {
   return {
     currentUser, exercises: [exercise], sessions: [session], sets: observedSets,
-    bodyMeasurementLogs: [bodyLog], bodyUnitPreferences: { weight: "lb" as const, circumference: "cm" as const },
+    bodyMeasurementLogs: [bodyLog], bodyUnitPreferences: { weight: "lb" as const, circumference: "cm" as const, figure: "male" as const },
     configs: [], unitSystem: "lb" as const, trainingSplit: createDefaultTrainingSplit(),
     activeWorkout: activeWorkout(), completedGuidedWorkouts: [], machineProfiles: [machine],
     workoutRecords: [], workoutReferences: [], recoveredWorkoutDrafts: [],

@@ -269,6 +269,25 @@ export function SettingsScreen() {
             textAlignVertical="top"
           />
         </DetailsDisclosure>
+        {Platform.OS !== "web" ? (
+          <TextInput
+            accessibilityLabel="Paste JSON to import"
+            style={styles.importInput}
+            value={selectedFileText}
+            onChangeText={(text) => {
+              setSelectedFileText(text);
+              if (text.trim()) validateImport(text);
+              else { setPreview(null); setImportError(null); setImportMessage(null); }
+            }}
+            placeholder="Paste your JSON backup here"
+            placeholderTextColor={palette.muted}
+            multiline
+            autoCorrect={false}
+            autoCapitalize="none"
+            spellCheck={false}
+            textAlignVertical="top"
+          />
+        ) : null}
         <View style={styles.importActions}>
           {Platform.OS === "web" ? (
             <Pressable onPress={chooseImportFile} style={pressableFeedback(styles.secondaryButton)}>
@@ -321,6 +340,24 @@ export function SettingsScreen() {
               style={[styles.unitButton, bodyUnitPreferences.circumference === unit && styles.unitButtonActive]}
             >
               <Body style={[styles.unitText, bodyUnitPreferences.circumference === unit && styles.unitTextActive]}>{unit}</Body>
+            </Pressable>
+          ))}
+        </View>
+      </Panel>
+
+      <Panel>
+        <SectionTitle>Body map</SectionTitle>
+        <Body style={styles.importNotice}>The figure shown with your tape measurements in Progress.</Body>
+        <View style={styles.unitRow}>
+          {([["male", "Male"], ["female", "Female"]] as const).map(([figure, label]) => (
+            <Pressable
+              key={figure}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: bodyUnitPreferences.figure === figure }}
+              onPress={() => void setBodyUnitPreferences({ ...bodyUnitPreferences, figure })}
+              style={[styles.unitButton, bodyUnitPreferences.figure === figure && styles.unitButtonActive]}
+            >
+              <Body style={[styles.unitText, bodyUnitPreferences.figure === figure && styles.unitTextActive]}>{label}</Body>
             </Pressable>
           ))}
         </View>

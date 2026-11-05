@@ -18,7 +18,7 @@ export type BodyCheckInDraft = {
 
 export function createBodyCheckInDraft(loggedDate: string, inputUnits: BodyUnitPreferences): BodyCheckInDraft {
   return {
-    version: 1, loggedDate, weight: "", notes: "", inputUnits: { ...inputUnits }, expected: null,
+    version: 1, loggedDate, weight: "", notes: "", inputUnits: { weight: inputUnits.weight, circumference: inputUnits.circumference }, expected: null,
     fields: Object.fromEntries(bodyMeasurementDefinitions.map(({ key }) => [key, { mode: "single", value: "", left: "", right: "" }])) as BodyCheckInDraft["fields"],
     tapeExpanded: false, pending: null
   };

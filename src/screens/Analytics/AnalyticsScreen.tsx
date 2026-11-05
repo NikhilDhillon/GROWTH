@@ -8,6 +8,8 @@ import { Panel } from "@/components/Panel";
 import { Screen } from "@/components/Screen";
 import { SearchableExercisePicker } from "@/components/SearchableExercisePicker";
 import { SegmentedControl } from "@/components/SegmentedControl";
+import { RangeSlider } from "@/components/RangeSlider";
+import { chartRangeDays, chartRanges, isChartRange, type ChartRange } from "@/utils/chartRange";
 import { SessionRow } from "@/components/SessionRow";
 import { Body, Label, SectionTitle } from "@/components/Text";
 import { addCalendarDays, isCalendarDate } from "@/domain/calendar";
@@ -23,18 +25,11 @@ import { spacing } from "@/utils/theme";
 import { pressableFeedback } from "@/utils/touch";
 import { formatBodyWeight, formatWeight } from "@/utils/units";
 
-type StrengthRange = "month" | "quarter" | "half" | "year" | "all";
+type StrengthRange = ChartRange;
 type Preferences = { exerciseId: number; comparisonKey: string; range: StrengthRange; view: "progress" | "comparison"; averages: boolean };
 const defaults: Preferences = { exerciseId: 0, comparisonKey: "", range: "quarter", view: "progress", averages: false };
-const rangeOptions: Array<{ key: StrengthRange; label: string; accessibilityLabel: string; days?: number }> = [
-  { key: "month", label: "1M", accessibilityLabel: "30 days", days: 30 },
-  { key: "quarter", label: "3M", accessibilityLabel: "90 days", days: 90 },
-  { key: "half", label: "6M", accessibilityLabel: "180 days", days: 180 },
-  { key: "year", label: "1Y", accessibilityLabel: "365 days", days: 365 },
-  { key: "all", label: "All", accessibilityLabel: "All time" }
-];
 function isStrengthRange(value: unknown): value is StrengthRange {
-  return rangeOptions.some((option) => option.key === value);
+  return isChartRange(value);
 }
 function valid(value: unknown): value is Preferences {
   const item = value as Preferences | null;
@@ -77,7 +72,7 @@ export function AnalyticsScreen({ progressTabs, initialExerciseId, initialRange,
   // Keys saved before untagged machine entries shared one context named a single entry; open the default instead.
   const requestedContext = selection.comparisonKey.includes(":unknown-machine:") ? "" : selection.comparisonKey;
   const report = exerciseGrowthReport(points, selected?.id ?? 0, requestedContext, asOf);
-  const rangeDays = rangeOptions.find((option) => option.key === selection.range)?.days;
+  const rangeDays = chartRangeDays(selection.range) ?? undefined;
   const cutoff = rangeDays === undefined ? "0001-01-01" : addCalendarDays(asOf, -(rangeDays - 1));
   const ranged = report.points.filter((point) => point.date >= cutoff);
   const sessionIds = new Set(report.points.map((point) => point.sessionId));
@@ -123,7 +118,7 @@ export function AnalyticsScreen({ progressTabs, initialExerciseId, initialRange,
         options={[{ key: "estimated1RM", label: "Estimated 1RM" }, { key: "points", label: "Performance points" }]} />
       <LineGraph points={chart} suffix={chartMetric === "estimated1RM" ? ` ${unit}` : " pts"} height={210}
         emptyMessage={report.points.length ? "No sessions in this range. Pick a longer range." : "Log this exercise twice to draw a trend."} />
-      <SegmentedControl variant="pills" accessibilityLabel="Chart range" value={selection.range} onChange={(range) => update({ ...selection, range })} options={rangeOptions} />
+      <RangeSlider accessibilityLabel="Chart range" value={selection.range} onChange={(range) => update({ ...selection, range })} options={chartRanges} />
       {report.current ? <View style={styles.statGrid}>
         <Stat label="Best e1RM" value={formatWeight((bestE1RMPoint ?? report.current).estimated1RM, unit)} detail={formatCompactDate((bestE1RMPoint ?? report.current).date)} />
         <Stat label="Latest" value={formatWeight(report.current.estimated1RM, unit)} detail={formatCompactDate(report.current.date)} />

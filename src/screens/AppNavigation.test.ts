@@ -19,7 +19,7 @@ vi.mock("@react-navigation/native", () => ({ DefaultTheme: { colors: {} }, Navig
 vi.mock("@react-navigation/native-stack", () => ({ createNativeStackNavigator: () => ({ Navigator: "Navigator", Screen: "StackScreen" }) }));
 vi.mock("expo-status-bar", () => ({ StatusBar: "StatusBar" }));
 vi.mock("react-native", () => ({ useColorScheme: () => "light", ActivityIndicator: "ActivityIndicator", Modal: "Modal", Platform: { OS: "web", select: (values: { web: unknown }) => values.web }, Pressable: "Pressable", ScrollView: "ScrollView", Text: "Text", View: "View", StyleSheet: { create: (value: unknown) => value }, useWindowDimensions: () => ({ width: 390 }) }));
-vi.mock("react-native-safe-area-context", () => ({ SafeAreaProvider: "SafeAreaProvider", SafeAreaView: "SafeAreaView" }));
+vi.mock("react-native-safe-area-context", () => ({ SafeAreaProvider: "SafeAreaProvider", SafeAreaView: "SafeAreaView", useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
 vi.mock("lucide-react-native", () => Object.fromEntries(["ArrowLeft", "BarChart3", "Dumbbell", "Home", "LineChart", "ListChecks", "Menu", "Plus", "Scale", "Settings", "Users", "X"].map((key) => [key, key])));
 vi.mock("@/components/LogoMark", () => ({ LogoMark: "LogoMark" }));
 vi.mock("@/store/useFitnessStore", () => ({ useFitnessStore: (select: (state: object) => unknown) => select({ currentUser: shell.user, loading: false, dataError: shell.dataError }) }));
@@ -45,7 +45,7 @@ async function loadApp() {
   return (await import("../../App")).default;
 }
 
-it("opens supporting tools from More without duplicating Progress or Settings destinations", async () => {
+it("opens supporting tools from the initials icon instead of a More tab", async () => {
   const App = await loadApp();
   let tree = App();
   const container = elements(tree).find((item) => item.type === "NavigationContainer")!;
@@ -54,10 +54,12 @@ it("opens supporting tools from More without duplicating Progress or Settings de
   expect(elements(tree).some((item) => item.type === "StackScreen" && item.props.name === "BodyCheckIn")).toBe(true);
   const mobile = elements(tree).find((item) => typeof item.type === "function" && item.type.name === "MobileNavigation")!;
   const rendered = mobile.type(mobile.props);
-  expect(elements(rendered).filter((item) => item.type === "Pressable").map((item) => item.props.accessibilityLabel)).toEqual(["Home", "Record", "Progress", "History", "More"]);
-  elements(rendered).find((item) => item.props.accessibilityLabel === "More")!.props.onPress();
+  expect(elements(rendered).filter((item) => item.type === "Pressable").map((item) => item.props.accessibilityLabel)).toEqual(["Home", "Record", "Progress", "History"]);
+  const stack = elements(tree).find((item) => item.type === "Navigator")!;
+  const header = stack.props.screenOptions({ navigation: { canGoBack: () => false, goBack: vi.fn() }, route: { name: "Progress" } }).header();
+  elements(header.type(header.props)).find((item) => String(item.props.accessibilityLabel).startsWith("Account menu"))!.props.onPress();
   hooks.cursor = 0; tree = App();
-  const menu = elements(tree).find((item) => typeof item.type === "function" && item.type.name === "MoreMenu")!;
+  const menu = elements(tree).find((item) => typeof item.type === "function" && item.type.name === "AccountMenu")!;
   expect(menu.props.visible).toBe(true);
   const destinations = elements(menu.type(menu.props)).filter((item) => item.props.destination);
   expect(destinations.map((item) => item.props.destination.name)).toEqual(["Exercises", "Social", "Settings"]);
